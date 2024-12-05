@@ -200,7 +200,7 @@ tar -xf Molmo-7B-D-0924.tar
 ```
 
 ## Evaluation
-Evaluation is done with the `scripts/eval_downstream.py` script. 
+Evaluation is done with the `launch_scripts/eval_downstream.py` script. 
 FSDP can be used to evaluate large models, or for high-resolution processing. 
 Note that the vLLM version of Molmo will be significantly faster for inference, but most of 
 our numbers were reported using the results of this local evaluation. 
@@ -300,6 +300,13 @@ There are minor differences between the published Molmo models that we trained a
 - PixMo-Clocks is not used by default, it requires a more complex download script that 
 we are still considering how to port.
 
+## Multi-Node
+Execute the `torchrun` commands on each node with the [appropriate args](https://pytorch.org/tutorials/intermediate/ddp_series_multinode.html)
+should allow multi-node training or evaluation. 
+
+We recommend ensuring the data is downloaded and then using the environment variable 
+`HF_DATASETS_OFFLINE=1` to ensure the nodes don't flood HF with requests as they all initialize 
+and then potentially get rate limited.
 
 ## Citation
 
