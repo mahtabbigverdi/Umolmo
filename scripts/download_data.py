@@ -6,7 +6,7 @@ import time
 from olmo.data.academic_datasets import ChartQa, ScienceQAImageOnly, TextVqa, OkVqa, DocQa, \
     InfoQa, AOkVqa, Vqa2, PlotQa, FigureQa, DvQa, SceneTextQa, TabWMPDirectAnswer, \
     AndroidControl, TallyQa, AI2D, CountBenchQa, RealWorldQa, MathVista, MMMU, ClockBench
-from olmo.data.pixmo_datasets import PixMoDocuments, PixMoCount, PixMoPoints, PixMoCapQa, PixMoCap, PixMoPointExplanations
+from olmo.data.pixmo_datasets import PixMoDocs, PixMoCount, PixMoPoints, PixMoCapQa, PixMoCap, PixMoPointExplanations
 from olmo.util import prepare_cli_environment
 
 ACADEMIC_EVAL = [
@@ -22,7 +22,7 @@ ACADEMIC_DATASETS = [
 ]
 
 PIXMO_DATASETS = [
-    PixMoDocuments, PixMoCount, PixMoPoints, PixMoCapQa, PixMoCap, PixMoPointExplanations
+    PixMoDocs, PixMoCount, PixMoPoints, PixMoCapQa, PixMoCap, PixMoPointExplanations
 ]
 
 DATASETS = ACADEMIC_DATASETS + PIXMO_DATASETS

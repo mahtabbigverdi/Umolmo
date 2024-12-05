@@ -112,7 +112,7 @@ class PixMoCount(Dataset):
         return out
 
 
-class PixMoDocuments(Dataset):
+class PixMoDocs(Dataset):
     V1_STYLE = {
         "pixmo_docs_other": "scifi_document",
         "pixmo_docs_charts": "scifi_charts",
@@ -123,22 +123,22 @@ class PixMoDocuments(Dataset):
     @classmethod
     def download(cls, n_procs=1):
         for name in ["other", "charts", "diagrams", "tables"]:
-            datasets.load_dataset_builder(
-                "allenai/pixmo-docs", name=name).download_and_prepare()
-        # for name in ["other", "charts", "diagrams", "tables"]:
-        #     local_name = join(PIXMO_DATASETS, f"pixmo_docs_{name}")
-        #     if not exists(local_name):
-        #         ds = datasets.load_dataset("allenai/pixmo-docs", name=name)
-        #         ds.save_to_disk(local_name)
+            # datasets.load_dataset_builder("allenai/pixmo-docs", name=name).download_and_prepare()
+            local_name = join(PIXMO_DATASETS, f"pixmo_docs_{name}")
+            if not exists(local_name):
+                # Save to disk locally, for some reason loading datasets with multiple configs
+                # on multiple hosts can lead to crashes with 429 HTTP errors even if the
+                # data is already cached, so we just load from a local copy instead
+                ds = datasets.load_dataset("allenai/pixmo-docs", name=name, cache_dir=None)
+                ds.save_to_disk(local_name)
 
     def __init__(self, doc_type, split, sample=None, keep_in_memory=False, v1_style=False):
         assert doc_type in ["other", "charts", "diagrams", "tables"]
         assert split in ["train", "validation", "test"]
         self.doc_type = doc_type
         self.v1_style = v1_style
-        self.dataset = datasets.load_dataset(
-            "allenai/pixmo-docs", name=doc_type, split=split, keep_in_memory=keep_in_memory,
-            verification_mode=VerificationMode.NO_CHECKS)
+        self.dataset = datasets.load_from_disk(
+            join(PIXMO_DATASETS, f"pixmo_docs_{doc_type}"), keep_in_memory=keep_in_memory)[split]
 
     def __len__(self):
         return len(self.dataset)

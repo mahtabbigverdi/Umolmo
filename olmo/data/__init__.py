@@ -13,7 +13,7 @@ from olmo.data.dataset import DeterministicDataset
 from olmo.data.iterable_dataset_mixture import IterableDatasetMixture
 from olmo.data.model_preprocessor import Preprocessor, MultiModalPreprocessor
 from olmo.data.pixmo_datasets import PixMoPointExplanations as PixMoPointExplanationHF, \
-    PixMoDocuments, PixMoCount, PixMoPoints, PixMoCapQa, PixMoCap, PixMoPointExplanations, \
+    PixMoDocs, PixMoCount, PixMoPoints, PixMoCapQa, PixMoCap, PixMoPointExplanations, \
     PixMoAskMeAnything
 from olmo.torch_util import get_global_rank, get_world_size
 
@@ -213,13 +213,13 @@ def build_train_dataloader(train_config: TrainConfig, device=None) -> DataLoader
 
 def get_dataset_by_name(dataset_name, split):
     if dataset_name in ["scifi_document_qa", "pixmo_docs_other"]:
-        return PixMoDocuments("other", split=split)
+        return PixMoDocs("other", split=split)
     elif dataset_name in ["scifi_table_qa", "pixmo_docs_tables"]:
-        return PixMoDocuments("tables", split=split)
+        return PixMoDocs("tables", split=split)
     elif dataset_name in ["scifi_diagram_qa", "pixmo_docs_diagrams"]:
-        return PixMoDocuments("diagrams", split=split)
+        return PixMoDocs("diagrams", split=split)
     elif dataset_name in ["scifi_charts_qa", "pixmo_docs_charts"]:
-        return PixMoDocuments("charts", split=split)
+        return PixMoDocs("charts", split=split)
 
     # PixMo-Pointing
     elif dataset_name in ["pointing_high_freq", "pixmo_points_high_freq"]:

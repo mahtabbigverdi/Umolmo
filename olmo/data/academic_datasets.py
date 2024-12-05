@@ -788,8 +788,7 @@ class MMMU(Dataset):
     def __init__(self, split: str):
         all_parts = []
         for name in self.NAMES:
-            all_parts.append(datasets.load_from_disk(
-                join(DATA_HOME, "mmmu", name))[split])
+            all_parts.append(datasets.load_from_disk(join(DATA_HOME, "mmmu", name))[split])
         self.data = datasets.concatenate_datasets(all_parts)
 
     def __len__(self):
