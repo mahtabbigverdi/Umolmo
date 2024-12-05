@@ -5,7 +5,6 @@ from os.path import join, exists
 
 import datasets
 import numpy as np
-from datasets import VerificationMode
 
 from olmo.data.dataset import DATA_HOME, Dataset
 from olmo.data.download_urls import download_pixmo_urls, filter_and_group_data
@@ -87,7 +86,6 @@ class PixMoCount(Dataset):
         save_local_dataset(all_data, local_name, n_procs)
 
     def __init__(self, split, sample=None, counting=False, keep_in_memory=False):
-        self.download()
         self.dataset = datasets.load_from_disk(join(PIXMO_DATASETS, "count"), keep_in_memory=keep_in_memory)[split]
         self.counting = counting
         self.split = split
@@ -123,22 +121,15 @@ class PixMoDocs(Dataset):
     @classmethod
     def download(cls, n_procs=1):
         for name in ["other", "charts", "diagrams", "tables"]:
-            # datasets.load_dataset_builder("allenai/pixmo-docs", name=name).download_and_prepare()
-            local_name = join(PIXMO_DATASETS, f"pixmo_docs_{name}")
-            if not exists(local_name):
-                # Save to disk locally, for some reason loading datasets with multiple configs
-                # on multiple hosts can lead to crashes with 429 HTTP errors even if the
-                # data is already cached, so we just load from a local copy instead
-                ds = datasets.load_dataset("allenai/pixmo-docs", name=name, cache_dir=None)
-                ds.save_to_disk(local_name)
+            datasets.load_dataset_builder("allenai/pixmo-docs", name=name).download_and_prepare()
 
     def __init__(self, doc_type, split, sample=None, keep_in_memory=False, v1_style=False):
         assert doc_type in ["other", "charts", "diagrams", "tables"]
         assert split in ["train", "validation", "test"]
         self.doc_type = doc_type
         self.v1_style = v1_style
-        self.dataset = datasets.load_from_disk(
-            join(PIXMO_DATASETS, f"pixmo_docs_{doc_type}"), keep_in_memory=keep_in_memory)[split]
+        self.dataset = datasets.load_dataset(
+            "allenai/pixmo-docs", name=doc_type, split=split, keep_in_memory=keep_in_memory)
 
     def __len__(self):
         return len(self.dataset)
@@ -178,7 +169,7 @@ class PixMoPoints(Dataset):
             name = "high_frequency" if method == "counting" else "basic"
             save_local_dataset(filtered_dataset, local_name, n_procs=n_procs, n_val=n_val)
 
-    def __init__(self, split, kind="both", counting=False, n_validation=2048, keep_in_memory=False):
+    def __init__(self, split, kind="both", counting=False, keep_in_memory=False):
         if kind not in ["high_frequency", "basic", "both"]:
             raise ValueError(kind)
         if split not in ["train", "validation"]:
@@ -336,7 +327,7 @@ class PixMoCap(Dataset):
             "image", [url_to_filename[x] for x in filtered_dataset["image_url"]])
         save_local_dataset(filtered_dataset, local_name, n_procs, n_val=n_val)
 
-    def __init__(self, split, mode, prefix_how_many=True, n_validation=2048, keep_in_memory=False):
+    def __init__(self, split, mode, prefix_how_many=True, keep_in_memory=False):
         if split not in ["train", "validation"]:
             raise ValueError(f"Unknown split {split}")
         if mode not in ["transcripts", "captions", "transcript_and_caption", "transcript1_and_caption"]:
@@ -385,7 +376,7 @@ class PixMoAskMeAnything(Dataset):
         filtered_dataset = filter_and_group_data(ds, filenames, check_sha)
         save_local_dataset(filtered_dataset, local_name, n_procs, n_val=n_val)
 
-    def __init__(self, split, prefix_how_many=True, n_validation=2048, keep_in_memory=False):
+    def __init__(self, split, prefix_how_many=True, keep_in_memory=False):
         if split not in ["train", "validation"]:
             raise ValueError(f"Unknown split {split}")
         self.split = split

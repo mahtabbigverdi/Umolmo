@@ -778,17 +778,13 @@ class MMMU(Dataset):
         for name in cls.NAMES:
             if exists(join(DATA_HOME, "mmmu", name)):
                 continue
-            # Save to disk locally, for some reason loading datasets with multiple configs
-            # on multiple hosts can lead crashes with 429 HTTP errors even if the
-            # data is already cached, so we just load from a local copy instead
             builder = datasets.load_dataset_builder("MMMU/MMMU", name=name)
             builder.download_and_prepare()
-            builder.as_dataset().save_to_disk(join(DATA_HOME, "mmmu", name))
 
     def __init__(self, split: str):
         all_parts = []
         for name in self.NAMES:
-            all_parts.append(datasets.load_from_disk(join(DATA_HOME, "mmmu", name))[split])
+            all_parts.append(datasets.load_dataset("MMMU/MMMU", name=name, split=split))
         self.data = datasets.concatenate_datasets(all_parts)
 
     def __len__(self):
