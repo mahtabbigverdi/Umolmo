@@ -1,5 +1,4 @@
 import argparse
-import inspect
 import logging
 import time
 
@@ -39,6 +38,8 @@ def download():
                         help="Datasets to download, can be a name or one of: all, pixmo, academic or academic_eval")
     parser.add_argument("--n_procs", type=int, default=1,
                         help="Number of processes to download with")
+    parser.add_argument("--ignore_errors", action="store_true",
+                        help="If dataset fails to download, skip it and continue with the remaining")
     args = parser.parse_args()
 
     prepare_cli_environment()
@@ -59,7 +60,14 @@ def download():
     for ix, dataset in enumerate(to_download):
         t0 = time.perf_counter()
         logging.info(f"Starting download for {dataset.__name__} ({ix+1}/{len(to_download)})")
-        dataset.download(n_procs=args.n_procs)
+        try:
+            dataset.download(n_procs=args.n_procs)
+        except Exception as e:
+            if args.ignore_errors:
+                logging.warning(f"Error downloading {dataset.__name__}: {e}")
+                continue
+            else:
+                raise e
         logging.info(f"Done with {dataset.__name__} in {time.perf_counter()-t0:0.1f} seconds")
 
 

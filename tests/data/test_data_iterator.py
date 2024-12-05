@@ -1,6 +1,7 @@
 import dataclasses
 import itertools
 from collections import Counter, defaultdict
+import numpy as np
 
 import pytest
 import torch
@@ -149,3 +150,29 @@ def test_dataset_start_at(ns, start_index, world_size, rank):
             next(it)
     for _ in range(30):
         assert next(it) == next(ff_it)
+
+
+def test_stratify():
+    datasets = [MockDataset("a", 17), MockDataset("b", 12)]
+    ds = IterableDatasetMixture(
+        datasets, mixture_rates=[0.8, 0.2], global_batch_size=3, stratify=True)
+    it = iter(ds)
+    grouped_by_dataset = defaultdict(list)
+    for _ in range(10):
+        ex = next(it)
+        grouped_by_dataset[ex.dataset].append(ex)
+    assert len(grouped_by_dataset["a"]) == 8
+    assert len(grouped_by_dataset["b"]) == 2
+
+    for _ in range(90):
+        ex = next(it)
+        grouped_by_dataset[ex.dataset].append(ex)
+    assert len(grouped_by_dataset["a"]) == 80
+    assert len(grouped_by_dataset["b"]) == 20
+    for dataset in datasets:
+        items = grouped_by_dataset[dataset.name]
+        ds_len = dataset.n
+        for epoch in range(len(items)//ds_len):
+            epoch_items = items[epoch*ds_len:(epoch+1)*ds_len]
+            assert all(x.epoch == epoch for x in epoch_items)
+            assert set(x.idx for x in epoch_items) == set(range(ds_len))

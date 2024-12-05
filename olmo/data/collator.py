@@ -28,8 +28,6 @@ def _collate(tensors, max_sequence_length=None, dtype=None, pad=False, pad_value
         max_len = max((0 if x is None else x.shape[0]) for x in tensors)
         if max_sequence_length:
             max_len = min(max_len, max_sequence_length)
-        if pad == "to_128":
-            max_len = 128 * ((max_len + 128 - 1) // 128)
         elif pad is not None:
             raise NotImplementedError(pad)
 
@@ -43,6 +41,8 @@ def _collate(tensors, max_sequence_length=None, dtype=None, pad=False, pad_value
 
 
 class MMCollator:
+    """Converts list of examples from our datasets into a tensor batch"""
+
     TEXT_KEYS = ["input_tokens", "target_tokens", "loss_masks", "subsegment_ids", "position_ids"]
     IMAGE_KEYS = ["images", "image_masks", "image_input_idx",]
 

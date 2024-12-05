@@ -44,7 +44,7 @@ class IterableDatasetMixture(torch.utils.data.IterableDataset[Dict[str, Any]]):
         assert self.global_batch_size % self.world_size == 0
         self.device_batch_size = global_batch_size // self.world_size
         self.stratify = stratify
-        self.worker_info = worker_info
+        self.worker_info = worker_info  # For testing
 
     def _get_next_sources(self, rng, counts):
         if len(self.datasets) == 1:

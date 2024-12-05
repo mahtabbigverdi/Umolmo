@@ -28,7 +28,7 @@ class Dataset:
             yield self[i]
 
     def get(self, item, rng):
-        # `rng` is used to support deterministic data augmentation for tasks the require it.
+        # `rng` is used to support deterministic data augmentation for tasks that require it.
         # Used to avoid the hazards of relying on the global rng state for determinism
         raise NotImplementedError()
 

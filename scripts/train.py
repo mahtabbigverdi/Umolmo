@@ -1,14 +1,10 @@
 """Run this script with 'torchrun'."""
 
-import gzip
 import logging
-import re
 import sys
-import time
 from os import listdir
 from os.path import join
 from pathlib import Path
-from typing import Optional, TextIO
 
 import torch
 import torch.distributed as dist
@@ -23,7 +19,8 @@ from olmo.data import build_train_dataloader
 from olmo.eval import build_loss_evaluators, build_inf_evaluators
 from olmo.exceptions import OLMoCliError, OLMoConfigurationError
 from olmo.model import Molmo
-from olmo.optim import BoltOnWarmupScheduler, build_optimizer, build_scheduler, build_multimodal_scheduler
+from olmo.optim import BoltOnWarmupScheduler, build_optimizer, build_scheduler, \
+    build_multimodal_scheduler
 from olmo.torch_util import (
     barrier,
     get_default_device,
@@ -79,7 +76,6 @@ def main(cfg: TrainConfig) -> None:
     cfg.device_train_grad_accum = cfg.device_train_batch_size // cfg.device_train_microbatch_size
 
     # Display and save configuration.
-    is_resuming = False
     if get_global_rank() == 0:
         log.info("Configuration:")
         log.info(cfg)
@@ -87,18 +83,16 @@ def main(cfg: TrainConfig) -> None:
         if cfg.allow_resume:
             config_path = Path(cfg.save_folder) / "config.yaml"
             if config_path.exists():
-                saved_config = TrainConfig.load(config_path)
-                if saved_config.model != cfg.model:
-                    logging.warning("Model config does not match the one resuming from")
-                if saved_config.optimizer != cfg.optimizer:
-                    logging.warning("Optimizer config does not match the one resuming from")
-                if saved_config.data != cfg.data:
-                    logging.warning("Data config does not match the one resuming from")
-
                 lastest_checkpoint = Path(cfg.save_folder) / "latest"
                 if lastest_checkpoint.exists():
                     logging.info(f"Resuming from {lastest_checkpoint}")
-                    is_resuming = True
+                    saved_config = TrainConfig.load(config_path)
+                    if saved_config.model != cfg.model:
+                        logging.warning("Model config does not match the one resuming from")
+                    if saved_config.optimizer != cfg.optimizer:
+                        logging.warning("Optimizer config does not match the one resuming from")
+                    if saved_config.data != cfg.data:
+                        logging.warning("Data config does not match the one resuming from")
                     cfg.load_path = str(lastest_checkpoint)
                 else:
                     logging.info("Not resuming since no latest checkpoint found")
@@ -176,11 +170,11 @@ def main(cfg: TrainConfig) -> None:
 
     listdir(cfg.save_folder)
 
+    sync_module_states = True
     if cfg.load_path is None:
         # Sine we typically load some parameters from a pre-trained checkpoint, we init the rank0
         # model on the cpu and then use `sync_module_states` in FSDP to sync the parameters
         # with the rest of the devices
-        sync_module_states = True
         init_weights = False
         if get_local_rank() == 0:
             if cfg.model.init_device == "meta":
@@ -192,9 +186,7 @@ def main(cfg: TrainConfig) -> None:
             else:
                 olmo_model.reset_with_pretrained_weights()
     else:
-        # FIXME or should we
         init_weights = True
-        sync_module_states = True
 
     log.info(f"Total number of parameters: {olmo_model.num_params():,d}")
     log.info(f"Number of non-embedding parameters: {olmo_model.num_params(include_embedding=False):,d}")

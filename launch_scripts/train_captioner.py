@@ -42,8 +42,8 @@ if __name__ == "__main__":
 
     add_cached_path_clients()
 
-    parser = argparse.ArgumentParser()
-    parser.add_argument("model")
+    parser = argparse.ArgumentParser(prog="Train a captioner")
+    parser.add_argument("llm", choices=["debug"] + list(LLMS.keys()))
     parser.add_argument("--vision_backbone", choices=list(VISION_BACKBONES.keys()), default="openai")
     parser.add_argument("--global_batch_size", default=128, type=int)
     parser.add_argument("--n_eval_examples", default=2048, type=int)

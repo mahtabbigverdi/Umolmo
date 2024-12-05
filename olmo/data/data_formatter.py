@@ -294,20 +294,6 @@ DEMO_STYLES = [
 ]
 
 
-def _concat_and_broadcast(*strs):
-    max_len = 0
-    for element in strs:
-        if isinstance(element, list):
-            if max_len < 0:
-                max_len = len(element)
-            else:
-                assert max_len == len(element)
-    if max_len == 0:
-        return "".join(strs)
-    return ["".join([(e if isinstance(e, str) else e[ix]) for e in strs])
-            for ix in range(max_len)]
-
-
 @dataclasses.dataclass
 class DataFormatter:
     """Applies prompt templates and adds system prompts to construct text inputs/output"""

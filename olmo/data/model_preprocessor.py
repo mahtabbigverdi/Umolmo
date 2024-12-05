@@ -256,10 +256,11 @@ def batch_pixels_to_patches(array, patch_size):
 
 @dataclasses.dataclass
 class MultiModalPreprocessor:
-    """Model preprocessor converts text/images into tensors that can be used in
-    the forward method"""
+    """
+    Converts text/images inputs into tensors that can be used in the forward method
+    for the a model
+    """
     tokenizer: Any
-
     loss_token_weighting: Optional[str] = None
 
     # How to crops/resize images
