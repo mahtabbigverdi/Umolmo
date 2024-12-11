@@ -91,6 +91,7 @@ def build_tokenizer(
     extra_tokens = list(EXTRA_TOKENS)
     if pad_tokenizer_to is not None:
         tokenizer = AutoTokenizer.from_pretrained(tokenizer_type, token=environ.get("HF_ACCESS_TOKEN"), cache_dir=cache_dir)
+        assert len(tokenizer) <= pad_tokenizer_to
         n_extra_tokens = pad_tokenizer_to - len(tokenizer)
         # This handles a case where the LLM embedding matrix is larger than the vocab size
         # We need the extra tokens in `EXTRA_TOKENS` to be assigned id's higher than the embedding

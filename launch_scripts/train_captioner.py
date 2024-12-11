@@ -53,10 +53,10 @@ if __name__ == "__main__":
     args, other_args = parser.parse_known_args()
 
     seq_len = args.seq_len
-    debug = args.model in ["debug", "debug-12crop"]
+    debug = args.llm in ["debug", "debug-12crop"]
     if debug:
         model_cfg = DEBUG_MODEL
-        if args.model == "debug-12crop":
+        if args.llm == "debug-12crop":
             model_cfg.max_crops = 12
             model_cfg.crop_mode = "overlap-and-resize-c2"
         model_cfg.system_prompt_kind = 'style_and_length'
@@ -76,9 +76,9 @@ if __name__ == "__main__":
         eval_interval = 1000
         vit_layers = [-2, -9] if args.vision_backbone == "openai" else [-3, -9]
         model_cfg = replace(
-            LLMS[args.model],
+            LLMS[args.llm],
             vision_backbone=VISION_BACKBONES[args.vision_backbone],
-            llm_load_path=DEFAULT_LOAD_PATHS.get(args.model, omegaconf.MISSING),
+            llm_load_path=DEFAULT_LOAD_PATHS.get(args.llm, omegaconf.MISSING),
             vit_load_path=DEFAULT_LOAD_PATHS.get(args.vision_backbone, omegaconf.MISSING),
             crop_mode="overlap-and-resize-c2",
             system_prompt_kind='style_and_length',

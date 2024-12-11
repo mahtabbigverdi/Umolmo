@@ -430,7 +430,7 @@ class PointingEval(Evaluator):
         for ex_ix, pred_seq in enumerate(new_tokens):
             metadata = metadatas[ex_ix]
             pred = vocab.decode(pred_seq[pred_seq >= 0]).strip()
-            answer_points = metadata["answer_points"]
+            answer_points = metadata["points"]
             masks = metadata["masks"]
             image_w, image_h = metadata["image_size"]
             abs_preds = extract_points(pred, image_w, image_h)

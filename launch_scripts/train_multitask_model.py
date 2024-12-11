@@ -121,7 +121,7 @@ if __name__ == "__main__":
             "coco_2014_vqa_multi",
             # "clocks",
             "android_control_ll",
-            # "pointing_test:test",
+            "pointing_eval:test",
             "countbench_qa:huggingface"
         ]
         tasks = [

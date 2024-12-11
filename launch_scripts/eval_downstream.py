@@ -152,7 +152,7 @@ def main():
         ))
 
     checkpoint_dir = Path(args.checkpoint)
-    if not (checkpoint_dir / "model.pt").exists():
+    if not (checkpoint_dir / "model.pt").exists() and args.checkpoint != "debug":
         candidates = []
         for file in checkpoint_dir.iterdir():
             match = re.match("^step([0-9]+)-unsharded.*", file.name)

@@ -444,6 +444,9 @@ class DocQa(HfDataset):
     """
     PATH = "HuggingFaceM4/DocumentVQA"
 
+    def __init__(self, split: str, keep_in_memory=False, **kwargs):
+        super().__init__(split, keep_in_memory, **kwargs)
+
     def get(self, item, rng):
         example = self.dataset[item]
         if self.split == "test":

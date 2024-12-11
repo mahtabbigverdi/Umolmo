@@ -14,7 +14,7 @@ from tqdm import tqdm
 
 from .evaluators import (
     HtmlTable, CountEval, PointCountEval, PointingEval, ClockEval, VqaEval,
-    SavePredictions, AndroidControlEval, MathVistaEval
+    SavePredictions, AndroidControlEval, MathVistaEval, PointingEval
 )
 from ..config import EvaluatorConfig
 from ..torch_util import (
@@ -93,14 +93,14 @@ def build_inf_evaluator(cfg: EvaluatorConfig, default_save_dir=None) -> InfEvalu
         evaluators.append(ClockEval(cfg.num_wandb_examples, is_test=True))
     elif cfg.math_vista_eval:
         evaluators.append(MathVistaEval(cfg.num_wandb_examples))
-    elif cfg.pointing_eval:
-        evaluators.append(PointingEval(cfg.num_wandb_examples))
     elif cfg.point_count_eval:
         evaluators.append(PointCountEval(cfg.num_wandb_examples))
     elif cfg.count_eval:
         evaluators.append(CountEval(cfg.num_wandb_examples))
     elif cfg.android_eval:
         evaluators.append(AndroidControlEval(cfg.num_wandb_examples))
+    if cfg.pointing_eval:
+        evaluators.append(PointingEval(cfg.num_wandb_examples))
     else:
         pass
     return InfEvaluator(evaluators)

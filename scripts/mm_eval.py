@@ -119,16 +119,17 @@ class ModelEvaluator:
                 n_layers=1,
                 max_sequence_length=4096,
                 additional_vocab_size=128,
-                vocab_size=32000,
+                vocab_size=50280,
+                embedding_size=50304,
                 rope=True,
-                embedding_size=None,
                 weight_tying=False,
                 vision_backbone=VisionBackboneConfig(
                     image_num_layers=1,
                 ),
+                pad_tokenizer=True,
                 crop_mode="resize",
                 tokenizer=TokenizerConfig(
-                    identifier="mm:hf-mistralai/Mistral-7B-v0.1"
+                    identifier='allenai/OLMoE-1B-7B-0924'
                 )
             )
             olmo_model = Molmo(model_cfg).to(device)

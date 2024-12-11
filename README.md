@@ -40,7 +40,7 @@ of vision encoding and integrating generative evaluations.
   - [**PixMo-CapQA**](https://huggingface.co/datasets/allenai/pixmo-cap-qa) (fine-tuning): synthetic instruction-tuning data, using a LLM to build QA pairs from dense captions of images
   - [**PixMo-Points**](https://huggingface.co/datasets/allenai/pixmo-points) (fine-tuning): images paired with referring expressions and annotated points, supporting grounding and counting
   - [**PixMo-Point-Explanations**](https://huggingface.co/datasets/allenai/pixmo-point-explanations) (fine-tuning): instruction-tuning data with explanations containing in-line points referring to parts of the image
-  - [**PixMo-Docs**](https://huggingface.co/datasets/allenai/pixmo-docs) (fine-tuning): synthetic image-question-answer triplets about various kinds of computer-generated charts, tables, diagrams and documents
+  - [**PixMo-Docs**](https://huggingface.co/datasets/allenai/pixmo-docs) (fine-tuning): synthetic image-question-answer triplets about various kinds of computer-generated charts, tables, diagrams and documents. Code available [here](https://github.com/allenai/pixmo-docs).
   - [**PixMo-Clocks**](https://huggingface.co/datasets/allenai/pixmo-clocks) (fine-tuning): virtual watch faces and time annotations
   - [**PixMo-Count**](https://huggingface.co/datasets/allenai/pixmo-count) (fine-tuning): diverse images with counting QA pairs
 
@@ -175,14 +175,14 @@ this repo, but also have a slightly different format.
     <td><a href="https://storage.googleapis.com/oe-training-public/Molmo-0924/MolmoE-1B-0924.tar">fine-tuned</a></td>
   </tr>
   <tr>
+    <td><a href="https://huggingface.co/allenai/Molmo-7B-O-0924">Molmo-7B-O-0924</a></td>
+    <td><a href="https://storage.googleapis.com/oe-training-public/Molmo-0924/Molmo-7B-O-0924-Pretrained.tar">pretrained</a></td>
+    <td><a href="https://storage.googleapis.com/oe-training-public/Molmo-0924/Molmo-7B-O-0924.tar">fine-tuned</a></td>
+  </tr>
+  <tr>
     <td><a href="https://huggingface.co/allenai/Molmo-7B-D-0924">Molmo-7B-D-0924</a></td>
     <td><a href="https://storage.googleapis.com/oe-training-public/Molmo-0924/Molmo-7B-D-0924-Pretrained.tar">pretrained</a></td>
     <td><a href="https://storage.googleapis.com/oe-training-public/Molmo-0924/Molmo-7B-D-0924.tar">fine-tuned</a></td>
-  </tr>
-  <tr>
-    <td><a href="https://huggingface.co/allenai/Molmo-7B-O-0924">Molmo-7B-D-0924</a></td>
-    <td><a href="https://storage.googleapis.com/oe-training-public/Molmo-0924/Molmo-7B-O-0924-Pretrained.tar">pretrained</a></td>
-    <td><a href="https://storage.googleapis.com/oe-training-public/Molmo-0924/Molmo-7B-O-0924.tar">fine-tuned</a></td>
   </tr>
   <tr>
     <td><a href="https://huggingface.co/allenai/Molmo-72B-0924">Molmo-72B-0924</a></td>
