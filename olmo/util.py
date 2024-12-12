@@ -580,13 +580,21 @@ def _s3_get_bytes_range(
     err: Optional[Exception] = None
     for attempt in range(1, max_attempts + 1):
         try:
-            return (
-                _get_s3_client(scheme)
-                .get_object(
-                    Bucket=bucket_name, Key=key, Range=f"bytes={bytes_start}-{bytes_start + num_bytes - 1}"
-                )["Body"]
-                .read()
-            )
+            if num_bytes is None:
+                assert not bytes_start
+                return (
+                    _get_s3_client(scheme)
+                    .get_object(Bucket=bucket_name, Key=key)["Body"]
+                    .read()
+                )
+            else:
+                return (
+                    _get_s3_client(scheme)
+                    .get_object(
+                        Bucket=bucket_name, Key=key, Range=f"bytes={bytes_start}-{bytes_start + num_bytes - 1}"
+                    )["Body"]
+                    .read()
+                )
         except boto_exceptions.ClientError as e:
             if e.response["ResponseMetadata"]["HTTPStatusCode"] == 404:
                 raise FileNotFoundError(f"{scheme}://{bucket_name}/{key}") from e

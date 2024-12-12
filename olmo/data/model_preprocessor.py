@@ -118,6 +118,24 @@ def resize_and_pad(
     return image, image_mask
 
 
+def metaclip_resize(image, desired_output_size):
+    image = torch.permute(torch.from_numpy(image), [2, 0, 1])
+    if torch.is_floating_point(image):
+        image = torchvision.transforms.Resize(
+            desired_output_size, InterpolationMode.BICUBIC, antialias=True)(image)
+        image = torch.clip(image, 0.0, 1.0)
+    else:
+        assert image.dtype == torch.uint8, "Expected float images or uint8 images, but got {}".format(image.dtype)
+        image = torchvision.transforms.Resize(
+            desired_output_size, InterpolationMode.BICUBIC, antialias=True)(image)
+        image = image.to(torch.float32)
+        image = torch.clip(image, 0, 255)
+        image = image / 255.0
+    resized = torch.permute(image, [1, 2, 0]).numpy()
+    image_mask = np.ones_like(resized[:, :, 0], dtype=np.bool_)
+    return resized, image_mask
+
+
 def siglip_resize_and_pad(
     image: np.ndarray,
     desired_output_size: Tuple[int, int],
@@ -312,6 +330,8 @@ class MultiModalPreprocessor:
             return siglip_resize_and_pad(image, output_size)
         elif self.resize == "dino":
             return dino_resize_and_pad(image, output_size)
+        elif self.resize == "metaclip":
+            return metaclip_resize(image, output_size)
         else:
             resize = "torch-bilinear" if self.resize == "default" else self.resize
             return resize_and_pad(

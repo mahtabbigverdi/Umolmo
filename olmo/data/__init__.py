@@ -14,7 +14,7 @@ from olmo.data.iterable_dataset_mixture import IterableDatasetMixture
 from olmo.data.model_preprocessor import Preprocessor, MultiModalPreprocessor
 from olmo.data.pixmo_datasets import PixMoPointExplanations as PixMoPointExplanationHF, \
     PixMoDocs, PixMoCount, PixMoPoints, PixMoCapQa, PixMoCap, PixMoPointExplanations, \
-    PixMoAskModelAnything, PixMoPointsEval
+    PixMoAskModelAnything, PixMoPointsEval, DenseCaptionEval, PixMoClocks
 from olmo.torch_util import get_global_rank, get_world_size
 
 log = logging.getLogger(__name__)
@@ -255,9 +255,13 @@ def get_dataset_by_name(dataset_name, split):
     if dataset_name in ["cockatoo_712k_sept6", "pixmo_cap"]:
         return PixMoCap(split, mode="captions")
 
+    elif dataset_name in ["clocks", "pixmo_clocks"]:
+        return PixMoClocks(split=split)
+
     if dataset_name == "pointing_eval":
         assert split == "test"
         return PixMoPointsEval()
+
 
     # Academic datasets
     if dataset_name == "android_control":
@@ -312,6 +316,9 @@ def get_dataset_by_name(dataset_name, split):
         return AI2D(split=split, boxes="both")
     if dataset_name == "clock_bench":
         return ClockBench(split=split)
+    if dataset_name == "dense_caption_eval":
+        assert split == "test"
+        return DenseCaptionEval()
     elif dataset_name == "math_vista_v2":
         if split == "validation":
             split = "testmini"

@@ -44,7 +44,7 @@ AUX = [
     "st_qa",
     "tally_qa",
 
-    # ("clocks", 250000),  # Downsample since it is huge
+    ("clocks", 250000),  # Downsample since it is huge
     "pixmo_docs_charts",
     "pixmo_docs_tables",
     "pixmo_docs_other",

@@ -65,7 +65,11 @@ def download():
         t0 = time.perf_counter()
         logging.info(f"Starting download for {dataset.__name__} ({ix+1}/{len(to_download)})")
         try:
-            dataset.download(n_procs=args.n_procs)
+            if dataset in PIXMO_DATASETS and dataset != PixMoDocs:
+                # Use our internal URLs so don't check SHAs
+                dataset.download(n_procs=args.n_procs, check_sha=False)
+            else:
+                dataset.download(n_procs=args.n_procs)
         except Exception as e:
             if args.ignore_errors:
                 logging.warning(f"Error downloading {dataset.__name__}: {e}")

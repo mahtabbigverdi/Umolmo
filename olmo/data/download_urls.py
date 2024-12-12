@@ -1,6 +1,7 @@
 import dataclasses
 import hashlib
 import io
+import json
 import logging
 import multiprocessing
 import os
@@ -24,6 +25,7 @@ from tqdm import tqdm
 
 from olmo.data.dataset import DATA_HOME
 from olmo.data.model_preprocessor import setup_pil
+from olmo.util import _s3_get_bytes_range
 
 if "PIXMO_IMAGE_DIR" in os.environ:
     PIXMO_IMAGES = os.environ["PIXMO_IMAGE_DIR"]
@@ -59,25 +61,50 @@ def compute_hash(string: Union[str, bytes]) -> str:
 
 def _download_images(args):
     url, image_sha, check_sha, cache_only, kwargs = args
+    internal_url = None
+    if isinstance(image_sha, tuple):
+        image_sha, internal_url = image_sha
     image_id = compute_hash(url)
     cache_file = join(PIXMO_IMAGES, image_id)
-
-    # Create and configure session
-    session = requests.Session()
-    retries = Retry(
-        total=3,
-        backoff_factor=1,
-        status_forcelist=[429]
-    )
-    session.mount('http://', HTTPAdapter(max_retries=retries))
-    session.mount('https://', HTTPAdapter(max_retries=retries))
 
     if exists(cache_file):
         with open(cache_file, "rb") as f:
             image_bytes = f.read()
     elif cache_only:
         return DownloadError(url, ValueError('Not in cache'))
+    elif internal_url is not None:
+        # Get the data from the s3 bucket using the s3 client
+        if url.startswith("s3://"):
+            parts = url[len("s3://"):].split("/")
+            bucket = parts[0]
+            key = "/".join(parts[1:])
+        else:
+            if url.startswith("https://"):
+                url = url[len("https://"):]
+            bucket = url.split(".")[0]
+            if bucket != "explore-multimodal-datasets":
+                raise ValueError(f'Unexpected bucket: {bucket}')
+            key = "/".join(url[len("https://"):].split("/")[1:])
+        image_bytes = _s3_get_bytes_range("s3", bucket, key, 0, None)
+
+        # Still double-check the internal file is an image
+        with warnings.catch_warnings(record=True) as w:
+            img = PIL.Image.open(io.BytesIO(image_bytes))
+            assert min(img.size) != 0
+        with open(cache_file + ".tmp", 'wb') as f:
+            f.write(image_bytes)
+        rename(cache_file + ".tmp", cache_file)
     else:
+        # Create and configure session
+        session = requests.Session()
+        retries = Retry(
+            total=3,
+            backoff_factor=1,
+            status_forcelist=[429]
+        )
+        session.mount('http://', HTTPAdapter(max_retries=retries))
+        session.mount('https://', HTTPAdapter(max_retries=retries))
+
         try:
             response = session.get(url, timeout=5)
             response.raise_for_status()
@@ -114,6 +141,23 @@ def _download_images(args):
     return url, cache_file
 
 
+def load_external_to_internal_url_map() -> Dict[str, str]:
+    logging.info("Loading external to internal url map")
+    with open(join(DATA_HOME, "pixmo_datasets", "external_to_internal_url_map.json")) as f:
+        return json.load(f)
+
+
+def add_internal_urls(dataset: datasets.Dataset, _url_map={}):
+    if not _url_map:
+        _url_map.update(load_external_to_internal_url_map())
+    original_size = len(dataset)
+    dataset = dataset.filter(lambda x: x in _url_map, input_columns="image_url")
+    if len(dataset) != original_size:
+        logging.warning(f"{original_size - len(dataset)} images did not have internal URLs")
+    dataset = dataset.add_column("internal_image_url", [_url_map[x] for x in dataset["image_url"]])
+    return dataset
+
+
 def download_pixmo_urls(
     data: datasets.Dataset,
     n_processes,
@@ -127,6 +171,9 @@ def download_pixmo_urls(
         urls_and_shas = list(dict(zip(data["image_url"], data["image_sha256"])).items())
     else:
         urls_and_shas = [(url, None) for url in list(set(data["image_url"]))]
+    if "internal_url" in data:
+        urls_and_shas = [(url, (sha, internal)) for (url, sha), internal
+                         in zip(urls_and_shas, data["internal_url"])]
 
     # Randomize order so resuming is more convenient, speed is more predictable,
     # and to distribute requests across different domains

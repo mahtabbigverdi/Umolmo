@@ -1,3 +1,4 @@
+import json
 import logging
 import re
 import shutil
@@ -5,9 +6,14 @@ from os.path import join, exists
 
 import datasets
 import numpy as np
+import torchvision
+from torchvision.transforms import functional as VF
+from PIL import ImageOps
+import PIL
+from torchvision.transforms.functional import affine, InterpolationMode
 
-from olmo.data.dataset import DATA_HOME, Dataset
-from olmo.data.download_urls import download_pixmo_urls, filter_and_group_data
+from olmo.data.dataset import DATA_HOME, Dataset, DatasetBase
+from olmo.data.download_urls import download_pixmo_urls, filter_and_group_data, add_internal_urls
 
 if DATA_HOME is not None:
     PIXMO_DATASETS = join(DATA_HOME, "pixmo_datasets")
@@ -326,6 +332,7 @@ class PixMoCap(Dataset):
         if exists(local_name):
             return
         ds = datasets.load_dataset("allenai/pixmo-cap", split="train")
+        ds = add_internal_urls(ds)
         if sample:
             ds = ds.take(sample)
         url_to_filename = download_pixmo_urls(ds, n_procs, check_sha=check_sha, cache_only=cache_only, verify=VERIFY)
@@ -335,7 +342,7 @@ class PixMoCap(Dataset):
             "image", [url_to_filename[x] for x in filtered_dataset["image_url"]])
         save_local_dataset(filtered_dataset, local_name, n_procs, n_val=n_val)
 
-    def __init__(self, split, mode, prefix_how_many=True, keep_in_memory=False):
+    def __init__(self, split, mode, prefix_how_many=True, keep_in_memory=False, flatten=False):
         if split not in ["train", "validation"]:
             raise ValueError(f"Unknown split {split}")
         if mode not in ["transcripts", "captions", "transcript_and_caption", "transcript1_and_caption"]:
@@ -458,3 +465,168 @@ class PixMoPointsEval(Dataset):
             )
         )
 
+
+class DenseCaptionEval(Dataset):
+
+    @classmethod
+    def download(cls, n_procs=1):
+        raise NotImplementedError()
+
+    def __init__(self):
+        with open(join(PIXMO_DATASETS, "dense-caption-eval", "test.jsonl"), "r") as f:
+            self.lines = f.readlines()
+
+    def __len__(self):
+        return len(self.lines)
+
+    def get(self, item, rng):
+        ex = json.loads(self.lines[item])
+        return dict(
+            image=join("/weka/oe-training-default/mm-olmo/torch_datasets/pixmo_images", ex["image"]),
+            style="long_caption",
+            metadata=dict(
+                image_url=ex["url"],
+            )
+        )
+
+
+class PixMoClocks(DatasetBase):
+
+    @classmethod
+    def download(cls, n_procs=1):
+        raise NotImplementedError("Created from teh original tfrecords")
+
+    def __init__(self, split, aug=True):
+        self.aug = aug
+        super().__init__(split)
+
+    def load(self):
+        split = self.split
+        src = join(PIXMO_DATASETS, "clocks", f"{split}.jsonl")
+        logging.info(f"Loading pixmo clock data from {src}")
+        with open(src) as f:
+            return f.readlines()
+
+    def get(self, item, rng: np.random.RandomState):
+        ex = json.loads(self.data[item])
+
+        time_format = ex["time_format"]
+        shows_seconds = ex["shows_seconds"]
+        hour, minute, second = [int(ex[k]) for k in ["hour", "minute", "second"]]
+        if hour == 0:
+            hour_str = "12"  # Midnight of the previous day
+            am_pm = "AM"
+        elif hour > 12:
+            am_pm = "PM"
+            hour_str = hour - 12
+        else:
+            hour_str = hour
+            am_pm = "AM"
+        hour_str = str(hour_str)
+        minute_str = str(minute)
+        if len(minute_str) == 1:
+            minute_str = "0" + minute_str
+        second_str = str(second)
+
+        if len(second_str) == 1:
+            second_str = "0" + second_str
+
+        prefix = "The time shown is "
+        if time_format == "The time is not shown":
+            text = "The time is not shown in the image."
+            hour, minute, second = -1, -1, -1
+        else:
+            if not shows_seconds:
+                second = -1
+            if time_format == "12 hour clock (without AM/PM)" and shows_seconds:
+                if hour >= 12:
+                    hour = hour - 12
+                time = "".join([hour_str, ":", minute_str, ":", second_str])
+            elif time_format == "12 hour clock (with AM/PM)" and shows_seconds:
+                time = "".join([hour_str, ":", minute_str, ":", second_str, " ", am_pm])
+            elif time_format == "12 hour clock (with AM/PM)" and not shows_seconds:
+                time = "".join([hour_str, ":", minute_str, " ", am_pm])
+            elif time_format == "12 hour clock (without AM/PM)" and not shows_seconds:
+                if hour >= 12:
+                    hour = hour - 12
+                time = "".join([hour_str, ":", minute_str])
+            else:
+                raise RuntimeError()
+            text = "".join(["The time shown is ", time])
+
+        image = PIL.Image.open(join(PIXMO_DATASETS, "clocks", "images", ex["image"]))
+        # Cutoff the black sharding at the bottom of every image
+        image = image.crop((0, 0, image.width, image.height-120))
+
+        if self.aug:
+            sel = rng.random()
+            if sel < 0.1:
+                # Straight on
+                shear_x = 0.
+                shear_y = 0.
+                rotation = 0.
+            elif sel < 0.5:
+                # Normal looking
+                shear_x = rng.uniform(-10, 10)
+                shear_y = rng.uniform(-10, 10)
+                rotation = rng.uniform(-25, 25)
+            else:
+                if rng.random() > 0.5:
+                    shear_x = rng.uniform( -30, 30)
+                    shear_y = rng.uniform( -30, 30)
+                else:
+                    shear_x = rng.uniform( -10, 10)
+                    shear_y = rng.uniform( -10, 10)
+                rot_rng = rng.random()
+                if rot_rng < 0.2:
+                    rotation = rng.uniform( -25, 25)
+                elif rot_rng < 0.6:
+                    rotation = rng.uniform( -80, 80)
+                else:
+                    rotation = rng.uniform( -180, 180)
+
+            if rng.random() > 0.5:
+                scale = rng.uniform(0.3, 2)
+            else:
+                scale = rng.uniform(0.3, 1)
+
+            # Avoid parts of the clock getting cutoff by the affine transform
+            image = torchvision.transforms.Pad([200, 200, 200, 200], fill=255)(image)
+            shear_y, shear_x = 0, 0
+            image = affine(
+                image,
+                rotation,
+                translate=[0, 0],
+                scale=scale,
+                shear=[shear_x, shear_y],
+                interpolation=InterpolationMode.BILINEAR,
+                fill=255
+            )
+
+            # Crop to whitespace
+            bbox = ImageOps.invert(image).getbbox()
+            image = image.crop(bbox)
+
+            # Translate so the clock is not in the center
+            height, width = image.height, image.width
+            if rng.random() < 0.2:
+                h_pad = rng.randint(0, height//2, (2,), dtype=np.int32)
+                w_pad = rng.randint(0, width//2, (2,), dtype=np.int32)
+            else:
+                h_pad = rng.randint(0, height*2, (2,), dtype=np.int32)
+                w_pad = rng.randint(0, width*2, (2,), dtype=np.int32)
+            image = torchvision.transforms.Pad([h_pad[0], w_pad[0], h_pad[1], w_pad[1]], fill=255)(image)
+
+            # Mild color jitter
+            image = VF.adjust_hue(image, rng.uniform(-0.05, 0.05))
+            image = VF.adjust_brightness(image, rng.uniform(0.85, 1.2))
+            image = VF.adjust_saturation(image, rng.uniform(0.8, 1.2))
+            image = VF.adjust_contrast(image, rng.uniform(0.8, 1.2))
+
+        return dict(
+            image=np.array(image),
+            prompt="What time is being shown?",
+            text=text,
+            metadata=dict(hour=hour, second=second, minute=minute),
+            style="clocks"
+        )

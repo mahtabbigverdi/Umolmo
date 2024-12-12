@@ -122,7 +122,7 @@ class InfDatasetEvaluator:
         eval_dataloader = self.dataloader
         eval_it = iter(eval_dataloader)
         n_steps = self.n_steps
-        if n_steps is not None and n_steps < len(self.dataloader):
+        if n_steps is not None and 0 <= n_steps < len(self.dataloader):
             eval_it = itertools.islice(eval_it, 0, n_steps)
             total_steps = n_steps
         else:
