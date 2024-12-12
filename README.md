@@ -308,9 +308,56 @@ We recommend ensuring the data is downloaded and then using the environment vari
 `HF_DATASETS_OFFLINE=1` to ensure the nodes don't flood HF with requests as they all initialize 
 and then potentially get rate limited.
 
-## Beaker
-`Dockerfile` can be used to build a beaker image. I have one at `chrisc/molmo-v2`.
+## Captioner Evaluation
+We generally evaluate captioning offline on the `dense_caption_eval` task, the prediction file
+can be built with:
 
+`torchrun --nproc-per-node 8 launch_scripts/eval_captioner.py /weka/oe-training-default/chrisc/cockatoo/models/dense-captioner-v21-olmo1.8/lr3-9-3/step14700-unsharded`
+
+Then the eval script can be run (and OPENAI_API_KEY must be set in the environment)
+
+`python3 scripts/gpt_dense_caption_eval.py /weka/oe-training-default/chrisc/cockatoo/models/dense-captioner-v21-olmo1.8/lr3-9-3/predictions-ck14700-dense_caption_eval-validation/predictions.json --sample 1500 --metrics all`
+
+
+## Beaker
+`Dockerfile` can be used to build a beaker image. I have one built at `chrisc/molmo-v2`.
+Some ganty setting to use:
+ 
+Setup access to the data
+```
+--env HF_DATASETS_CACHE=/weka/oe-training-default/mm-olmo/hf_datasets
+--env MOLMO_DATA_DIR=/weka/oe-training-default/mm-olmo
+--env HF_DATASETS_OFFLINE=1
+--weka oe-training-default:/weka/oe-training-default
+```
+
+Setup wandb and access keys (first store your keys as beaker secrets):
+```
+--env WANDB_ENTITY=prior-ai2 
+--env WANDB_PROJECT=cockatoo
+--env-secret WANDB_API_KEY=YOUR_WANDB_KEY_SECRET_NAME
+--env-secret HF_ACCESS_TOKEN=YOUR_HF_KEY_SECRET_NAME
+```
+To use our weka datasets.
+
+Runs for research on Molmo can use:
+```
+--budget ai2/oe-training
+--workspace ai2/mm-olmo
+```
+
+Be default full activation checkpointing is used, it can be worth
+experimenting with `--activation_checkpointing=one_in_two`
+to get more performance.
+
+For reference here is a complete example of a gantry command to train 
+the captioner (please make sure to use you access keys and save folders before running it):
+
+`
+gantry run --name dense-captioner-ablations-v2_from-molmo-metaclip_12-11-35-36 --budget ai2/oe-training --preemptible --priority high --cluster ai2/jupiter-cirrascale-2 --no-nfs --gpus 8 --shared-memory 10GiB --venv base --beaker-image chrisc/molmo-v2 --install echo "no install" --workspace ai2/mm-olmo --env-secret WANDB_API_KEY=CHRISC_WANDB_API_KEY --env-secret HF_ACCESS_TOKEN=CHRISC_HF_ACCESS_TOKEN --env OMP_NUM_THREADS=8 --env HF_DATASETS_CACHE=/weka/oe-training-default/mm-olmo/hf_datasets --env MOLMO_DATA_DIR=/weka/oe-training-default/mm-olmo --env HF_DATASETS_OFFLINE=1 --env WANDB_ENTITY=prior-ai2 --env WANDB_PROJECT=cockatoo --description  launch_scripts/train_captioner.py qwen2_7b --save_overwrite --vision_backbone metaclip_l14_336 --weka oe-training-default:/weka/oe-training-default --replicas 4 --leader-selection --host-networking --propagate-failure --propagate-preemption --env LOG_FILTER_TYPE=local_rank0_only --env NCCL_SOCKET_IFNAME=ib --env NCCL_IB_HCA=^=mlx5_bond_0 --env OLMO_SHARED_FS=1 -- /bin/bash -c torchrun --nnodes 4:4 --rdzv_backend=c10d --rdzv_id=42 --rdzv_conf="read_timeout=600" --rdzv_endpoint=$BEAKER_LEADER_REPLICA_HOSTNAME:29401 --nproc-per-node 8 launch_scripts/train_captioner.py qwen2_7b --save_overwrite --vision_backbone metaclip_l14_336 --wandb.group=dense-captioner-ablations-v2 --wandb.name=from-molmo-metaclip --save_folder=/weka/oe-training-default/chrisc/cockatoo/models/dense-captioner-ablations-v2/from-molmo-metaclip
+`
+
+I recommend setting up a script to setup these defaults args.
 
 ## Citation
 

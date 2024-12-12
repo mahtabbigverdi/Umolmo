@@ -119,7 +119,7 @@ if __name__ == "__main__":
             "doc_qa",
             "ai2_diagram_v2_mix_transparent",
             "coco_2014_vqa_multi",
-            # "clocks",
+            "clocks",
             "android_control_ll",
             "pointing_eval:test",
             "countbench_qa:huggingface"
