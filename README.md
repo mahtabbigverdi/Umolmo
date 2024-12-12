@@ -308,6 +308,10 @@ We recommend ensuring the data is downloaded and then using the environment vari
 `HF_DATASETS_OFFLINE=1` to ensure the nodes don't flood HF with requests as they all initialize 
 and then potentially get rate limited.
 
+## Beaker
+`Dockerfile` can be used to build a beaker image. I have one at `chrisc/molmo-v2`.
+
+
 ## Citation
 
 ```bibtex
