@@ -194,6 +194,7 @@ if __name__ == "__main__":
         submixture = get_training_mixture(submixture)
         root_size_mixture.append(RootSizeMixture(rate, submixture))
 
+    num_workers = 2
     evaluations = []
     for task in eval_tasks:
         evaluation = get_evaluation(
@@ -201,7 +202,7 @@ if __name__ == "__main__":
             args.inf_seq_len,
             batch_size=get_world_size()*args.device_inf_batch_size,
             max_examples=max_inf_examples,
-            num_workers=2
+            num_workers=num_workers
         )
         evaluation.data.persistent_workers = True
         evaluations.append(evaluation)
@@ -230,11 +231,11 @@ if __name__ == "__main__":
             split="train",
             drop_last=True,
             sequence_length=args.seq_len,
-            num_workers=2,
+            num_workers=num_workers,
             pad="to_max",
             shuffle_messages=True,
             pin_memory=True,
-            seed=50189
+            seed=50189,
         ),
         ft_connector=True,
         ft_llm=True,
