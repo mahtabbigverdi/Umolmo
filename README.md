@@ -320,7 +320,7 @@ Then the eval script can be run (and OPENAI_API_KEY must be set in the environme
 
 
 ## Beaker
-`Dockerfile` can be used to build a beaker image. I have one built at `chrisc/molmo-v2`.
+`Dockerfile` can be used to build a beaker image. I have one built at `chrisc/molmo-torch2.4.1`.
 Some ganty setting to use:
  
 Setup access to the data
