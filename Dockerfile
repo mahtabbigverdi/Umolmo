@@ -1,8 +1,8 @@
 # From https://github.com/allenai/OLMo-core/blob/e279fd8191a8cc466481f521a3cab10c27deb693/src/Dockerfile
 # NOTE: make sure CUDA_VERSION and TORCH_CUDA_VERSION always match, except for punctuation
-ARG CUDA_VERSION="12.4"
-ARG TORCH_CUDA_VERSION="124"
-ARG TORCH_VERSION="2.5.1"
+ARG CUDA_VERSION="12.1"
+ARG TORCH_CUDA_VERSION="121"
+ARG TORCH_VERSION="2.4.1"
 
 #########################################################################
 # Build image
@@ -26,10 +26,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN pip install --upgrade --no-cache-dir pip wheel packaging "setuptools<70.0.0" ninja
 
 # Build megablocks, grouped-gemm, stanford-stk
-ENV TORCH_CUDA_ARCH_LIST="8.0 9.0"
-ENV GROUPED_GEMM_CUTLASS="1"
-ARG MEGABLOCKS_VERSION="megablocks[gg] @ git+https://git@github.com/epwalsh/megablocks.git@epwalsh/deps"
-RUN pip wheel --no-build-isolation --no-cache-dir "${MEGABLOCKS_VERSION}"
+#ENV TORCH_CUDA_ARCH_LIST="8.0 9.0"
+#ENV GROUPED_GEMM_CUTLASS="1"
+#ARG MEGABLOCKS_VERSION="megablocks[gg] @ git+https://git@github.com/epwalsh/megablocks.git@epwalsh/deps"
+#RUN pip wheel --no-build-isolation --no-cache-dir "${MEGABLOCKS_VERSION}"
 
 # Build flash-attn.
 ARG FLASH_ATTN_WHEEL=https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.2.post1/flash_attn-2.7.2.post1+cu12torch2.5cxx11abiFALSE-cp311-cp311-linux_x86_64.whl
@@ -38,7 +38,7 @@ RUN wget ${FLASH_ATTN_WHEEL}
 # Only keep the target wheels and dependencies with CUDA extensions.
 RUN echo "Built wheels:" \
     && ls -lh . \
-    && ls -1 | grep -Ev 'megablocks|grouped_gemm|stanford_stk|flash_attn' | xargs rm \
+#    && ls -1 | grep -Ev 'megablocks|grouped_gemm|stanford_stk|flash_attn' | xargs rm \
     && echo "Final wheels:" \
     && ls -lh .
 
