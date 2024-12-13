@@ -141,6 +141,7 @@ def main(cfg: TrainConfig) -> None:
     barrier()
 
     # Initialize the model.
+    logging.info(f"Building model")
     olmo_model = Molmo(cfg.model)
 
     # Freeze model components.
@@ -180,6 +181,7 @@ def main(cfg: TrainConfig) -> None:
             if cfg.model.init_device == "meta":
                 olmo_model.to_empty(device="cpu")
             if cfg.initial_model_checkpoint:
+                logging.warning(f"Loading model checkpoint {cfg.initial_model_checkpoint}")
                 state_dict = torch.load(join(cfg.initial_model_checkpoint, "model.pt"), map_location="cpu")
                 olmo_model.load_state_dict(state_dict)
                 del state_dict
