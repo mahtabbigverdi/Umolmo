@@ -157,6 +157,11 @@ def setup_logging(log_filter_type: LogFilterType = LogFilterType.rank0_only) -> 
     logging.basicConfig(handlers=[handler], level=logging.INFO)
 
     logging.captureWarnings(True)
+
+    if os.environ.get("HF_DATASETS_OFFLINE"):
+        # Stop HF warning us about every single dataset
+        logging.getLogger("datasets.load").setLevel(logging.ERROR)
+        logging.getLogger("datasets.packaged_modules.cache.cache").setLevel(logging.ERROR)
     logging.getLogger("urllib3").setLevel(logging.ERROR)
 
 
