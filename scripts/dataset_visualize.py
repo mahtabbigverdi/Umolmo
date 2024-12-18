@@ -90,7 +90,7 @@ def main():
     output_file = join(args.output_dir, output_name)
     print(f"Getting qual. examples for {name}")
 
-    pre = torch_preprocess = Preprocessor(
+    pre = Preprocessor(
         DataFormatter(
             prompt_templates=args.prompt_templates,
             message_format=args.message_format,
