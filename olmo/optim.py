@@ -729,10 +729,10 @@ def get_multimodal_param_groups(cfg: TrainConfig, model: nn.Module) -> List[Dict
 
     all_params = {}
 
-    connector_params = list(Molmo.get_connector_parameters())
-    vit_params = list(Molmo.get_vit_parameters())
-    llm_params = list(Molmo.get_llm_parameters())
-    wd_exclusions = list(Molmo.get_weight_decay_exclusions())
+    connector_params = list(model.get_connector_parameters())
+    vit_params = list(model.get_vit_parameters())
+    llm_params = list(model.get_llm_parameters())
+    wd_exclusions = list(model.get_weight_decay_exclusions())
     for mn, m in model.named_modules():
         for pn, p in m.named_parameters():
             # NOTE: because named_modules and named_parameters are recursive
