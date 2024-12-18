@@ -18,7 +18,7 @@ numpy_to_torch_dtype_dict = {
 }
 
 
-def _collate(tensors, max_sequence_length=None, dtype=None, pad=False, pad_value=-1):
+def _collate(tensors, max_sequence_length=None, dtype=None, pad=None, pad_value=-1):
     tensor = [x for x in tensors if x is not None][0]
     if pad == "to_max":
         max_len = max_sequence_length
@@ -29,6 +29,8 @@ def _collate(tensors, max_sequence_length=None, dtype=None, pad=False, pad_value
         if pad == "to_128":
             if len(tensor.shape) == 1:
                 max_len = 128 * ((max_len + 127) // 128)
+        elif pad is None:
+            pass
         elif pad is not None:
             raise NotImplementedError(pad)
 
