@@ -92,7 +92,7 @@ class Vqa2(Dataset):
     def download(cls, n_procs=1):
         VQAv2BuilderMultiQA(DOWNLOADS).download_and_prepare()
 
-    def __init__(self, split, multi_question=False):
+    def __init__(self, split, multi_question=False, sample=None):
         assert split in ["train", "validation", "test"]
         self.multi_question = multi_question
         self.dataset = VQAv2BuilderMultiQA(DOWNLOADS).as_dataset(split=split)
@@ -108,7 +108,13 @@ class Vqa2(Dataset):
                         image_id=item["image_id"],
                         question_id=q["question_id"],
                     ))
+            if sample:
+                logging.info(f"Sampling {sample} of {len(flattened_data)} ({100*sample/len(flattened_data)}:0.1f)")
+                np.random.RandomState(9123).shuffle(flattened_data)
+                flattened_data = flattened_data[:sample]
             self.dataset = flattened_data
+        else:
+            assert sample is None
 
     def __len__(self):
         return len(self.dataset)
