@@ -383,7 +383,7 @@ class MultiModalPreprocessor:
             ]
             joint = np.concatenate(joint, 0, dtype=np.int32)
             return np.expand_dims(patches, 0), joint, None, img_mask
-        if self.crop_mode == "overlap-and-resize-c2":
+        if self.crop_mode in ["overlap-and-resize-c2", "overlap-and-resize"]:
             # Discard this many patches from the (left/top, right/bottom) of crops
             left_margin, right_margin = overlap_margins
             # Required for compatibility with image pooling
@@ -519,6 +519,9 @@ class MultiModalPreprocessor:
                 joint,
                 [self.image_end_token_id]
             ]
+
+            if self.crop_mode == "overlap-and-resize":
+                return patches, np.concatenate(joint, 0), patch_ordering, img_mask
 
             # Finally do the same for the global image
             resized, _ = self.resize_image(image, base_image_input_size, is_training, rng)
