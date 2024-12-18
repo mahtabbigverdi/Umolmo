@@ -345,7 +345,7 @@ class PixMoCap(Dataset):
     def __init__(self, split, mode, prefix_how_many=True, keep_in_memory=False, flatten=False):
         if split not in ["train", "validation"]:
             raise ValueError(f"Unknown split {split}")
-        if mode not in ["transcripts", "captions", "transcript_and_caption", "transcript1_and_caption"]:
+        if mode not in ["transcript", "transcripts", "captions", "transcript_and_caption", "transcript1_and_caption"]:
             raise ValueError(mode)
         self.split = split
         self.mode = mode
@@ -362,7 +362,7 @@ class PixMoCap(Dataset):
         transcripts = ex.pop("transcripts")
         if self.mode in ["captions", "transcript_and_caption", "transcript1_and_caption"]:
             messages.append(dict(text=caption, style="long_caption"))
-        if self.mode in ["transcript_and_caption", "transcript1_and_caption"]:
+        if self.mode in ["transcript_and_caption", "transcript1_and_caption", "transcript"]:
             if self.mode == "transcript_and_caption":
                 ix = rng.randint(0, len(transcripts))
             else:
