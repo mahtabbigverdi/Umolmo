@@ -55,7 +55,7 @@ class IterableDatasetMixture(torch.utils.data.IterableDataset[Dict[str, Any]]):
             total = counts.sum()
             for _ in range(self.global_batch_size):
                 # Sample the most under-represented dataset
-                ix = np.argmax(np.abs(counts/total - self.mixture_rates))
+                ix = np.argmax(self.mixture_rates - counts/total)
                 out.append(ix)
                 counts[ix] += 1
                 total += 1
