@@ -255,7 +255,7 @@ def get_dataset_by_name(dataset_name, split):
     if dataset_name in ["cockatoo_712k_sept6", "pixmo_cap"]:
         return PixMoCap(split, mode="captions")
 
-    elif dataset_name in ["clocks", "pixmo_clocks"]:
+    elif dataset_name in ["pixmo_clocks"]:
         return PixMoClocks(split=split)
 
     if dataset_name == "pointing_eval":

@@ -59,7 +59,7 @@ def get_evaluator(name) -> EvaluatorConfig:
         return EvaluatorConfig(point_count_eval=True)
     elif name.startswith("real_world_qa"):
         return EvaluatorConfig(vqa_eval="real_world_qa_score")
-    elif name == "clocks":
+    elif name == "pixmo_clocks":
         return EvaluatorConfig(clock_eval=True)
     elif name == "pointing_eval":
         return EvaluatorConfig(pointing_eval=True)
@@ -116,7 +116,7 @@ def get_evaluation(name, seq_len, batch_size, max_examples, num_workers=2) -> Da
         max_new_tokens = 768  # Can have counts of 20+ so make sure there is room
     elif name in ["pointing_eval", "pointing"]:
         max_new_tokens = 192  # 192 is enought for counts <=10 in the point tag format
-    elif "countbench_qa" in name or "fast_flickr_count_qa" in name:
+    elif "countbench_qa" in name or "pixmo_count" in name:
         max_new_tokens = 192
     elif name == "android_control_hl_cot":
         max_new_tokens = 64

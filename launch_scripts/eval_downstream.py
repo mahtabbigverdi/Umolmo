@@ -76,7 +76,8 @@ def main():
             tasks += [
                 "android_control_ll",
                 "countbench_qa:huggingface",
-                "pixmo_count_counting:validation"
+                "pixmo_count_counting:validation",
+                "pointing_eval:test",
             ]
         elif task == "high-res":
             # high-res validation tasks
@@ -94,6 +95,7 @@ def main():
                 "mmmu_test",
                 "real_world_qa_no_instruction:test",
                 "math_vista_v2",
+                "pixmo_clocks:validation"
             ]
         elif task == "test-high-res":
             # high-res test tasks
