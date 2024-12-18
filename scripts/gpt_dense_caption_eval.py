@@ -7,8 +7,6 @@ from datetime import datetime
 from json import JSONEncoder
 from pathlib import Path
 
-import tensorflow as tf
-from tensorflow.io import gfile
 import wandb
 
 import argparse
@@ -548,18 +546,18 @@ class NumpyArrayEncoder(JSONEncoder):
 def get_wandb_run_id(prediction_file):
     model_dir = dirname(prediction_file)
     wandb_dir = join(model_dir, 'wandb')
-    if gfile.exists(join(wandb_dir, "wandb")):
+    if exists(join(wandb_dir, "wandb")):
         wandb_dir = join(wandb_dir, "wandb")
-    if not gfile.exists(wandb_dir):
+    if not exists(wandb_dir):
         logging.warning(f"Wandb directory not found in {model_dir}")
         return None
 
-    run_dirs = [d for d in gfile.listdir(wandb_dir) if d.startswith('run-')]
+    run_dirs = [d for d in os.listdir(wandb_dir) if d.startswith('run-')]
     if not run_dirs:
         logging.warning(f"No run directories found in {wandb_dir}")
         return None
 
-    latest_run_dir = max(run_dirs, key=lambda d: gfile.stat(join(wandb_dir, d)).mtime_nsec)
+    latest_run_dir = max(run_dirs, key=lambda d: os.stat(join(wandb_dir, d)).st_mtime)
     latest_run_id = latest_run_dir.split('-')[-1]
     return latest_run_id
 
@@ -713,13 +711,13 @@ def main():
             prefix = dirname(file) + f"/{prefix}"
 
         results_file = prefix + "results_v3.json"
-        if args.save_metrics and tf.io.gfile.exists(results_file):
+        if args.save_metrics and exists(results_file):
            logging.info(f"Loading metrics from {results_file}")
-           with tf.io.gfile.GFile(results_file) as f:
+           with open(results_file) as f:
                results = json.load(f)
         else:
             try:
-                with tf.io.gfile.GFile(file) as f:
+                with open(file) as f:
                     captions = json.load(f)
             except Exception as e:
                 if len(target_files) == 1:
@@ -747,7 +745,7 @@ def main():
             if args.save_metrics:
                 metric_file = prefix + "all-results-v3.json"
                 logging.info(f"Saving eval to {metric_file}")
-                with tf.io.gfile.GFile(metric_file, "w") as f:
+                with open(metric_file, "w") as f:
                     json.dump(dict(
                         metrics=metrics,
                         sample=args.sample,
@@ -775,7 +773,7 @@ def main():
             results = {k: float(v) for k, v in results.items()}
             if args.save_metrics:
                 logging.info(f"Saving scores to {results_file}")
-                with tf.io.gfile.GFile(results_file, "w") as f:
+                with open(results_file, "w") as f:
                     json.dump(dict(results), f, indent=2)
 
         if name is not None:
@@ -819,10 +817,10 @@ def main():
                 url = f"https://wandb.ai/prior-ai2/cockatoo/runs/{run.id}"
 
             loss_file = "/".join(file.split("/")[:-2]) + f"/loss-ck{step}-dense_caption_loss.json"
-            if not gfile.exists(loss_file):
+            if not exists(loss_file):
                 loss_file = "/".join(file.split("/")[:-3]) + f"/loss-ck{step}-dense_caption_loss.json"
-            if gfile.exists(loss_file) and loss_file != file:
-                with gfile.GFile(loss_file) as f:
+            if exists(loss_file) and loss_file != file:
+                with open(loss_file) as f:
                     loss_data = json.load(f)
                 results.update({f"offline/{k}": v for k, v in loss_data.items()})
 
