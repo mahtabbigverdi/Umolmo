@@ -26,7 +26,7 @@ from ..html_utils import build_html_table, postprocess_prompt, BoxesToVisualize,
     get_html_image_with_boxes
 from ..torch_util import (
     get_global_rank,
-    get_world_size,
+    get_world_size, barrier,
 )
 from ..util import flatten_list, extract_points, extract_bboxes, extract_points_from_point_count
 
@@ -604,9 +604,11 @@ class MathVistaEval(Evaluator):
             _args.append((pred, metadatas[ex_ix], get_openai_key()))
 
         scores = []
+        barrier()
         with ThreadPoolExecutor(max_workers=self.n_threads) as pool:
             for score in pool.map(_math_vista_score, _args):
                 scores.append(score)
+        barrier()
 
         out = dict(score=mean_metric(scores))
         if self.n_to_log:
