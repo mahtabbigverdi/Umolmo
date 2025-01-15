@@ -1610,9 +1610,6 @@ class Molmo(nn.Module):
         ):
             raise OLMoConfigurationError("n layers must be divisible by block group size")
 
-        torch.backends.cuda.enable_flash_sdp(True)
-        torch.backends.cuda.enable_mem_efficient_sdp(False)  # this is super slow so make sure torch won't use it
-
         wte = None
         if self.config.additional_vocab_size is not None:
             wte = Embedding(
@@ -1868,7 +1865,7 @@ class Molmo(nn.Module):
 
         if self.config.use_position_ids and attention_mask is None:
             attention_mask = input_ids != -1
-        
+
         if subsegment_ids is not None:
             assert not use_cache, "Subsegment_ids cannot be used with cache."
             subsegment_mask = subsegment_ids.unsqueeze(2) <= subsegment_ids.unsqueeze(1)
@@ -1876,6 +1873,9 @@ class Molmo(nn.Module):
                 subsegment_mask.to(attention_mask.dtype) *
                 attention_mask.unsqueeze(2) *
                 attention_mask.unsqueeze(1))
+            # Allow self-attention for padding tokens, this prevents NaNs
+            # for some SDPA implementations
+            attention_mask = attention_mask | torch.eye(seq_len, device=attention_mask.device, dtype=torch.bool)[None, :, :]
             if position_ids is None:
                 raise ValueError(f"Positioned ids must be given if using subsegment_ids")
         else:
@@ -1929,45 +1929,30 @@ class Molmo(nn.Module):
             x = x * (self.config.d_model ** 0.5)
 
         # Transform the attention mask into what the blocks expect.
+        if len(attention_mask.shape) == 2:
+            attention_mask = attention_mask[:, :past_length + seq_len]
+            attention_mask = attention_mask[:, None, None, :]
+        else:
+            attention_mask = attention_mask.unsqueeze(1)
+
+        casual_mask = torch.tril(torch.ones(
+            past_length + seq_len, past_length + seq_len,
+            device=x.device, dtype=torch.bool))[None, None, :, :]
+        mask_len = seq_len
         if attention_mask is not None:
-            # shape: (batch_size, 1, 1, seq_len)
-            if len(attention_mask.shape) == 2:
-                attention_mask = attention_mask[:, :past_length + seq_len]
-                attention_mask = attention_mask.to(dtype=torch.float).view(batch_size, -1)[:, None, None, :]
-            else:
-                attention_mask = attention_mask.unsqueeze(1).to(dtype=torch.float)
-            attention_mask = (1.0 - attention_mask) * torch.finfo(attention_mask.dtype).min
+            mask_len = attention_mask.shape[-1]
+        elif past_key_values is not None:
+            mask_len = past_key_values[0][0].shape[-2] + seq_len
+        casual_mask = casual_mask[:, :, :mask_len, :mask_len]
 
-        # Merge attention mask with attention bias.
-        if (
-            attention_bias is not None
-            or attention_mask is not None
-            # NOTE (epwalsh): we need to initialize the attn bias in order for attn to work properly
-            # with key+value cache. Otherwise `F.scaled_dot_product_attention()` doesn't seem to compute
-            # scores correctly.
-            or past_key_values is not None
-        ):
-            if attention_bias is None:
-                attention_bias = get_causal_attention_bias(self.__cache, past_length + seq_len, x.device)
-            elif attention_bias.dtype in (torch.int8, torch.bool):
-                attention_bias = attention_bias.to(dtype=torch.float)
-                attention_bias.masked_fill_(attention_bias == 0.0, torch.finfo(attention_bias.dtype).min)
-
-            # Transform to the right shape and data type.
-            mask_len = seq_len
-            if attention_mask is not None:
-                mask_len = attention_mask.shape[-1]
-            elif past_key_values is not None:
-                mask_len = past_key_values[0][0].shape[-2] + seq_len
-            attention_bias = attention_bias[:, :, :mask_len, :mask_len].to(dtype=torch.float)
-
-            # Add in the masking bias.
-            if attention_mask is not None:
-                attention_bias = attention_bias + attention_mask
-                # Might get -infs after adding attention mask, since dtype.min + dtype.min = -inf.
-                # `F.scaled_dot_product_attention()` doesn't handle -inf like you'd expect, instead
-                # it can produce NaNs.
-                ensure_finite_(attention_bias, check_neg_inf=True, check_pos_inf=False)
+        if attention_mask is not None:
+            attention_mask = attention_mask & casual_mask
+        else:
+            attention_mask = casual_mask
+        if attention_bias is not None:
+            attention_bias = torch.where(attention_mask, attention_bias.to(x.dtype), torch.finfo(x.dtype).min)
+        else:
+            attention_bias = torch.where(attention_mask, 0, torch.finfo(x.dtype).min)
 
         attn_key_values: Optional[List[Tuple[torch.Tensor, torch.Tensor]]] = [] if use_cache else None
 
@@ -2013,7 +1998,7 @@ class Molmo(nn.Module):
                 if attn_key_values is not None:
                     assert cache is not None
                     attn_key_values.extend(cache)
-        
+
         if last_logits_only:
             # shape: (batch_size, 1, d_model)
             if append_last_valid_logits is not None:

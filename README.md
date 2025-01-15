@@ -293,6 +293,19 @@ torchrun --nproc-per-node=1 launch_scripts/train_multitask_model.py debug debug
 --save_folder=dbg --save_overwrite
 `
 
+## Performance
+Using torch 2.5.1 with `torch.compile` can significant performance benefits, so far the `default` 
+or `max-autotune-no-cudagraphs` modes need to be used since cudagraphs can cause issues. 
+Generally I have not seen much benefit to using `max-autotune-no-cudagraphs` over `default` and
+it can take 20+ minutes to compile, so default seems to work best.
+The caption and multitask scripts now automatically compile in `default` mode.
+I have not seen compilation improve inference speed.
+
+By default, batches are padded to fixed max sequence length, removing this can improve 
+performance a bit, although I have had mixed results with it so it is not turned on by default. 
+For example, use: `torchrun --nproc-per-node=1 launch_scripts/train_multitask_model.py debug debug
+--save_folder=dbg --save_overwrite --data.pad=to_128`
+
 ## Training Changes
 There are minor differences between the published Molmo models that we trained and what this repo will produce.
 
@@ -320,7 +333,7 @@ Then the eval script can be run (and OPENAI_API_KEY must be set in the environme
 
 
 ## Beaker
-`Dockerfile` can be used to build a beaker image. I have one built at `chrisc/molmo-torch2.4.1`.
+`Dockerfile` can be used to build a beaker image. I have one built at `chrisc/molmo-torch2.5.1-cuda12.4`.
 Some ganty setting to use:
  
 Setup access to the data

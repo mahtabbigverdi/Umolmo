@@ -13,7 +13,7 @@ from olmo import TrainConfig
 from olmo.config import DataConfig, \
     ModelConfig, WandbConfig, OptimizerConfig, OptimizerType, SchedulerConfig, SchedulerType, \
     BatchDivisor, SpeedMonitorConfig, ActivationCheckpointingStrategy, FSDPConfig, FSDPWrapStrategy, \
-    FSDPPrecision, RootSizeMixture
+    FSDPPrecision, RootSizeMixture, CompilerConfig
 from olmo.torch_util import get_world_size
 from olmo.util import (
     add_cached_path_clients,
@@ -220,6 +220,7 @@ if __name__ == "__main__":
             entity="${oc.env:WANDB_ENTITY}",
             log_interval=log_interval
         ),
+        compile=CompilerConfig(mode="default"),
         allow_resume=True,
         model=model_cfg,
         save_overwrite=debug,

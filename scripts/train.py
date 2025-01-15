@@ -167,6 +167,21 @@ def main(cfg: TrainConfig) -> None:
             freeze_names = ["transformer.ln_f", "transformer.ff_out"]
         freeze_parameters_by_name(olmo_model, tuple(freeze_names), warn=False)
 
+
+    if cfg.compile is not None:
+        log.info("Compiling model...")
+        if cfg.compile.target == "model":
+            torch.compile(olmo_model, **cfg.compile.compile_args())
+        elif cfg.compile.target == "blocks":
+            if cfg.model.block_group_size != 1:
+                raise OLMoConfigurationError("Compile block is only supported with block_group_size 1.")
+            for block_idx, block in enumerate(olmo_model.transformer.blocks):
+                block.compile(**cfg.compile.compile_args())
+            for block_idx, block in enumerate(olmo_model.vision_backbone.image_vit.transformer.resblocks):
+                block.compile(**cfg.compile.compile_args())
+        else:
+            raise NotImplementedError(cfg.compile.target)
+
     olmo_model.set_activation_checkpointing(cfg.activation_checkpointing)
 
     listdir(cfg.save_folder)
@@ -323,17 +338,6 @@ def main(cfg: TrainConfig) -> None:
             log.info("Saving unsharded checkpoint...")
             checkpoint_path, _ = trainer.save_checkpoint(checkpoint_type=CheckpointType.unsharded)
             log.info(f"Unsharded checkpoint saved to {checkpoint_path}")
-
-        if cfg.compile is not None:
-            # TODO (epwalsh): trying to compile the whole train step results in a compile-time error from within
-            # the optimizer. We should investigate this further at some point.
-            #  trainer.train_step = torch.compile(trainer.train_step, **cfg.compile.asdict())
-            trainer.train_batch = torch.compile(trainer.train_batch, **cfg.compile.asdict())  # type: ignore
-            # TODO (epwalsh): compiling the `eval_batch()` method is a little sketchy since the inputs will look
-            # different for different eval tasks. That might be okay, but it might not be.
-            #  trainer.eval_batch = torch.compile(trainer.eval_batch, **cfg.compile.asdict())  # type: ignore
-            # Alternatively, could just do this:
-            #  trainer.fsdp_model = torch.compile(trainer.fsdp_model, **cfg.compile.asdict())
 
         if not cfg.dry_run:
             log.info("Starting training...")

@@ -7,9 +7,11 @@ from typing import cast
 import torch.distributed as dist
 import torch.multiprocessing as mp
 from omegaconf import OmegaConf
+from transformers import CompileConfig
 
-from olmo.config import EvalConfig, FSDPConfig, FSDPWrapStrategy, FSDPPrecision, DatasetEvaluatorConfig, \
-    EvaluatorConfig, DataConfig
+from olmo.config import EvalConfig, FSDPConfig, FSDPWrapStrategy, FSDPPrecision, \
+    DatasetEvaluatorConfig, \
+    EvaluatorConfig, DataConfig, CompilerConfig
 from olmo.torch_util import get_world_size
 from olmo.util import (
     add_cached_path_clients,
@@ -59,7 +61,7 @@ def main():
         n_batches = -1
 
     checkpoint_dir = Path(args.checkpoint)
-    if not (checkpoint_dir / "model.pt").exists():
+    if not (checkpoint_dir / "model.pt").exists() and checkpoint_dir.exists():
         candidates = []
         for file in checkpoint_dir.iterdir():
             match = re.match("^step([0-9]+)-unsharded.*", file.name)
@@ -86,7 +88,7 @@ def main():
             num_wandb_examples=300,
             save_predictions="_default",
         ),
-        save_to_checkpoint_dir=True,
+        save_to_checkpoint_dir=args.save_dir is None,
         save_dir=args.save_dir,
         eval_name=args.eval_name,
         skip_if_metrics_cached=not args.overwrite,

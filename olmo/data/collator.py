@@ -27,7 +27,7 @@ def _collate(tensors, max_sequence_length=None, dtype=None, pad=None, pad_value=
         if max_sequence_length:
             max_len = min(max_len, max_sequence_length)
         if pad == "to_128":
-            if len(tensor.shape) == 1:
+            if len(tensor.shape) == 1 and max_len > 32:
                 max_len = 128 * ((max_len + 127) // 128)
         elif pad is None:
             pass

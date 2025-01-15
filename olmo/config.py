@@ -1207,7 +1207,12 @@ class SpeedMonitorConfig(BaseConfig):
 
 @dataclass
 class CompilerConfig(BaseConfig):
-    mode: Optional[str] = None
+    target: Optional[str] = "blocks"
+    """
+    What to compile
+    """
+
+    mode: Optional[str] = "default"
     """
     The mode to compile the model in. At the moment this can be "default",
     "reduce-overhead" (useful for smaller models/batches), or "max-autotune"
@@ -1220,10 +1225,15 @@ class CompilerConfig(BaseConfig):
     Note that this is not compatible with FSDP.
     """
 
+    dynamic: bool = False
+
     backend: str = "inductor"
     """
     The backend to use.
     """
+
+    def compile_args(self):
+        return {k: v for k, v in self.asdict().items() if k != "target"}
 
 
 class FSDPWrapStrategy(StrEnum):
@@ -1832,6 +1842,11 @@ class EvalConfig(BaseConfig):
     evaluations: List[DatasetEvaluatorConfig] = field(default_factory=list)
     """
     Inference Evaluation configurations.
+    """
+
+    compile: Optional[CompilerConfig] = None
+    """
+    How to compile the model
     """
 
     load_path: str = "./"

@@ -13,7 +13,7 @@ from scripts.train import main as train
 from olmo import TrainConfig, WandbConfig, DataConfig, OptimizerConfig, OptimizerType, \
     SchedulerConfig, SchedulerType, FSDPConfig, FSDPPrecision, FSDPWrapStrategy
 from olmo.config import BatchDivisor, SpeedMonitorConfig, ActivationCheckpointingStrategy, \
-    DatasetEvaluatorConfig
+    DatasetEvaluatorConfig, CompilerConfig
 from olmo.util import (
     add_cached_path_clients,
     clean_opt,
@@ -120,6 +120,7 @@ if __name__ == "__main__":
             entity="${oc.env:WANDB_ENTITY}",
             log_interval=log_interval
         ),
+        compile=CompilerConfig(mode="default"),
         model=model_cfg,
         data=DataConfig(
             dataset=args.dataset,
