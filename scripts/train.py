@@ -167,18 +167,22 @@ def main(cfg: TrainConfig) -> None:
             freeze_names = ["transformer.ln_f", "transformer.ff_out"]
         freeze_parameters_by_name(olmo_model, tuple(freeze_names), warn=False)
 
-
     if cfg.compile is not None:
-        log.info("Compiling model...")
+        log.info(f"Compiling {cfg.compile.target}...")
         if cfg.compile.target == "model":
             torch.compile(olmo_model, **cfg.compile.compile_args())
         elif cfg.compile.target == "blocks":
             if cfg.model.block_group_size != 1:
                 raise OLMoConfigurationError("Compile block is only supported with block_group_size 1.")
             for block_idx, block in enumerate(olmo_model.transformer.blocks):
-                block.compile(**cfg.compile.compile_args())
+                block.forward_can_compile = torch.compile(block.forward_can_compile, **cfg.compile.compile_args())
             for block_idx, block in enumerate(olmo_model.vision_backbone.image_vit.transformer.resblocks):
                 block.compile(**cfg.compile.compile_args())
+        elif cfg.compile.target == "transformers":
+            if cfg.model.block_group_size != 1:
+                raise OLMoConfigurationError("Compile block is only supported with block_group_size 1.")
+            olmo_model.transformer.compile(**cfg.compile.compile_args())
+            olmo_model.vision_backbone.image_vit.transformer.compile(**cfg.compile.compile_args())
         else:
             raise NotImplementedError(cfg.compile.target)
 

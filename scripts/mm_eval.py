@@ -22,6 +22,7 @@ from olmo.checkpoint import load_model_state
 from olmo.config import EvalConfig, TokenizerConfig, ModelConfig, DatasetEvaluatorConfig, \
     VisionBackboneConfig
 from olmo.data import build_torch_mm_eval_dataloader
+from olmo.eval import LossDatasetEvaluator, LossMetrics
 from olmo.eval.inf_evaluator import InfDatasetEvaluator, build_inf_evaluator
 from olmo.exceptions import OLMoCliError, OLMoConfigurationError
 from olmo.model import Molmo
@@ -90,10 +91,14 @@ class ModelEvaluator:
 
         mixture_or_task_name = cfg.data.dataset
         split = cfg.data.split
-        if step is not None:
-            name = f"predictions-ck{step}-{mixture_or_task_name}-{split}"
+        if cfg.loss:
+            name = f"loss"
         else:
-            name = f"predictions-{mixture_or_task_name}-{split}"
+            name = f"predictions"
+        if step is not None:
+            name = f"{name}-ck{step}-{mixture_or_task_name}-{split}"
+        else:
+            name = f"{name}-{mixture_or_task_name}-{split}"
         if cfg.eval_name:
             name += "-" + cfg.eval_name
         default_prediction_dir = join(base, name)
@@ -255,7 +260,6 @@ class ModelEvaluator:
         model, device = self.initialize_and_load_model()
 
         all_metrics = {}
-        inference_warmup = True
         for eval_ix, evaluation in enumerate(config.evaluations):
             if evaluation.label in cfg_to_metrics:
                 continue
@@ -290,23 +294,36 @@ class ModelEvaluator:
                 )
             else:
                 raise NotImplementedError()
-            mm_evaluation = InfDatasetEvaluator(
-                dataloader,
-                build_inf_evaluator(evaluation.mm_evaluator, self.get_save_dir(evaluation)),
-                label=evaluation.label,
-                n_steps=max_steps,
-                max_new_tokens=evaluation.max_new_tokens,
-                console_log_interval=config.console_log_interval
-            )
-            metrics = mm_evaluation.evaluate_model(
-                model,
-                device,
-                autocast_precision=self.config.autocast_precision,
-                is_distributed=self.config.fsdp is not None,
-                pbar=self.config.pbar,
-                inference_warmup=inference_warmup
-            )
-            inference_warmup = False
+            if evaluation.loss:
+                if evaluation.mm_evaluator is not None:
+                    logging.info("Doing a loss eval but a evaluator was set, the evaluator will be ignored")
+                loss_evaluator = LossDatasetEvaluator(
+                    "eval",
+                    dataloader,
+                    LossMetrics(device),
+                    num_batches=evaluation.subset_num_batches,
+                    z_loss=1e-4,
+                    console_log_interval=self.config.console_log_interval,
+                )
+                metrics = loss_evaluator.run(
+                    model, device, self.config.autocast_precision, pbar=self.config.pbar)
+            else:
+                mm_evaluation = InfDatasetEvaluator(
+                    dataloader,
+                    build_inf_evaluator(evaluation.mm_evaluator, self.get_save_dir(evaluation)),
+                    label=evaluation.label,
+                    n_steps=max_steps,
+                    max_new_tokens=evaluation.max_new_tokens,
+                    console_log_interval=config.console_log_interval
+                )
+                metrics = mm_evaluation.evaluate_model(
+                    model,
+                    device,
+                    autocast_precision=self.config.autocast_precision,
+                    is_distributed=self.config.fsdp is not None,
+                    pbar=self.config.pbar,
+                    inference_warmup=False
+                )
 
             # Post-process the metrics by saving the wandb.Html outputs to disk
             save_dir = self.get_save_dir(evaluation)
