@@ -71,7 +71,7 @@ def example_to_html_dict(ex, preprocessor, show_patches=False, show_crops=False)
         subsegment_ids = ex["subsegment_ids"]
         shared_prefix = postprocess_prompt(voc.decode(targets[subsegment_ids == 0]))
         segment_text = []
-        for i in np.sort(np.unique(subsegment_ids)[0]):
+        for i in np.sort(np.unique(subsegment_ids)):
             if i == -1:
                 continue
             mask = subsegment_ids == i
