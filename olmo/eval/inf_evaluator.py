@@ -149,26 +149,21 @@ class InfDatasetEvaluator:
                     batch_metadata.append(converted)
 
             batch_inference = move_to_device(batch, device)
+            if inference_warmup:
+                # This can prevent an error when the model is compiled and was used for training,
+                # in that case calling generate causes a recompilation that triggers a torch dynamo error
+                # recompiling here outsdie of generate
+                batch_inference.pop("labels")
+                batch_inference.pop("loss_masks")
+                with torch.inference_mode():
+                    with torch.autocast("cuda", enabled=True, dtype=autocast_precision):
+                        _ = model(**batch_inference)
+                inference_warmup = False
 
             with torch.inference_mode():
                 with torch.autocast("cuda", enabled=True, dtype=autocast_precision):
-                    if inference_warmup:
-                        # For reasons I don't understand doing a regular forward pass first
-                        # prevents OOMs when calling generate, its annoying but we just
-                        # put up with the doing an initial forward pass for now
-                        model(
-                            input_ids=batch_inference["input_ids"],
-                            images=batch_inference.get("images"),
-                            image_masks=batch_inference.get("image_masks"),
-                            image_input_idx=batch_inference.get("image_input_idx"),
-                        )
-                        inference_warmup = False
-
                     olmo_gen_output = model.generate(
-                        input_ids=batch_inference["input_ids"],
-                        images=batch_inference.get("images"),
-                        image_masks=batch_inference.get("image_masks"),
-                        image_input_idx=batch_inference.get("image_input_idx"),
+                        batch=batch_inference,
                         max_steps=self.max_new_tokens,
                         is_distributed=is_distributed
                     )

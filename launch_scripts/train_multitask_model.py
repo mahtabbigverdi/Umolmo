@@ -220,7 +220,8 @@ if __name__ == "__main__":
             entity="${oc.env:WANDB_ENTITY}",
             log_interval=log_interval
         ),
-        compile=CompilerConfig(mode="default"),
+        compile=CompilerConfig(mode="default", target="blocks", dynamic=False),
+        fused_loss=False,
         allow_resume=True,
         model=model_cfg,
         save_overwrite=debug,

@@ -39,6 +39,7 @@ from .config import (
 )
 from .data.iterable_dataset_mixture import IterableDatasetMixture
 from .eval.inf_evaluator import InfDatasetEvaluator
+from .eval.loss_evaluator import LossMetrics, LossDatasetEvaluator
 from .exceptions import OLMoConfigurationError
 from .model import Molmo
 from .optim import Optimizer, Scheduler
@@ -173,34 +174,6 @@ def cross_entropy_loss(
 
 
 @dataclass
-class DatasetMetrics:
-    label: str
-    eval_loader: DataLoader
-    eval_metric: Union[Metric, Dict[str, Metric], List[Metric]]
-    subset_num_batches: Optional[int] = None
-
-    def reset_metrics(self) -> None:
-        if isinstance(self.eval_metric, Metric):
-            self.eval_metric.reset()
-        else:
-            for metric in self.eval_metric.values():
-                metric.reset()
-
-    def compute_metrics(self) -> Dict[str, float]:
-        return {f"{self.label}/{k}": v.compute().item() for k, v in self.eval_metric.items()}
-
-    def update_metrics(
-        self,
-        batch: Dict[str, Any],
-        eval_out: Dict[str, torch.Tensor],
-    ) -> None:
-        total_weight = eval_out["total_weight"]
-        self.eval_metric["Loss"].update(eval_out["total_loss"]/total_weight, total_weight)
-        self.eval_metric["Accuracy"].update(eval_out["total_accuracy"]/total_weight, total_weight)
-        self.eval_metric["ZLoss"].update(eval_out["total_zloss"]/total_weight, total_weight)
-
-
-@dataclass
 class Trainer:
     cfg: TrainConfig
     model: Molmo
@@ -209,7 +182,7 @@ class Trainer:
     scheduler: Scheduler
     train_loader: DataLoader
     device: torch.device
-    evaluators: List[DatasetMetrics]
+    evaluators: List[LossDatasetEvaluator]
     inference_evaluators: List[InfDatasetEvaluator]
     epoch: Optional[int] = None
     global_step: int = 0
@@ -232,11 +205,11 @@ class Trainer:
     loss_fn: Callable[..., torch.Tensor] = field(default_factory=lambda: cross_entropy_loss)  # type: ignore
     last_sharded_checkpoint_step: Optional[int] = None
     last_unsharded_checkpoint_step: Optional[int] = None
-    _node_src: int = None
-    _node_group: Any = None
-    _node_group_ranks: Any = None
+    _train_metrics: Any = None
 
     def __post_init__(self):
+        self._train_metrics = LossMetrics(self.device)
+
         if self.cfg.fused_loss:
             import flash_attn
             from flash_attn.ops.triton.cross_entropy import (  # type: ignore
@@ -247,7 +220,8 @@ class Trainer:
             ce_loss_use_ignore_index_param = version.parse(flash_attn.__version__) >= version.parse("2.5.8")
 
             def fused_loss_fn(
-                logits, labels, ignore_index: int = -100, reduction: str = "mean", compute_z_loss: bool = False
+                logits, labels, ignore_index: int = -100, reduction: str = "mean",
+                compute_z_loss: bool = False, z_loss_scale=1
             ):
                 if ce_loss_use_ignore_index_param:
                     ignore_index_kwarg = {"ignore_index": ignore_index}
@@ -259,7 +233,7 @@ class Trainer:
                     labels,
                     label_smoothing=0.0,
                     logit_scale=1.0,
-                    lse_square_scale=self.cfg.softmax_auxiliary_loss_scale if self.cfg.softmax_auxiliary_loss else 0.0,
+                    lse_square_scale=z_loss_scale if compute_z_loss else 0.0,
                     inplace_backward=False,
                     process_group=None,
                     **ignore_index_kwarg,
@@ -287,7 +261,6 @@ class Trainer:
                 return loss, z_loss
 
             self.loss_fn = fused_loss_fn
-
 
         if self.model.config.block_type == BlockType.moe:
             from .config import config_to_moe_args
@@ -754,11 +727,11 @@ class Trainer:
         return labels[..., 1:].contiguous()
 
     def model_forward(
-        self, batch: Dict[str, Any], loss_reduction: str = "mean", compute_z_loss: bool = False
-    ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor], torch.Tensor]:
+        self, batch: Dict[str, Any], compute_z_loss: bool = False
+    ) -> Tuple:
         # shape: (batch_size, seq_len, vocab_size)
         with torch.autocast("cuda", enabled=True, dtype=self.cfg.autocast_precision):
-            logits = self.fsdp_model(
+            model_out = self.fsdp_model(
                 input_ids=batch["input_ids"],
                 attention_mask=batch.get("attention_mask"),
                 attention_bias=batch.get("attention_bias"),
@@ -768,150 +741,68 @@ class Trainer:
                 image_input_idx=batch.get("image_input_idx"),
                 subsegment_ids=batch.get("subsegment_ids"),
                 position_ids=batch.get("position_ids"),
-            ).logits
-        if "labels" in batch:
-            assert "loss_masks" in batch
-            assert loss_reduction == "none"
-            loss_masks = batch["loss_masks"] * (batch["loss_masks"] > 0)
-            labels = batch["labels"].long()
-            labels.masked_fill_(~(loss_masks > 0), -100)
-            labels = labels.view(-1)
-            logits_for_loss = logits.to(torch.float32).view(-1, logits.size(-1)) # for numerical stability
-        else:
-            logits_for_loss = logits[..., :-1, :].contiguous()
-            # shape: (batch_size * seq_len, vocab_size)
-            logits_for_loss = logits_for_loss.view(-1, logits_for_loss.size(-1))
-            # shape: (batch_size, seq_len)
-            labels = self.get_labels(batch)
-            # shape: (batch_size * seq_len,)
-            labels = labels.view(-1)
+            )
+        logits = model_out.logits
+        loss_masks = batch["loss_masks"] * (batch["loss_masks"] > 0)
+        labels = batch["labels"].long()
+        labels.masked_fill_(~(loss_masks > 0), -100)
+        labels = labels.view(-1)
+        logits_for_loss = logits.to(torch.float32).view(-1, logits.size(-1)) # for numerical stability
+
         ce_loss, z_loss = self.loss_fn(
-            logits_for_loss, labels, ignore_index=-100, reduction=loss_reduction,
+            logits_for_loss, labels, ignore_index=-100, reduction="sum",
             compute_z_loss=compute_z_loss, z_loss_scale=self.cfg.softmax_auxiliary_loss_scale,
         )
-        bs = batch["input_ids"].shape[0]
-        if loss_reduction == "none":
-            # Reshape (batch_size * seq_len,) -> (batch_size, seq_len)
-            ce_loss = ce_loss.view(bs, -1)
-            if z_loss is not None:
-                z_loss = z_loss.view(bs, -1)
+        return ce_loss, z_loss, model_out
 
-        accuracy = torch.argmax(logits_for_loss, dim=-1) == labels
-        if "labels" in batch:
-            ce_loss = ce_loss * loss_masks
-            if z_loss is not None:
-                z_loss = z_loss * loss_masks
-            accuracy = accuracy.view(bs, -1)
-            accuracy = accuracy * loss_masks
-        else:
-            accuracy = (accuracy * (labels >= 0))
-            accuracy = accuracy.view(bs, -1)
-        return accuracy, ce_loss, z_loss, logits
-
-    def train_batch(self, batch: Dict[str, Any]) -> Tuple[torch.Tensor, Optional[torch.Tensor], torch.Tensor]:
+    def train_batch(self, batch: Dict[str, Any], compute_metrics) -> Tuple[torch.Tensor, Optional[Dict]]:
         # Split into micro-batches.
         micro_batches = self.split_batch(batch)
-        has_labels = "labels" in batch
-
-        if has_labels:
-            loss_masks = batch["loss_masks"] * (batch["loss_masks"] > 0)
-            if self.cfg.batch_divisor == BatchDivisor.global_batch:
-                batch_size_in_tokens = loss_masks.sum()
-                dist.all_reduce(batch_size_in_tokens)
-                batch_size_in_tokens.div_(get_world_size())
-            elif self.cfg.batch_divisor == BatchDivisor.device_batch:
-                batch_size_in_tokens = loss_masks.sum()
-            else:
-                raise ValueError()
+        loss_masks = batch["loss_masks"] * (batch["loss_masks"] > 0)
+        if self.cfg.batch_divisor == BatchDivisor.global_batch:
+            batch_size_in_tokens = loss_masks.sum()
+            dist.all_reduce(batch_size_in_tokens)
+            batch_size_in_tokens.div_(get_world_size())
+        elif self.cfg.batch_divisor == BatchDivisor.device_batch:
+            batch_size_in_tokens = loss_masks.sum()
         else:
-            batch_size_in_tokens = batch["input_ids"].numel()
-
+            raise ValueError()
         del batch  # in case this helps reduce memory
 
-        ce_batch_loss = torch.tensor(0.0, device=self.device)
-        batch_accuracy = torch.tensor(0.0, device=self.device)
-        z_batch_loss = None if not self.cfg.softmax_auxiliary_loss else torch.tensor(0.0, device=self.device)
-        lb_batch_loss = (
-            None if self.model.config.block_type != BlockType.moe else torch.tensor(0.0, device=self.device)
-        )
-        moe_z_batch_loss = (
-            None if not self.model.config.moe_zloss_weight else torch.tensor(0.0, device=self.device)
-        )
-        expert_assignments = (
-            None
-            if (
-                (self.model.config.block_type != BlockType.moe)
-                or (self.model.config.moe_log_expert_assignment is False)
-            )
-            else torch.zeros((self.model.config.n_layers, self.model.config.moe_num_experts))
-        )
+        total_loss = torch.tensor(0.0, device=self.device)
         for micro_batch in micro_batches:
-            accuracy, ce_loss, z_loss, logits = self.model_forward(
-                micro_batch, compute_z_loss=self.cfg.softmax_auxiliary_loss, loss_reduction="none" if has_labels else "sum"
-            )
-            if has_labels:
-                accuracy = accuracy.sum()
-                ce_loss = ce_loss.sum()
-                if z_loss is not None:
-                    z_loss = z_loss.sum()
-
-            ce_loss = ce_loss / batch_size_in_tokens
-            accuracy = accuracy / batch_size_in_tokens
+            ce_loss, z_loss, model_out = self.model_forward(
+                micro_batch, compute_z_loss=self.cfg.softmax_auxiliary_loss)
+            if compute_metrics:
+                self._train_metrics.update(micro_batch, model_out, ce_loss, z_loss)
 
             # In case this helps with memory utilization.
             del micro_batch
 
-            # Update overall CE batch loss.
-            ce_batch_loss += ce_loss.detach()
-            batch_accuracy += accuracy.detach()
+            # accuracy = accuracy.sum()
+            ce_loss = ce_loss.sum() / batch_size_in_tokens
 
             # Get loss to optimize for.
             if self.cfg.softmax_auxiliary_loss:
-                assert z_loss is not None
-                assert z_batch_loss is not None
-                z_loss = z_loss / batch_size_in_tokens
-
+                z_loss = z_loss.sum() / batch_size_in_tokens
                 loss = ce_loss + z_loss
-
-                # Update overall Z batch loss.
-                z_batch_loss += z_loss.detach()
             else:
                 loss = ce_loss
+            if model_out.metrics is not None:
+                if "ImportanceLoss" in model_out.metrics:
+                    loss += model_out.metrics["ImportanceLoss"] * self
+                if "AuxLoss" in model_out.metrics:
+                    loss += model_out.metrics["AuxLoss"]
 
-            del logits
-
-            if self.model.config.block_type == BlockType.moe:
-                if self.model.config.moe_zloss_weight:
-                    lb_loss, moe_z_loss = batched_load_balancing_loss(self.moe_args)
-                    lb_loss = lb_loss / len(micro_batches)
-                    moe_z_loss = moe_z_loss / len(micro_batches)
-                elif self.model.config.moe_loss_weight:
-                    lb_loss = batched_load_balancing_loss(self.moe_args) / len(micro_batches)
-                if self.model.config.moe_log_expert_assignment:
-                    if self.model.config.moe_zloss_weight:
-                        tokens_per_expert, _, _ = zip(*get_load_balancing_loss())
-                    else:
-                        tokens_per_expert, _ = zip(*get_load_balancing_loss())
-                    expert_assignments += torch.stack(tokens_per_expert, dim=0).cpu()
-                clear_load_balancing_loss()
-                if self.model.config.moe_loss_weight:
-                    loss += lb_loss
-                    lb_batch_loss += lb_loss.detach()
-                if self.model.config.moe_zloss_weight:
-                    loss += moe_z_loss
-                    moe_z_batch_loss += moe_z_loss.detach()
+            del model_out
 
             # Run backward pass.
             loss.backward()
+            total_loss += loss.detach()
+        return total_loss
 
-        return ce_batch_loss, z_batch_loss, batch_accuracy, lb_batch_loss, moe_z_batch_loss, expert_assignments
-
-    def train_step(self, batch: Dict[str, Any], reduce_global_loss: bool = True) -> Dict[str, float]:
+    def train_step(self, batch: Dict[str, Any], compute_metrics: bool = True) -> Dict[str, float]:
         metrics: Dict[str, float] = {}
-
-        # Record how many instances are going to be skipped (masked out).
-        if (instance_mask := batch.get("instance_mask")) is not None:
-            metrics["train/masked_instances_local_rank"] = (~instance_mask).sum().item()
 
         # Zero-gradients.
         self.optim.zero_grad(set_to_none=True)
@@ -919,25 +810,14 @@ class Trainer:
         # Move tensors to the right device.
         batch = self.move_to_device(batch, self.device)
 
-        # Run forward-backward pass.
-        ce_batch_loss, z_batch_loss, batch_accuracy, lb_batch_loss, moe_z_batch_loss, expert_assignments = self.train_batch(batch)
-
-        # Collect loss, potentially reducing over all ranks.
-        if reduce_global_loss:
-            dist.reduce(ce_batch_loss, 0)
-            ce_batch_loss.div_(get_world_size())
-            if z_batch_loss is not None:
-                dist.reduce(z_batch_loss, 0)
-                z_batch_loss.div_(get_world_size())
-            if batch_accuracy is not None:
-                dist.reduce(batch_accuracy, 0)
-                batch_accuracy.div_(get_world_size())
-            if lb_batch_loss is not None:
-                dist.reduce(lb_batch_loss, 0)
-                lb_batch_loss.div_(get_world_size())
-            if moe_z_batch_loss is not None:
-                dist.reduce(moe_z_batch_loss, 0)
-                moe_z_batch_loss.div_(get_world_size())
+        # Run forward-backward pass
+        if compute_metrics:
+            self._train_metrics.reset()
+        loss = self.train_batch(batch, True)
+        if compute_metrics:
+            metrics = {f"train/{k}": v for k, v in self._train_metrics.compute().items()}
+        else:
+            metrics = {}
 
         # Clip gradient norms and collect param/gradient/optim metrics.
         should_log_optim_metrics_this_step = self.should_log_optim_metrics_this_step()
@@ -992,34 +872,10 @@ class Trainer:
 
         # Collect metrics and check for NaN loss.
         # NOTE: this involves a bunch of host-device syncs so we wait until the last moment to do this.
-        if torch.isnan(ce_batch_loss):
-            raise ValueError("nan loss encountered")
-        if z_batch_loss is not None and torch.isnan(z_batch_loss):
-            raise ValueError("nan loss encountered")
         for key, value in optim_metrics.items():
             metrics[f"optim/{key}"] = value.item()
-        self.cur_train_loss = ce_batch_loss.item()
+        self.cur_train_loss = loss.item()
         self.min_train_loss = min(self.min_train_loss, self.cur_train_loss)
-        metrics["train/CrossEntropyLoss"] = self.cur_train_loss
-        metrics["train/Perplexity"] = math.exp(self.cur_train_loss)
-        metrics["train/Accuracy"] = batch_accuracy.item()
-        if z_batch_loss is not None:
-            metrics["train/ZLoss"] = z_batch_loss.item()
-        if lb_batch_loss is not None:
-            metrics["train/LoadBalancingLoss"] = lb_batch_loss.item()
-            # Log assignment metrics.
-            if expert_assignments is not None:
-                for layer_idx, expert_assignments_layer in enumerate(expert_assignments):
-                    total_tokens = expert_assignments_layer.sum().item()
-                    for expert_idx, expert_assignment in enumerate(expert_assignments_layer):
-                        metrics[f"train/TokensPercentage/layer{layer_idx}/expert{expert_idx}"] = (
-                            expert_assignment.item() / total_tokens
-                        ) * 100
-                        metrics[
-                            f"train/TokensTotal/layer{layer_idx}/expert{expert_idx}"
-                        ] = expert_assignment.item()
-        if moe_z_batch_loss is not None:
-            metrics["train/MoEZLoss"] = moe_z_batch_loss.item()
 
         # Maybe collect post-step optimizer-specific metrics.
         if should_log_optim_metrics_this_step:
@@ -1031,47 +887,15 @@ class Trainer:
 
         return metrics
 
-    def eval_batch(self, batch: Dict[str, Any]) -> Tuple[torch.Tensor, torch.Tensor]:
-        with torch.autocast("cuda", enabled=True, dtype=self.cfg.autocast_precision):
-            acc, ce_loss, z_loss, logits = self.model_forward(batch, loss_reduction="none", compute_z_loss=True)
-        if "labels" in batch:
-            loss_masks = batch["loss_masks"] * (batch["loss_masks"] > 0)
-            batch_size_in_tokens = loss_masks.sum(-1)
-
-            return dict(
-                total_weight=batch_size_in_tokens.sum(),
-                total_loss=ce_loss.sum(),
-                total_accuracy=acc.sum(),
-                total_zloss=z_loss.sum(),
-                batch_loss=ce_loss.sum()/batch_size_in_tokens.sum(),
-                batch_accuracy=acc.sum()/batch_size_in_tokens.sum(),
-                batch_zloss=z_loss.sum()/batch_size_in_tokens.sum(),
-                logits=logits
-            )
-        else:
-            return dict(
-                instance_loss=ce_loss.mean(-1),
-                instance_aaccuracy=acc.mean(-1),
-                batch_loss=ce_loss.mean(),
-                batch_accuracy=acc.mean(),
-                z_loss=z_loss.mean(),
-                logits=logits
-            )
-
-    def eval_step(self, batch: Dict[str, Any], evaluator: DatasetMetrics) -> None:
+    def eval_step(self, batch: Dict[str, Any], evaluator: LossMetrics) -> None:
         # Move tensors to the right device.
         batch = self.move_to_device(batch, self.device)
 
         # Run forward pass.
-        with torch.no_grad():  # NOTE: 'torch.inference_mode()' doesn't work with 'torch.compile()'.
-            eval_out = self.eval_batch(batch)
-
-        # Update metrics.
-        evaluator.update_metrics(
-            batch, eval_out
-        )  # batch includes all keys that the downstream evaluation needs
-
-        barrier()
+        with torch.inference_mode():
+            with torch.autocast("cuda", enabled=True, dtype=self.cfg.autocast_precision):
+                ce_loss, z_loss, model_out = self.model_forward(batch, compute_z_loss=True)
+            evaluator.update(batch, model_out, ce_loss, z_loss)
 
     def split_batch(self, batch: Dict[str, Any]) -> List[Dict[str, Any]]:
         microbatch_size = self.cfg.device_train_microbatch_size
@@ -1159,7 +983,9 @@ class Trainer:
         self.optim.zero_grad(set_to_none=True)
         self.fsdp_model.eval()
         all_metrics = {}
+        t0 = None
         for evaluator in self.inference_evaluators:
+            t0 = time.perf_counter()
             log.info(f"Running evaluation for '{evaluator.label}'...")
             dataset_metrics = evaluator.evaluate_model(
                 self.fsdp_model,
@@ -1172,64 +998,22 @@ class Trainer:
             self._inference_warmup = False
             self.log_metrics_to_console(f"{evaluator.label}", dataset_metrics)
             all_metrics.update({f"{evaluator.label}/{k}": v for k, v in dataset_metrics.items()})
+            log.info(f"Eval for '{evaluator.label}' done in {time.perf_counter()-t0:0.1f} seconds")
         return all_metrics
 
     def eval(self) -> Dict[str, Any]:
         # Zero gradients and set model to 'eval' mode.
         self.optim.zero_grad(set_to_none=True)
         self.fsdp_model.eval()
-        warmed_up = False
-        torch.cuda.empty_cache()
 
         eval_metrics = {}
         for evaluator in self.evaluators:
-            if not warmed_up:
-                # The first batch can take a while as the iterator compiles/warms up, this
-                # can cause the nodes to think they got de-synced since some of the nodes
-                # might take much longer to get it and start the forward pass then others.
-                # To avoid this, we manually sync the nodes for the first batch
-                barrier()
-                warmed_up = True
-
+            t0 = time.perf_counter()
             log.info(f"Running evaluation for '{evaluator.label}'...")
-
-            # Reset metrics.
-            evaluator.reset_metrics()
-
-            # Initialize data loader iterator.
-            eval_batches = iter(evaluator.eval_loader)
-
-            # Adjust how many batches to evaluate on.
-            num_eval_batches = (
-                evaluator.subset_num_batches
-                if evaluator.subset_num_batches is not None
-                else self.cfg.eval_subset_num_batches
-            )
-            if num_eval_batches > 0:
-                if isinstance(evaluator.eval_loader, torch.utils.data.IterableDataset):
-                    pass  # No defined length
-                else:
-                    num_eval_batches = min(num_eval_batches, len(evaluator.eval_loader))
-                eval_batches = islice(eval_batches, num_eval_batches)
-
-            # Run model over batches.
-            for eval_step, eval_batch in enumerate(eval_batches):
-                self.eval_step(eval_batch, evaluator)
-
-                # Log to console.
-                if eval_step + 1 == num_eval_batches or (eval_step + 1) % self.cfg.console_log_interval == 0:
-                    log.info(f"[eval_step={eval_step + 1}/{num_eval_batches}]")
-
-            if hasattr(evaluator.eval_loader, "reset"):
-                evaluator.eval_loader.reset()  # Reset the loader to free RAM
-
-            # Get final metrics.
-            metrics = evaluator.compute_metrics()
-            eval_metrics.update(metrics)
+            metrics = evaluator.run(self.fsdp_model, self.device, autocast_precision=self.cfg.autocast_precision, loss_fn=self.loss_fn)
+            eval_metrics.update({f"{evaluator.label}/{k}": v for k, v in metrics.items()})
+            log.info(f"Eval for '{evaluator.label}' done in {time.perf_counter()-t0:0.1f} seconds")
             self.log_metrics_to_console(f"{evaluator.label}", metrics)
-
-            del eval_batches
-
         return eval_metrics
 
     def check_if_cancelled(self) -> Tuple[bool, int]:
@@ -1405,7 +1189,7 @@ class Trainer:
                     should_log_this_step = self.should_log_this_step()
 
                     # Run train step on batch.
-                    metrics = self.train_step(batch, reduce_global_loss=should_log_this_step)
+                    metrics = self.train_step(batch, compute_metrics=should_log_this_step)
 
                     # Maybe collect other metrics.
                     if should_log_this_step:

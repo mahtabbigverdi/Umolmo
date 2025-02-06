@@ -35,6 +35,7 @@ import torch
 import torch.backends.cuda
 import torch.nn as nn
 import torch.nn.functional as F
+import torchmetrics
 from torch import einsum
 
 from .aliases import PathOrStr
@@ -983,6 +984,33 @@ class OLMoSequentialBlock(OLMoBlock):
         drop_mask: Optional[torch.Tensor] = None,
         layer_past: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         use_cache: bool = False,
+        force_eager=False,
+    ) -> Tuple[torch.Tensor, Optional[Tuple[torch.Tensor, torch.Tensor]]]:
+        # This is a hack so we can have access to both a statically compiled version of forward
+        # AND an eager or dynamically compiled version, forward can pass  to two identical
+        # versions, only one of which can be compiled
+        #
+        # torch 2.6 will fix this by with a method to force a compiled method to run in eager mode,
+        # but for now we forced to do this
+        if force_eager:
+            return self.forward_can_compile(x, attention_bias, position_ids, drop_mask, layer_past, use_cache)
+        else:
+            return self.forward_eager(x, attention_bias, position_ids, drop_mask, layer_past, use_cache)
+
+    def forward_eager(self, *args, **kwargs) -> Tuple[torch.Tensor, Optional[Tuple[torch.Tensor, torch.Tensor]]]:
+        return self._forward(*args, **kwargs)
+
+    def forward_can_compile(self, *args, **kwargs) -> Tuple[torch.Tensor, Optional[Tuple[torch.Tensor, torch.Tensor]]]:
+        return self._forward(*args, **kwargs)
+
+    def _forward(
+        self,
+        x: torch.Tensor,
+        attention_bias: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.Tensor] = None,
+        drop_mask: Optional[torch.Tensor] = None,
+        layer_past: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+        use_cache: bool = False,
     ) -> Tuple[torch.Tensor, Optional[Tuple[torch.Tensor, torch.Tensor]]]:
         # Get query, key, value projections.
         # shape:
@@ -1009,7 +1037,7 @@ class OLMoSequentialBlock(OLMoBlock):
         # Get attention scores.
         if self._activation_checkpoint_fn is not None:
             att, cache = self._activation_checkpoint_fn(  # type: ignore
-                self.attention, q, k, v, attention_bias, position_ids=position_ids, drop_mask=drop_mask, layer_past=layer_past, use_cache=use_cache
+                self.attention, q, k, v, attention_bias, position_ids=position_ids, drop_mask=drop_mask, layer_past=layer_past, use_cache=use_cache,
             )
         else:
             att, cache = self.attention(q, k, v, attention_bias, position_ids=position_ids, drop_mask=drop_mask, layer_past=layer_past, use_cache=use_cache)
@@ -1123,7 +1151,7 @@ class OLMoLlamaBlock(OLMoBlock):
             assert num_q_heads % num_kv_heads == 0
             k = k.repeat_interleave(num_q_heads // num_kv_heads, dim=1, output_size=num_q_heads)
             v = v.repeat_interleave(num_q_heads // num_kv_heads, dim=1, output_size=num_q_heads)
-        
+
         og_dtype = q.dtype
         k = k.to(q.device)
         v = v.to(q.device)
@@ -1239,6 +1267,11 @@ class OLMoOutput(NamedTuple):
     hidden_states: Optional[Tuple[torch.Tensor]]
     """
     Hidden states from each block.
+    """
+
+    metrics: Optional[Dict[str, Union[torch.Tensor, torchmetrics.Metric]]] = None
+    """
+    Model-specific metrics and losses
     """
 
 
@@ -1794,7 +1827,6 @@ class Molmo(nn.Module):
             for block_group in self.transformer.block_groups:
                 block_group.reset_parameters()
 
-
     def forward(
         self,
         input_ids: torch.LongTensor,
@@ -1812,6 +1844,7 @@ class Molmo(nn.Module):
         last_logits_only: bool = False,
         output_hidden_states: Optional[bool] = None,
         append_last_valid_logits: Optional[torch.Tensor] = None,
+        force_eager=False
     ) -> OLMoOutput:
         """
         :param input_ids: A tensor of shape `(batch_size, seq_len)`.
@@ -1970,11 +2003,17 @@ class Molmo(nn.Module):
                 if should_checkpoint_block(self.activation_checkpointing_strategy, block_idx):
                     # shape: (batch_size, seq_len, d_model)
                     x, cache = self._activation_checkpoint_fn(
-                        block, x, attention_bias=attention_bias, position_ids=position_ids, drop_mask=response_mask, layer_past=layer_past, use_cache=use_cache
+                        block, x, attention_bias=attention_bias, position_ids=position_ids,
+                        drop_mask=response_mask, layer_past=layer_past, use_cache=use_cache,
+                        force_eager=force_eager
                     )
                 else:
                     # shape: (batch_size, seq_len, d_model)
-                    x, cache = block(x, attention_bias=attention_bias, position_ids=position_ids, drop_mask=response_mask, layer_past=layer_past, use_cache=use_cache)
+                    x, cache = block(
+                        x, attention_bias=attention_bias, position_ids=position_ids,
+                        drop_mask=response_mask, layer_past=layer_past, use_cache=use_cache,
+                        force_eager=force_eager
+                    )
 
                 if attn_key_values is not None:
                     assert cache is not None
@@ -2173,12 +2212,8 @@ class Molmo(nn.Module):
 
     def generate(
         self,
-        input_ids: torch.LongTensor,
-        attention_mask: Optional[torch.Tensor] = None,
+        batch,
         attention_bias: Optional[torch.Tensor] = None,
-        images: Optional[torch.Tensor] = None,
-        image_masks: Optional[torch.Tensor] = None,
-        image_input_idx: Optional[torch.Tensor] = None,
         max_steps: int = 10,
         beam_size: int = 1,
         per_node_beam_size: Optional[int] = None,
@@ -2202,6 +2237,12 @@ class Molmo(nn.Module):
 
         For an explanation of the other arguments, see :class:`BeamSearch`.
         """
+        input_ids: torch.LongTensor = batch["input_ids"]
+        attention_mask: Optional[torch.Tensor] = batch.get("attention_mask")
+        images: Optional[torch.Tensor] = batch.get("images")
+        image_masks: Optional[torch.Tensor] = batch.get("image_masks")
+        image_input_idx: Optional[torch.Tensor] = batch.get("image_input_idx")
+
         beam_search = BeamSearch(
             self.config.get_tokenizer().eos_token_id,
             max_steps=max_steps,
@@ -2319,6 +2360,7 @@ class Molmo(nn.Module):
                 use_cache=True,
                 last_logits_only=True,
                 append_last_valid_logits=_append_last_valid_logits,
+                # force_eager=tokens_generated > 1
             )
             log_probs = F.log_softmax(output.logits[:, -1, :], dim=-1)
 
@@ -2337,7 +2379,7 @@ class Molmo(nn.Module):
             state["attention_mask"] = attention_mask
         if attention_bias is not None:
             state["attention_bias"] = attention_bias
-        with torch.no_grad():
+        with torch.inference_mode():
             token_ids, scores = beam_search.search(initial_preds, state, step)
 
         return OLMoGenerateOutput(

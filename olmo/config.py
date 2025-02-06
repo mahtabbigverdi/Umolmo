@@ -1173,6 +1173,9 @@ class DatasetEvaluatorConfig(BaseConfig):
     skip_if_metrics_cached: bool = True
     """Skip a the metric file already exists in the save location, otherwise override it"""
 
+    loss: bool = False
+    """Compute the loss/other forward-pass metrics instead of doing generation"""
+
     @classmethod
     def update_legacy_settings(cls, config: D) -> D:
         config = config.copy()

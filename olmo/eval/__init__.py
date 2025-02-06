@@ -4,7 +4,7 @@ import torch
 from torchmetrics import MeanMetric, Metric
 
 from .inf_evaluator import build_inf_evaluator, InfDatasetEvaluator
-from .loss_evaluator import LossDatasetEvaluator
+from .loss_evaluator import LossDatasetEvaluator, LossMetrics
 from ..config import DatasetEvaluatorConfig, TrainConfig
 from ..data import build_eval_dataloader
 
@@ -37,8 +37,8 @@ def build_evaluator(
     return LossDatasetEvaluator(
         label=eval_config.label,
         eval_loader=eval_loader,
-        eval_metric=eval_metric,
-        subset_num_batches=eval_config.subset_num_batches or train_config.eval_subset_num_batches,
+        evaluator=LossMetrics(device),
+        num_batches=eval_config.subset_num_batches or train_config.eval_subset_num_batches,
     )
 
 
