@@ -6,13 +6,46 @@ from pathlib import Path
 from typing import Dict, Any
 
 import torch
-import einops
-from flax.traverse_util import flatten_dict, unflatten_dict
 from transformers import AutoModel, AutoModelForCausalLM, CLIPModel, SiglipModel
 
 from launch_scripts.utils import VISION_BACKBONES, LLMS, DEFAULT_LOAD_PATHS
 from olmo import VisionBackboneConfig, ModelConfig, Molmo, BlockType
 from olmo.util import prepare_cli_environment
+
+
+def flatten_dict(xs, sep=None):
+    def _key(path):
+        if sep is None:
+            return path
+        return sep.join(path)
+
+    def _flatten(xs, prefix):
+        if not isinstance(xs, dict):
+            return {_key(prefix): xs}
+        result = {}
+        is_empty = True
+        for key, value in xs.items():
+            is_empty = False
+            path = prefix + (key,)
+            result.update(_flatten(value, path))
+        return result
+    return _flatten(xs, ())
+
+
+def unflatten_dict(xs, sep=None):
+    assert isinstance(xs, dict), f'input is not a dict; it is a {type(xs)}'
+    result = {}
+    for path, value in xs.items():
+        if sep is not None:
+            path = path.split(sep)
+        cursor = result
+        for key in path[:-1]:
+            if key not in cursor:
+                cursor[key] = {}
+            cursor = cursor[key]
+        cursor[path[-1]] = value
+    return result
+
 
 
 def interpolate_position_embeddings(
@@ -466,8 +499,11 @@ def convert_state_dict_qwen2(state_dict, config: ModelConfig, block_type: BlockT
     out.update({
         "transformer.wte.embedding": state_dict["embed_tokens"].pop("weight"),
         "transformer.ln_f.weight": state_dict["norm"].pop("weight"),
-        "transformer.ff_out.weight": lmhead.pop("weight"),
     })
+    if not config.weight_tying:
+        out["transformer.ff_out.weight"] = lmhead.pop("weight")
+    else:
+        assert torch.allclose(lmhead.pop("weight"), out["transformer.wte.embedding"])
     for k in flatten_dict(state_dict):
         raise ValueError("Unused parameter:", k)
     return out
@@ -486,6 +522,8 @@ CONVERT_FNS = {
     "olmoe": convert_state_dict_olmoe,
     "olmo_1024_preview": convert_state_dict_olmo_1024_preview,
     "qwen2_7b": convert_state_dict_qwen2,
+    "qwen2.5_3b": convert_state_dict_qwen2,
+    "qwen2.5_1.5b": convert_state_dict_qwen2,
     "qwen2_72b": convert_state_dict_qwen2,
 }
 
@@ -503,6 +541,8 @@ LLM_HF_SOURCES = {
     "olmo_1024_preview": "allenai/OLMo-7B-1024-preview",
     "qwen2_7b": "Qwen/Qwen2-7B",
     "qwen2_72b": "Qwen/Qwen2-72B",
+    "qwen2.5_3b": "Qwen/Qwen2.5-3B",
+    "qwen2.5_1.5b": "Qwen/Qwen2.5-1.5B",
 }
 
 
