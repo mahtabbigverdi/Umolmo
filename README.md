@@ -113,7 +113,9 @@ The core models in the Molmo family released so far are:
 
 W&B logs: [pre-training](https://wandb.ai/prior-ai2/molmo/reports/Molmo-Pre-training--VmlldzoxMDQwODE3OA), [fine-tuning](https://wandb.ai/prior-ai2/molmo/reports/Molmo-Fine-tuning--VmlldzoxMDQwOTQ4Mw)
 
-## Data Downloading and Setup 
+## Data Downloading and Setup
+If you are using beaker at Ai2, you can probably skip this part, see the bottom section.
+
 Molmo uses huggingface datasets for most data, therefore most 
 data will be stored in the default huggingface cache. See [here](https://huggingface.co/docs/huggingface_hub/guides/manage-cache)
 for how to set it. Some additional data is stored separately in the path
@@ -199,7 +201,24 @@ wget https://storage.googleapis.com/oe-training-public/Molmo-0924/Molmo-7B-D-092
 tar -xf Molmo-7B-D-0924.tar 
 ```
 
-## Evaluation
+
+## Captioner Evaluation
+We generally evaluate captioning offline on the `dense_caption_eval` task, the prediction file
+can be built with:
+
+`torchrun --nproc-per-node 8 launch_scripts/eval_captioner.py /weka/oe-training-default/mm-olmo/released-models-0924/qwen2-7b-dense-captioner`
+
+Then the eval script can be run like this (the OPENAI_API_KEY must be set in the environment)
+
+`python3 scripts/gpt_dense_caption_eval.py /weka/oe-training-default/chrisc/cockatoo/models/dense-captioner-v21-olmo1.8/lr3-9-3/predictions-ck14700-dense_caption_eval-validation/predictions.json --sample 1500 --metrics all`
+
+The `eval_captioner.py` script also supports computing the cross-entropy loss on the val set:
+
+`torchrun --nproc-per-node 8 launch_scripts/eval_captioner.py /weka/oe-training-default/mm-olmo/released-models-0924/qwen2-7b-dense-captioner --loss --seq_len=2048 --task=pixmo_cap --split=validation`
+
+By default, results are saved to the directory containing the target checkpoints.
+
+## Downstream Evaluation
 Evaluation is done with the `launch_scripts/eval_downstream.py` script. 
 FSDP can be used to evaluate large models, or for high-resolution processing. 
 Note that the vLLM version of Molmo will be significantly faster for inference, but most of 
@@ -234,6 +253,7 @@ and might need to set `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`
 These scripts will save the metrics and predictions in the save directory. Future calls to the 
 eval script will re-use cached metrics if they exist, to overwrite these cached metrics use
 the `--overwrite` flag.
+
 
 ### Evaluation with VLMEvalkit
 Evaluation of the HF models is also supported via [open-compass/VLMEvalkit](https://github.com/open-compass/VLMEvalKit). Check [PR#648](https://github.com/open-compass/VLMEvalKit/pull/648) for supported prompts and evaluation settings to reproduce results from the paper.
@@ -294,17 +314,27 @@ torchrun --nproc-per-node=1 launch_scripts/train_multitask_model.py debug debug
 `
 
 ## Performance
-Using torch 2.5.1 with `torch.compile` can significant performance benefits, so far the `default` 
-or `max-autotune-no-cudagraphs` modes need to be used since cudagraphs can cause issues. 
+Be default full activation checkpointing is used, you can
+experiment with `--activation_checkpointing=one_in_two` to get more performance,
+but I have generally found increasing the batch size is better than using less activation
+checkpointing.
+
+By default, batches are padded to fixed max sequence length, removing this can improve 
+performance a bit, although I have had mixed results with it if using more then a few nodes so
+it is not turned on by default.
+For example, use: `torchrun --nproc-per-node=1 launch_scripts/train_multitask_model.py debug debug
+--save_folder=dbg --save_overwrite --data.pad=to_128`
+
+Using torch 2.5.1 with `torch.compile` can significant performance benefits, so far the `default`
+or `max-autotune-no-cudagraphs` modes need to be used since cudagraphs can cause issues.
 Generally I have not seen much benefit to using `max-autotune-no-cudagraphs` over `default` and
 it can take 20+ minutes to compile, so default seems to work best.
 The caption and multitask scripts now automatically compile in `default` mode.
 I have not seen compilation improve inference speed.
 
-By default, batches are padded to fixed max sequence length, removing this can improve 
-performance a bit, although I have had mixed results with it so it is not turned on by default. 
-For example, use: `torchrun --nproc-per-node=1 launch_scripts/train_multitask_model.py debug debug
---save_folder=dbg --save_overwrite --data.pad=to_128`
+For `torch.compile` I recommend using `dynamic=False` since if the model gets accidentally re-compiled in 
+dynamic mode you will see a significant performance drop. Autoregressive decoding is 
+done in a non-compiled path to avoid triggering an excessive number of re-compilations.
 
 ## Training Changes
 There are minor differences between the published Molmo models that we trained and what this repo will produce.
@@ -321,22 +351,11 @@ We recommend ensuring the data is downloaded and then using the environment vari
 `HF_DATASETS_OFFLINE=1` to ensure the nodes don't flood HF with requests as they all initialize 
 and then potentially get rate limited.
 
-## Captioner Evaluation
-We generally evaluate captioning offline on the `dense_caption_eval` task, the prediction file
-can be built with:
-
-`torchrun --nproc-per-node 8 launch_scripts/eval_captioner.py /weka/oe-training-default/chrisc/cockatoo/models/dense-captioner-v21-olmo1.8/lr3-9-3/step14700-unsharded`
-
-Then the eval script can be run (and OPENAI_API_KEY must be set in the environment)
-
-`python3 scripts/gpt_dense_caption_eval.py /weka/oe-training-default/chrisc/cockatoo/models/dense-captioner-v21-olmo1.8/lr3-9-3/predictions-ck14700-dense_caption_eval-validation/predictions.json --sample 1500 --metrics all`
-
-
 ## Beaker
 `Dockerfile` can be used to build a beaker image. I have one built at `chrisc/molmo-torch2.5.1-cuda12.4`.
 Some ganty setting to use:
  
-Setup access to the data
+Setup access to the data in weka
 ```
 --env HF_DATASETS_CACHE=/weka/oe-training-default/mm-olmo/hf_datasets
 --env MOLMO_DATA_DIR=/weka/oe-training-default/mm-olmo
@@ -351,17 +370,12 @@ Setup wandb and access keys (first store your keys as beaker secrets):
 --env-secret WANDB_API_KEY=YOUR_WANDB_KEY_SECRET_NAME
 --env-secret HF_ACCESS_TOKEN=YOUR_HF_KEY_SECRET_NAME
 ```
-To use our weka datasets.
 
 Runs for research on Molmo can use:
 ```
 --budget ai2/oe-training
 --workspace ai2/mm-olmo
 ```
-
-Be default full activation checkpointing is used, it can be worth
-experimenting with `--activation_checkpointing=one_in_two`
-to get more performance.
 
 For reference here is a complete example of a gantry command to train 
 the captioner (please make sure to use you access keys and save folders before running it):
