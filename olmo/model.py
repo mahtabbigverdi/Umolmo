@@ -158,8 +158,12 @@ class Embedding(nn.Module):
     def reset_parameters(self):
         nn.init.normal_(self.embedding, std=self.initializer_range)
         nn.init.normal_(self.new_embedding, std=self.new_embed_initializer_range)
-    
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+
+    def forward(self, x: torch.Tensor, logits=False) -> torch.Tensor:
+        if logits:
+            # Used for computing the logits with weight tying being used
+            # We re-use the forward method since using the raw weight can cause errors with FSDP
+            return F.linear(x, self.embedding, None)
         return F.embedding(x, torch.cat([self.embedding, self.new_embedding], dim=0))
 
 
@@ -2057,7 +2061,7 @@ class Molmo(nn.Module):
         # Get logits.
         # shape: (batch_size, seq_len or 1, vocab_size)
         if self.config.weight_tying:
-            logits = F.linear(x, self.transformer.wte.weight, None)  # type: ignore
+            logits = self.transformer.wte(x, logits=True)
         else:
             logits = self.transformer.ff_out(x)  # type: ignore
         if self.config.scale_logits:
