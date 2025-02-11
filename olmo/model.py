@@ -998,9 +998,9 @@ class OLMoSequentialBlock(OLMoBlock):
         # torch 2.6 will fix this by with a method to force a compiled method to run in eager mode,
         # but for now we forced to do this
         if force_eager:
-            return self.forward_can_compile(x, attention_bias, position_ids, drop_mask, layer_past, use_cache)
-        else:
             return self.forward_eager(x, attention_bias, position_ids, drop_mask, layer_past, use_cache)
+        else:
+            return self.forward_can_compile(x, attention_bias, position_ids, drop_mask, layer_past, use_cache)
 
     def forward_eager(self, *args, **kwargs) -> Tuple[torch.Tensor, Optional[Tuple[torch.Tensor, torch.Tensor]]]:
         return self._forward(*args, **kwargs)
