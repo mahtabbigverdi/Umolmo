@@ -185,7 +185,7 @@ def main():
     if other_args:
         config = OmegaConf.create(cfg)
         overrides = [clean_opt(arg) for arg in other_args]
-        config = OmegaConf.merge(config, OmegaConf.from_dotlist(overrides))
+        config.merge_with_dotlist(overrides)
         cfg = cast(EvalConfig, OmegaConf.to_object(config))
     ModelEvaluator(cfg).run()
 
