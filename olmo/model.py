@@ -38,6 +38,7 @@ import torch.nn.functional as F
 import torchmetrics
 from torch import einsum
 
+from . import tokenizer
 from .aliases import PathOrStr
 from .beam_search import BeamSearch, Constraint, FinalSequenceScorer, Sampler
 from .config import (
@@ -1697,6 +1698,15 @@ class Molmo(nn.Module):
         if config.vision_backbone is not None:
             self.vision_backbone = MolmoVisionBackbone.build(config)
 
+        if self.config.bi_directional_attn == "image_tokens":
+            special_ids = tokenizer.get_special_token_ids(self.config.get_tokenizer())
+            self.__cache["image_tokens"] = torch.as_tensor([special_ids[x] for x in [
+                tokenizer.DEFAULT_IMAGE_PATCH_TOKEN,
+                tokenizer.DEFAULT_IM_COL_TOKEN,
+                tokenizer.DEFAULT_IM_START_TOKEN,
+                tokenizer.DEFAULT_IM_END_TOKEN,
+            ]], dtype=torch.long)
+
         self.__num_fwd_flops: Optional[int] = None
 
     def reset_with_pretrained_weights(self):
@@ -1960,38 +1970,39 @@ class Molmo(nn.Module):
         if self.config.normalize_input_embeds:
             x = x * (self.config.d_model ** 0.5)
 
-        # Transform the attention mask into what the blocks expect.
+        # Transform the attention mask into the 4D tensor blocks expect.
+        attention_mask_len = past_length + seq_len  # mask should include the K/V cache
         if len(attention_mask.shape) == 2:
-            attention_mask = attention_mask[:, :past_length + seq_len]
+            attention_mask = attention_mask[:, :attention_mask_len]
             attention_mask = attention_mask[:, None, None, :]
         else:
             attention_mask = attention_mask.unsqueeze(1)
+        assert attention_mask.shape[-1] == attention_mask_len
 
-        casual_mask = torch.tril(torch.ones(
-            past_length + seq_len, past_length + seq_len,
-            device=x.device, dtype=torch.bool))[None, None, :, :]
-        mask_len = seq_len
-        if attention_mask is not None:
-            mask_len = attention_mask.shape[-1]
-        elif past_key_values is not None:
-            mask_len = past_key_values[0][0].shape[-2] + seq_len
-        casual_mask = casual_mask[:, :, :mask_len, :mask_len]
+        # Combined with attention with the casual mask
+        if "casual_mask" not in self.__cache or self.__cache["casual_mask"].shape[-1] < attention_mask_len:
+            self.__cache["casual_mask"] = torch.tril(torch.ones(
+                attention_mask_len, attention_mask_len,
+                device=x.device, dtype=torch.bool))[None, None, :, :]
+        casual_mask = self.__cache["casual_mask"].to(x.device)[:, :, :attention_mask_len, :attention_mask_len]
 
-        if attention_mask is not None:
-            attention_mask = attention_mask & casual_mask
-        else:
-            attention_mask = casual_mask
+        if self.config.bi_directional_attn == "image_tokens":
+            image_tokens = self.__cache["image_tokens"].to(input_ids.device)
+            can_attend_bk = torch.any(input_ids[:, :, None] == image_tokens, -1)
+            casual_mask = casual_mask | (can_attend_bk[:, :, None] & can_attend_bk[:, None, :])[:, None, :, :]
+        elif self.config.bi_directional_attn is not None:
+            raise NotImplementedError(self.config.bi_directional_attn)
+
+        attention_mask = attention_mask & casual_mask
+
+        # Convert mask to a float mask, and possibly combine with `attention_bias`
         if attention_bias is not None:
-            attention_bias = torch.where(attention_mask, attention_bias.to(x.dtype), torch.finfo(x.dtype).min)
+            attention_bias = torch.where(attention_mask, attention_bias, torch.finfo(x.dtype).min)
         else:
             attention_bias = torch.where(attention_mask, 0, torch.finfo(x.dtype).min)
 
         attn_key_values: Optional[List[Tuple[torch.Tensor, torch.Tensor]]] = [] if use_cache else None
-
-        # decoder layers
         all_hidden_states = []
-
-        # Apply blocks one-by-one.
         if self.config.block_group_size == 1:
             for block_idx, block in enumerate(self.transformer.blocks):
                 if output_hidden_states:
