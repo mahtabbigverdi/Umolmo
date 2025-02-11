@@ -1988,7 +1988,7 @@ class Molmo(nn.Module):
 
         if self.config.bi_directional_attn == "image_tokens":
             image_tokens = self.__cache["image_tokens"].to(input_ids.device)
-            can_attend_bk = torch.any(input_ids[:, :, None] == image_tokens, -1)
+            can_attend_bk = torch.any(input_ids[:, :, None] == image_tokens[None, None, :], -1)
             casual_mask = casual_mask | (can_attend_bk[:, :, None] & can_attend_bk[:, None, :])[:, None, :, :]
         elif self.config.bi_directional_attn is not None:
             raise NotImplementedError(self.config.bi_directional_attn)
