@@ -491,8 +491,8 @@ def select_checkpoint(checkpoint):
         if len(candidates) == 0:
             raise FileNotFoundError(f"{checkpoint_dir} is a directory but it did not "
                                     f"contain any unsharded checkpoints")
-        checkpoint_dir = max(candidates, key=lambda x: x[1])[0].absolute().as_posix()
-        logging.info(f"Selected {checkpoint_dir} as oldest checkpoint in {checkpoint_dir}")
-        return checkpoint_dir
+        selected = max(candidates, key=lambda x: x[1])[0].absolute().as_posix()
+        logging.info(f"Selected {selected} as oldest checkpoint in {checkpoint_dir}")
+        return selected
     else:
         return checkpoint

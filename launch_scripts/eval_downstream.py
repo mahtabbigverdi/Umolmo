@@ -17,7 +17,7 @@ from olmo.util import (
     clean_opt,
     prepare_cli_environment, )
 from scripts.mm_eval import ModelEvaluator
-from launch_scripts.utils import get_evaluation
+from launch_scripts.utils import get_evaluation, select_checkpoint
 
 log = logging.getLogger(__name__)
 
@@ -153,20 +153,7 @@ def main():
             skip_if_metrics_cached=not args.overwrite,
         ))
 
-    checkpoint_dir = Path(args.checkpoint)
-    if not (checkpoint_dir / "model.pt").exists() and args.checkpoint != "debug":
-        candidates = []
-        for file in checkpoint_dir.iterdir():
-            match = re.match("^step([0-9]+)-unsharded.*", file.name)
-            if match:
-                candidates.append((file, int(match.group(1))))
-        if len(candidates) == 0:
-            raise FileNotFoundError(f"{checkpoint_dir} is a directory but it did not "
-                                    f"contain any unsharded checkpoints")
-        checkpoint_dir = max(candidates, key=lambda x: x[1])[0].absolute().as_posix()
-        logging.info(f"Selected {checkpoint_dir} as oldest checkpoint in {checkpoint_dir}")
-    else:
-        checkpoint_dir = args.checkpoint
+    checkpoint_dir = select_checkpoint(args.checkpoint)
 
     cfg = EvalConfig(
         max_crops_override=args.max_crops,
