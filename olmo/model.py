@@ -1492,11 +1492,8 @@ class MolmoVisionBackbone(nn.Module):
     def reset_with_pretrained_weights(self):
         self.reset_connector_parameters()  # resets the connector
         if self.config.vit_load_path:
-            vit_load_path = Path(self.config.vit_load_path)
-            state_dict_path = resource_path(
-                vit_load_path.parent, vit_load_path.name,
-                local_cache=vit_load_path.parent,
-            )
+            parent, name = self.config.vit_load_path.rsplit("/", 1)
+            state_dict_path = resource_path(parent, name)
             assert state_dict_path.is_file(), f"Model file {str(state_dict_path)} not found"
             state_dict = torch.load(state_dict_path, map_location="cpu")
             self.image_vit.load_state_dict(state_dict)
@@ -1706,10 +1703,8 @@ class Molmo(nn.Module):
         if self.config.llm_load_path is None:
             self.reset_non_vision_parameters()
         else:
-            state_dict_path = resource_path(
-                Path(self.config.llm_load_path).parent, Path(self.config.llm_load_path).name,
-                local_cache=Path(self.config.llm_load_path).parent,
-            )
+            parent, name = self.config.llm_load_path.rstrip("/").rsplit("/", 1)
+            state_dict_path = resource_path(parent, name)
             assert state_dict_path.is_file(), f"Model file {str(state_dict_path)} not found"
             if state_dict_path.name.endswith("safetensors"):
                 state_dict = safetensors_file_to_state_dict(state_dict_path, map_location="cpu")
