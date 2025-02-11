@@ -76,7 +76,8 @@ def build_inf_evaluator(cfg: EvaluatorConfig, default_save_dir=None) -> InfEvalu
     save_predictions = cfg.save_predictions
     if save_predictions == "_default":
         if default_save_dir is None:
-            logging.info(f"save_predictions is default but not default save dir set")
+            logging.info(f"save_predictions is \"default\" but no default "
+                         f"save dir set so predictions will not be saved")
         save_predictions = default_save_dir
     if save_predictions:
         evaluators.append(SavePredictions(
