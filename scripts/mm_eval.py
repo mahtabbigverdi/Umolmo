@@ -111,23 +111,6 @@ class ModelEvaluator:
         else:
             return None
 
-    def _compile_model(self, model):
-        if self.config.compile is None:
-            return
-        cfg = self.config.compile
-        logging.info(f"Compiling model {cfg.target}")
-        if cfg.target == "model":
-            torch.compile(model, **cfg.compile_args())
-        elif cfg.target == "blocks":
-            if model.config.block_group_size != 1:
-                raise OLMoConfigurationError("Compile block is only supported with block_group_size 1.")
-            for block_idx, block in enumerate(model.transformer.blocks):
-                block.compile(**cfg.compile_args())
-            for block_idx, block in enumerate(model.vision_backbone.image_vit.transformer.resblocks):
-                block.compile(**cfg.compile_args())
-        else:
-            raise NotImplementedError(cfg.target)
-
     def initialize_and_load_model(self) -> Molmo:
         cfg = self.config
         torch.cuda.set_device(f"cuda:{get_local_rank()}")
@@ -156,18 +139,15 @@ class ModelEvaluator:
             )
             olmo_model = Molmo(model_cfg).to(device)
             olmo_model.reset_parameters()
-            self._compile_model(olmo_model)
         elif cfg.fsdp is None:
             log.info("Loading model without FSDP...")
             olmo_model = Molmo.from_checkpoint(cfg.load_path, device=device)
-            self._compile_model(olmo_model)
             model_cfg = olmo_model.config
         else:
             log.info("Building FSDP model...")
             model_cfg_path = resource_path(cfg.load_path, "config.yaml")
             model_cfg = ModelConfig.load(model_cfg_path, key="model", validate_paths=False)
             olmo_model = Molmo(model_cfg)
-            self._compile_model(olmo_model)
 
             # We always have only rank0 load the checkpoint, and then use `sync_module_states`
             # in FSDP to broadcast the weights to the other processes
@@ -322,7 +302,6 @@ class ModelEvaluator:
                     autocast_precision=self.config.autocast_precision,
                     is_distributed=self.config.fsdp is not None,
                     pbar=self.config.pbar,
-                    inference_warmup=False
                 )
 
             # Post-process the metrics by saving the wandb.Html outputs to disk

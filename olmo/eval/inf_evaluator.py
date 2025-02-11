@@ -118,8 +118,7 @@ class InfDatasetEvaluator:
     max_new_tokens: int = 448
     console_log_interval: Optional[int] = None
 
-    def evaluate_model(self, model, device, autocast_precision, is_distributed,
-                       inference_warmup=False, pbar=False):
+    def evaluate_model(self, model, device, autocast_precision, is_distributed, pbar=False):
         eval_dataloader = self.dataloader
         eval_it = iter(eval_dataloader)
         n_steps = self.n_steps
@@ -150,17 +149,6 @@ class InfDatasetEvaluator:
                     batch_metadata.append(converted)
 
             batch_inference = move_to_device(batch, device)
-            if inference_warmup:
-                # This can prevent an error when the model is compiled and was used for training,
-                # in that case calling generate causes a recompilation that triggers a torch dynamo error
-                # recompiling here outsdie of generate
-                batch_inference.pop("labels")
-                batch_inference.pop("loss_masks")
-                with torch.inference_mode():
-                    with torch.autocast("cuda", enabled=True, dtype=autocast_precision):
-                        _ = model(**batch_inference)
-                inference_warmup = False
-
             with torch.inference_mode():
                 with torch.autocast("cuda", enabled=True, dtype=autocast_precision):
                     olmo_gen_output = model.generate(

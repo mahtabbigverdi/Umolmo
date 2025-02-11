@@ -1506,7 +1506,7 @@ class MolmoVisionBackbone(nn.Module):
         if strategy in (ActivationCheckpointingStrategy.whole_layer, ActivationCheckpointingStrategy.vit_only):
             self.image_vit.set_grad_checkpointing()
     
-    def encode_image(self, images: torch.Tensor) -> torch.Tensor:
+    def encode_image(self, images: torch.Tensor, force_eager=False) -> torch.Tensor:
         """
         : param images: (batch_size, num_crops, num_patch, n_pixels)
         """
@@ -1519,7 +1519,7 @@ class MolmoVisionBackbone(nn.Module):
         # Output all hidden states
         # n_layers x (batch_num_crops, (1+)n_tokens, image_emb_dim)
         images = images.view(B * T, N, D)
-        image_features = self.image_vit(images)
+        image_features = self.image_vit(images, force_eager=force_eager)
 
         if cfg.vit_layers is not None:
             features = []
@@ -1541,12 +1541,12 @@ class MolmoVisionBackbone(nn.Module):
 
         return image_features
     
-    def forward(self, images: torch.Tensor, image_masks: torch.Tensor) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    def forward(self, images: torch.Tensor, image_masks: torch.Tensor, force_eager=False) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         cfg = self.config
 
         # image_features: (batch_size, num_crops(=num_image), num_patch, nximage_emb_dim)
         batch_size, num_image = images.shape[:2]
-        image_features = self.encode_image(images)
+        image_features = self.encode_image(images, force_eager=force_eager)
 
         if cfg.image_padding_embed:
             assert image_masks is not None
@@ -1937,7 +1937,7 @@ class Molmo(nn.Module):
         if images is not None:
             # shape: (batch_size, num_image, num_patch, d_model)
             # cls_embed: (batch_size, num_image, d_model)
-            image_features = self.vision_backbone(images, image_masks)
+            image_features = self.vision_backbone(images, image_masks, force_eager=force_eager)
             num_image, num_patch = image_features.shape[1:3]
             assert image_input_idx.shape == (batch_size, num_image, num_patch)
 
@@ -2370,7 +2370,7 @@ class Molmo(nn.Module):
                 use_cache=True,
                 last_logits_only=True,
                 append_last_valid_logits=_append_last_valid_logits,
-                # force_eager=tokens_generated > 1
+                force_eager=True
             )
             log_probs = F.log_softmax(output.logits[:, -1, :], dim=-1)
 

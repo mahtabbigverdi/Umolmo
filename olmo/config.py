@@ -1856,11 +1856,6 @@ class EvalConfig(BaseConfig):
     Inference Evaluation configurations.
     """
 
-    compile: Optional[CompilerConfig] = None
-    """
-    How to compile the model
-    """
-
     load_path: str = "./"
     """
     The directory to load the
