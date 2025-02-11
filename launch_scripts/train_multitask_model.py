@@ -8,7 +8,7 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 from omegaconf import OmegaConf
 
-from launch_scripts.utils import get_evaluation, DEBUG_MODEL
+from launch_scripts.utils import get_evaluation, DEBUG_MODEL, select_checkpoint
 from olmo import TrainConfig
 from olmo.config import DataConfig, \
     ModelConfig, WandbConfig, OptimizerConfig, OptimizerType, SchedulerConfig, SchedulerType, \
@@ -171,11 +171,11 @@ if __name__ == "__main__":
         inf_eval_interval = 2000
         eval_interval = 2000
         duration = 30000
-        model_init = args.checkpoint
-        if exists(join(args.checkpoint, "model.yaml")):
-            model_cfg = ModelConfig.load(join(args.checkpoint, "model.yaml"))
+        checkpoint = select_checkpoint(args.checkpoint)
+        if exists(join(checkpoint, "model.yaml")):
+            model_cfg = ModelConfig.load(join(checkpoint, "model.yaml"))
         else:
-            model_cfg = ModelConfig.load(join(args.checkpoint, "config.yaml"), key="model")
+            model_cfg = ModelConfig.load(join(checkpoint, "config.yaml"), key="model")
 
         eval_subset_batches = eval_examples//(args.device_eval_batch_size*get_world_size())
         logging.info(f"Setting eval subset batches to {eval_subset_batches}")
@@ -272,7 +272,7 @@ if __name__ == "__main__":
             precision=FSDPPrecision.float
         ),
         load_path=None,
-        initial_model_checkpoint=None if "debug" in args.checkpoint else args.checkpoint,
+        initial_model_checkpoint=None if "debug" in checkpoint else checkpoint,
         save_interval=4000,
         save_num_checkpoints_to_keep=1,
         save_interval_unsharded="${max_duration}",
