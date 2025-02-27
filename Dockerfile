@@ -2,7 +2,7 @@
 # NOTE: make sure CUDA_VERSION and TORCH_CUDA_VERSION always match, except for punctuation
 ARG CUDA_VERSION="12.4"
 ARG TORCH_CUDA_VERSION="124"
-ARG TORCH_VERSION="2.5.1"
+ARG TORCH_VERSION="2.6.0"
 
 #########################################################################
 # Build image
