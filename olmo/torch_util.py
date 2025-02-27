@@ -1,6 +1,7 @@
 import gc
 import os
 import logging
+from datetime import timedelta
 from typing import Optional, TypeVar, List, Tuple
 
 import torch
@@ -26,6 +27,14 @@ def seed_all(seed: int):
     # torch.manual_seed may call manual_seed_all but calling it again here
     # to make sure it gets called at least once
     torch.cuda.manual_seed_all(seed)
+
+
+def init_process_group() -> bool:
+    dist.init_process_group(
+        backend="nccl",
+        timeout=timedelta(minutes=int(os.environ.get("NCCL_TIMEOUT_MINUTES", 10)))
+    )
+    log.info("Process group initialized")
 
 
 def is_distributed() -> bool:

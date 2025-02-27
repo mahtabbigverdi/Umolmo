@@ -25,7 +25,7 @@ from tqdm import tqdm
 
 from olmo.data.dataset import DATA_HOME
 from olmo.data.model_preprocessor import setup_pil
-from olmo.util import _s3_get_bytes_range
+from olmo.io import _s3_get_bytes_range
 
 if "PIXMO_IMAGE_DIR" in os.environ:
     PIXMO_IMAGES = os.environ["PIXMO_IMAGE_DIR"]

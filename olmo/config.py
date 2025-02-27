@@ -1697,6 +1697,11 @@ class TrainConfig(BaseConfig):
     Weights & Biases configuration.
     """
 
+    beaker_log_interval: int = 50
+    """
+    How often to update beaker description with run progress 
+    """
+
     speed_monitor: SpeedMonitorConfig = field(default_factory=SpeedMonitorConfig)
     """
     Speed monitor configuration.

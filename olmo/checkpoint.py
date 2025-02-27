@@ -64,15 +64,13 @@ from .torch_util import (
     get_world_size,
 )
 from .util import (
-    _get_s3_client,
-    default_thread_count,
+    get_default_thread_count,
     dir_is_empty,
-    get_bytes_range,
     get_progress_bar,
     resource_path,
-    upload,
     wait_for,
 )
+from .io import _get_s3_client, get_bytes_range, upload
 
 __all__ = [
     "save_fsdp_model_and_optim_state",
@@ -422,7 +420,7 @@ class RemoteFileSystemReader(dist_cp.StorageReader):
             raise ValueError("thread count must be at least 1")
         self.path = str(path).rstrip("/")
         self.cache = None if local_cache is None else Path(local_cache)
-        self.thread_count = thread_count or default_thread_count()
+        self.thread_count = thread_count or get_default_thread_count()
         self.storage_data: Dict[MetadataIndex, _StorageInfo] = dict()
         self._metadata: Optional[Metadata] = None
 
@@ -503,7 +501,7 @@ class RemoteFileSystemReader(dist_cp.StorageReader):
 class Checkpointer(metaclass=ABCMeta):
     def __init__(self, cfg: TrainConfig, thread_count: Optional[int] = None):
         self.cfg = cfg
-        self.thread_count = thread_count or default_thread_count()
+        self.thread_count = thread_count or get_default_thread_count()
 
     @abstractmethod
     def save_checkpoint(

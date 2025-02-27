@@ -1,5 +1,6 @@
 import logging
 import re
+from os.path import join
 from pathlib import Path
 from typing import Dict
 
@@ -8,7 +9,7 @@ import numpy as np
 from olmo import DataConfig, DatasetEvaluatorConfig
 from olmo.config import EvaluatorConfig, ModelConfig, VisionBackboneConfig, \
     TokenizerConfig, LayerNormType, AttentionType
-
+from olmo.io import file_exists, list_directory
 
 DEBUG_MODEL = ModelConfig(
     d_model=128,
@@ -481,18 +482,20 @@ LLMS: Dict[str, ModelConfig] = {
 
 
 def select_checkpoint(checkpoint):
-    checkpoint_dir = Path(checkpoint)
-    if not (checkpoint_dir / "model.pt").exists():
-        candidates = []
-        for file in checkpoint_dir.iterdir():
-            match = re.match("^step([0-9]+)-unsharded.*", file.name)
-            if match:
-                candidates.append((file, int(match.group(1))))
-        if len(candidates) == 0:
-            raise FileNotFoundError(f"{checkpoint_dir} is a directory but it did not "
-                                    f"contain any unsharded checkpoints")
-        selected = max(candidates, key=lambda x: x[1])[0].absolute().as_posix()
-        logging.info(f"Selected {selected} as oldest checkpoint in {checkpoint_dir}")
-        return selected
-    else:
+    """
+    returns the latest unsharded is checkpoint directory in `checkpoint`, returns `checkpoint`
+    if it is already a checkpoint dir
+    """
+    if file_exists(join(checkpoint, "model.pt")):
         return checkpoint
+    candidates = []
+    for file in list_directory(checkpoint, include_files=False):
+        match = re.match(".*/step([0-9]+)-unsharded.*", file)
+        if match:
+            candidates.append((file, int(match.group(1))))
+    if len(candidates) == 0:
+        raise FileNotFoundError(f"{checkpoint} does not contain a model file or any "
+                                f"unsharded checkpoint")
+    checkpoint_dir = max(candidates, key=lambda x: x[1])[0]
+    logging.info(f"Selected {checkpoint_dir} as oldest checkpoint in {checkpoint_dir}")
+    return checkpoint_dir

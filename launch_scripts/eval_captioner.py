@@ -17,13 +17,15 @@ from olmo.torch_util import get_world_size
 from olmo.util import (
     add_cached_path_clients,
     clean_opt,
-    prepare_cli_environment, )
+    prepare_cli_environment, prepare_torchrun_environment, )
 from scripts.mm_eval import ModelEvaluator
 
 log = logging.getLogger(__name__)
 
 
 def main():
+    prepare_torchrun_environment()
+
     parser = argparse.ArgumentParser(prog="Script to generate dense captions")
     parser.add_argument("checkpoint")
     parser.add_argument("--task", default="dense_caption_eval")
@@ -43,17 +45,6 @@ def main():
                         help="Override max new tokens, otherwise use task-specific default")
     args, other_args = parser.parse_known_args()
 
-    try:
-        mp.set_start_method("spawn", force=True)
-    except RuntimeError as e:
-        print(f"failed to set multiprocessing start method: {e}")
-    log.info(f"Multiprocessing start method set to '{mp.get_start_method()}'")
-
-    dist.init_process_group(backend="nccl")
-    log.info("Process group initialized")
-
-    add_cached_path_clients()
-    prepare_cli_environment()
 
     if args.max_examples:
         batch_size = get_world_size()*args.device_batch_size

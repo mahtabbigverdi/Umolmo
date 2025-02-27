@@ -15,7 +15,7 @@ from olmo.torch_util import get_world_size
 from olmo.util import (
     add_cached_path_clients,
     clean_opt,
-    prepare_cli_environment, )
+    prepare_cli_environment, prepare_torchrun_environment, )
 from scripts.mm_eval import ModelEvaluator
 from launch_scripts.utils import get_evaluation, select_checkpoint
 
@@ -23,6 +23,8 @@ log = logging.getLogger(__name__)
 
 
 def main():
+    prepare_torchrun_environment()
+
     parser = argparse.ArgumentParser(prog="Evaluate a model on downstream tasks")
     parser.add_argument("checkpoint",
                         help="Checkpoint to evaluate, should contain a config file and unshared model file")
@@ -57,17 +59,6 @@ def main():
         args.seq_len = 4096
         args.eval_name = "36crop"
 
-    try:
-        mp.set_start_method("spawn", force=True)
-    except RuntimeError as e:
-        print(f"failed to set multiprocessing start method: {e}")
-    log.info(f"Multiprocessing start method set to '{mp.get_start_method()}'")
-
-    dist.init_process_group(backend="nccl")
-    log.info("Process group initialized")
-
-    add_cached_path_clients()
-    prepare_cli_environment()
 
     tasks = []
     for task in args.tasks:

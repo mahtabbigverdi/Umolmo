@@ -20,6 +20,7 @@ import torch
 import torch.distributed as dist
 import torch.nn.functional as F
 import wandb
+from beaker import Beaker, Experiment
 from packaging import version
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.utils.data import DataLoader
@@ -53,7 +54,7 @@ from .torch_util import (
     peak_gpu_memory,
     synchronize_flag,
     synchronize_value, get_local_world_size, )
-from .util import upload
+from .io import upload
 
 try:
     from megablocks.layers.moe import (
@@ -67,6 +68,27 @@ except ImportError:
 __all__ = ["SpeedMonitor", "LRMonitor", "Trainer"]
 
 log = logging.getLogger(__name__)
+
+
+@dataclass
+class BeakerLogger:
+    beaker: Beaker
+    experiment: Experiment
+    log_interval: int
+    original_description: str
+
+    def log_init(self):
+        self.beaker.experiment.set_description(self.experiment, f"[Init] " + self.original_description)
+
+    def add_wandb(self, wandb_url):
+        self.original_description = self.original_description + " (" + wandb_url + ")"
+        self.beaker.experiment.set_description(self.experiment, f"[Init] " + self.original_description)
+
+    def log_progress(self, on_step, target_step):
+        self.beaker.experiment.set_description(self.experiment, f"[{100*on_step/target_step:04.1f}%] " + self.original_description)
+
+    def close(self):
+        self.beaker.experiment.set_description(self.experiment, f"[Done] " + self.original_description)
 
 
 @dataclass
@@ -199,12 +221,13 @@ class Trainer:
     ephemeral_checkpoints: List[Path] = field(default_factory=list)
     min_train_loss: float = float("inf")
     cur_train_loss: float = float("inf")
-    _start_time: float = 0.0
-    _gc_init_state: bool = True
     loss_fn: Callable[..., torch.Tensor] = field(default_factory=lambda: cross_entropy_loss)  # type: ignore
+    beaker_logger: BeakerLogger = None
     last_sharded_checkpoint_step: Optional[int] = None
     last_unsharded_checkpoint_step: Optional[int] = None
     _train_metrics: Any = None
+    _start_time: float = 0.0
+    _gc_init_state: bool = True
 
     def __post_init__(self):
         self._train_metrics = LossMetrics(self.device)
@@ -756,6 +779,7 @@ class Trainer:
 
     def train_batch(self, batch: Dict[str, Any], compute_metrics) -> Tuple[torch.Tensor, Optional[Dict]]:
         # Split into micro-batches.
+        # logging.info(str({k: str(v.shape) for k, v in batch.items()}))
         micro_batches = self.split_batch(batch)
         loss_masks = batch["loss_masks"] * (batch["loss_masks"] > 0)
         if self.cfg.batch_divisor == BatchDivisor.global_batch:
@@ -1201,6 +1225,16 @@ class Trainer:
                         # Learning rate metrics.
                         metrics.update(lr_monitor.check())
 
+                    # Do beaker logging
+                    if (
+                        self.beaker_logger and
+                        (
+                            (self.global_step % self.beaker_logger.log_interval == 0) or
+                            (self.beaker_logger.log_interval == 0 and self.global_step == 1)
+                        )
+                    ):
+                        self.beaker_logger.log_progress(self.global_step, self.cfg.stop_at)
+
                     # Log metrics to console.
                     if self.global_step % self.cfg.console_log_interval == 0:
                         if get_global_rank() == 0:
@@ -1363,6 +1397,8 @@ class Trainer:
             gc.disable()
         if wandb.run is not None:
             wandb.finish(exit_code=exit_code, quiet=True)
+        if self.beaker_logger is not None:
+            self.beaker_logger.close()
 
     def __enter__(self) -> Trainer:
         return self

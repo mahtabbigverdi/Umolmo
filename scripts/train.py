@@ -1,6 +1,7 @@
 """Run this script with 'torchrun'."""
 
 import logging
+import os
 import sys
 from os import listdir
 from os.path import join
@@ -10,6 +11,7 @@ import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
 import wandb
+from beaker import Beaker
 from packaging import version
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp import ShardingStrategy
@@ -32,7 +34,7 @@ from olmo.torch_util import (
     seed_all,
     freeze_parameters_by_name,
 )
-from olmo.train import Trainer
+from olmo.train import Trainer, BeakerLogger
 from olmo.util import (
     add_cached_path_clients,
     clean_opt,
@@ -60,8 +62,19 @@ def main(cfg: TrainConfig) -> None:
         )
         cfg.model.low_cpu_fsdp = False
     
-    if not cfg.data.multi_modal and cfg.save_dataloader_state:
-        raise OLMoConfigurationError("You are saving the dataloader state, but the data is not multi-modal.")
+    if "BEAKER_EXPERIMENT_ID" in os.environ and "BEAKER_TOKEN" in os.environ:
+        if get_global_rank() == 0:
+            experiment_id = os.environ["BEAKER_EXPERIMENT_ID"]
+            client = Beaker.from_env()
+            experiment = client.experiment.get(experiment_id)
+            beaker_logger = BeakerLogger(client, experiment, cfg.beaker_log_interval, experiment.description)
+            beaker_logger.log_init()
+        else:
+            beaker_logger = None
+    else:
+        if cfg.beaker_log_interval > 0:
+            logging.info(f"Beaker log interval set to {cfg.beaker_log_interval}, but beaker env variables are missing")
+        beaker_logger = None
 
     # Set CUDA device.
     torch.cuda.set_device(f"cuda:{get_local_rank()}")
@@ -114,6 +127,12 @@ def main(cfg: TrainConfig) -> None:
     if cfg.wandb is not None and (get_global_rank() == 0 or not cfg.wandb.rank_zero_only):
         wandb_dir = Path(cfg.save_folder) / "wandb"
         wandb_dir.mkdir(parents=True, exist_ok=True)
+        wandb_cfg = cfg.asdict(exclude=["wandb"])
+
+        if "BEAKER_EXPERIMENT_ID" in os.environ:
+            wandb_cfg["beaker_experiment_id"] = os.environ["BEAKER_EXPERIMENT_ID"]
+            if beaker_logger is not None:
+                wandb_cfg["beaker_url"] = beaker_logger.beaker.experiment.url(beaker_logger.experiment)
         wandb.init(
             dir=str(wandb_dir),
             project=cfg.wandb.project,
@@ -121,8 +140,10 @@ def main(cfg: TrainConfig) -> None:
             group=cfg.wandb.group,
             name=cfg.wandb.name,
             tags=cfg.wandb.tags,
-            config=cfg.asdict(exclude=["wandb"]),
+            config=wandb_cfg,
         )
+        wandb_url = wandb.run.get_url()
+        beaker_logger.add_wandb(wandb_url)  # add to beaker description
 
     barrier()
 
@@ -299,6 +320,7 @@ def main(cfg: TrainConfig) -> None:
         device=device,
         evaluators=evaluators,
         inference_evaluators=inf_evaluators,
+        beaker_logger=beaker_logger
     ) as trainer:
         if not cfg.dry_run and not cfg.no_pre_train_checkpoint and cfg.load_path is None:
             checkpoint_type = (

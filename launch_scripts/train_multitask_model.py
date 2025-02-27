@@ -18,7 +18,7 @@ from olmo.torch_util import get_world_size
 from olmo.util import (
     add_cached_path_clients,
     clean_opt,
-    prepare_cli_environment,
+    prepare_cli_environment, prepare_torchrun_environment,
 )
 from scripts.train import main as train
 
@@ -70,20 +70,7 @@ def get_training_mixture(submixture):
 
 
 if __name__ == "__main__":
-    try:
-        mp.set_start_method("spawn", force=True)
-    except RuntimeError as e:
-        print(f"failed to set multiprocessing start method: {e}")
-    log.info(f"Multiprocessing start method set to '{mp.get_start_method()}'")
-
-    # Initialize process group.
-    dist.init_process_group(backend="nccl")
-    log.info("Process group initialized")
-
-    prepare_cli_environment()
-    log.info("CLI environment prepared")
-
-    add_cached_path_clients()
+    prepare_torchrun_environment()
 
     parser = argparse.ArgumentParser(prog="Train a multitask model")
     parser.add_argument("mixture", help="Name of datset mixture to train on")

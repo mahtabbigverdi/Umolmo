@@ -1600,6 +1600,9 @@ class Molmo(nn.Module):
         self.config = config
         self.__cache = BufferCache()
 
+        # The math backend is very slow, make sure we don't use it accidentally
+        torch.backends.cuda.enable_math_sdp(False)
+
         # Validate config.
         if self.config.embedding_size is not None and self.config.embedding_size != self.config.vocab_size:
             if self.config.embedding_size < self.config.vocab_size:
@@ -2331,7 +2334,8 @@ class Molmo(nn.Module):
 
             # Run forward pass of model to get logits, then normalize to get log probs.
             # We allow the pre-fill stage to compile, but generation is not compiled
-            with torch.compiler.set_stance("eager_on_recompile" if tokens_generated > 1 else "default"):
+            # since it would require recompiling for each step as the KV cache grows
+            with torch.compiler.set_stance("force_eager" if tokens_generated > 1 else "default"):
                 output = self(
                     input_ids,
                     attention_mask=attention_mask,

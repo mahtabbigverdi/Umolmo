@@ -17,7 +17,7 @@ from olmo.config import BatchDivisor, SpeedMonitorConfig, ActivationCheckpointin
 from olmo.util import (
     add_cached_path_clients,
     clean_opt,
-    prepare_cli_environment,
+    prepare_cli_environment, prepare_torchrun_environment,
 )
 import torch.multiprocessing as mp
 import torch.distributed as dist
@@ -27,20 +27,7 @@ log = logging.getLogger("train")
 
 
 if __name__ == "__main__":
-    try:
-        mp.set_start_method("spawn", force=True)
-    except RuntimeError as e:
-        print(f"failed to set multiprocessing start method: {e}")
-    log.info(f"Multiprocessing start method set to '{mp.get_start_method()}'")
-
-    # Initialize process group.
-    dist.init_process_group(backend="nccl")
-    log.info("Process group initialized")
-
-    prepare_cli_environment()
-    log.info("CLI environment prepared")
-
-    add_cached_path_clients()
+    prepare_torchrun_environment()
 
     parser = argparse.ArgumentParser(prog="Train a captioner")
     parser.add_argument("llm", choices=["debug"] + list(LLMS.keys()))

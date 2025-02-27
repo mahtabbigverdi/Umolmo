@@ -1,5 +1,4 @@
 import hashlib
-import io
 # import ujson as json
 import json
 import logging
@@ -7,22 +6,17 @@ import os
 import re
 import socket
 import sys
+import torch.multiprocessing as mp
 import time
 import warnings
 from datetime import datetime
 from enum import Enum
-from itertools import cycle, islice
+from os.path import abspath
 from pathlib import Path
-from queue import Queue
-from threading import Thread
-from typing import Any, Callable, Dict, Optional, Tuple, Union
+from typing import Any, Callable, Dict, Optional, Union, List
 
-import boto3
-import botocore.exceptions as boto_exceptions
 import numpy as np
 import rich
-from botocore.config import Config
-from cached_path.schemes import SchemeClient, add_scheme_client
 from rich.console import Console, ConsoleRenderable
 from rich.highlighter import NullHighlighter
 from rich.progress import Progress
@@ -34,20 +28,26 @@ from .exceptions import (
     OLMoCliError,
     OLMoEnvironmentError,
     OLMoError,
-    OLMoNetworkError,
-    OLMoThreadError,
 )
-from .torch_util import get_global_rank, get_local_rank, get_node_rank, is_distributed
+from .io import add_cached_path_clients
+from .torch_util import get_global_rank, get_local_rank, get_node_rank, is_distributed, \
+    barrier, init_process_group
 
 try:
-    from functools import cache
+    from functools import cache, wraps
 except ImportError:
     from functools import lru_cache as cache
 
 
-def compute_hash(string: str) -> str:
+OLMO_NUM_THREADS_ENV_VAR = "OLMO_NUM_THREADS"
+
+
+def compute_hash(data: str) -> str:
     """Computes the hash of a string."""
-    return hashlib.sha256(string.encode("utf-8")).hexdigest()
+    if isinstance(data, bytes):
+        return hashlib.sha256(data).hexdigest()
+    else:
+        return hashlib.sha256(data.encode("utf-8")).hexdigest()
 
 
 def load_json(file):
@@ -154,8 +154,20 @@ def setup_logging(log_filter_type: LogFilterType = LogFilterType.rank0_only) -> 
 
     if filter is not None:
         handler.addFilter(filter)  # type: ignore
-    logging.basicConfig(handlers=[handler], level=logging.INFO)
 
+    # torch 2.6 will try setup some loggers of its own when we import, so
+    # use `force` to use our logging settings instead
+    logging.basicConfig(handlers=[handler], level=logging.INFO, force=True)
+
+    file_handler = logging.FileHandler("debug.log")
+    handler = logging.StreamHandler(sys.stdout)
+    formatter = logging.Formatter(
+        "%(asctime)s\t%(hostname)s:%(local_rank)s\t%(name)s:%(lineno)s\t%(levelname)s\t%(message)s"
+    )
+    formatter.default_time_format = "%Y-%m-%d %H:%M:%S"
+    formatter.default_msec_format = "%s.%03d"
+    file_handler.setFormatter(formatter)
+    logging.root.addHandler(file_handler)
     logging.captureWarnings(True)
 
     if os.environ.get("HF_DATASETS_OFFLINE"):
@@ -163,6 +175,7 @@ def setup_logging(log_filter_type: LogFilterType = LogFilterType.rank0_only) -> 
         logging.getLogger("datasets.load").setLevel(logging.ERROR)
         logging.getLogger("datasets.packaged_modules.cache.cache").setLevel(logging.ERROR)
     logging.getLogger("urllib3").setLevel(logging.ERROR)
+    logging.getLogger("google.resumable_media._helpers").setLevel(logging.WARNING)
 
 
 def excepthook(exctype, value, traceback):
@@ -197,19 +210,47 @@ def filter_warnings():
     )
     warnings.filterwarnings(
         action="ignore",
-        category=UserWarning,
+        category=FutureWarning,
         message="Please use DTensor instead.*",
     )
-    # Torchvision warnings. We don't actually use torchvision.
     warnings.filterwarnings(
         action="ignore",
-        message="failed to load.*",
-        module="torchvision.io.image",
+        category=FutureWarning,
+        message="You are using `torch.load` with `weights_only=False`.*",
     )
+
+    # Allow GCP to use personal credentials without filling the logs with warning
+    # warnings.filterwarnings(
+    #     action="ignore",
+    #     category=UserWarning,
+    #     message="Your application has authenticated using end user credentials fro.*",
+    # )
+
+
+def flatten_lists(xss):
+    return [x for xs in xss for x in xs]
 
 
 def set_env_variables():
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
+    setup_gcp_credentials()
+    setup_s3_credentials()
+
+
+def prepare_torchrun_environment():
+    try:
+        mp.set_start_method("spawn", force=True)
+    except RuntimeError as e:
+        print(f"failed to set multiprocessing start method: {e}")
+    log.info(f"Multiprocessing start method set to '{mp.get_start_method()}'")
+
+    # This needs to happen first so `prepare_cli_environment` can access the global rank,
+    # which is used for logging filters/fields
+    init_process_group()
+
+    add_cached_path_clients()
+    prepare_cli_environment()
+    log.info(f"Set up CLI environment")
 
 
 def prepare_cli_environment(log_filter_type: Optional[LogFilterType] = None):
@@ -329,384 +370,32 @@ def get_progress_bar() -> Progress:
 
 def resource_path(
     folder: PathOrStr, fname: str, local_cache: Optional[PathOrStr] = None,
-    progress: Optional[Progress] = None, cache_dir: Optional[PathOrStr] = None
+    progress: Optional[Progress] = None, cache_dir=None
 ) -> Path:
     if local_cache is not None and (local_path := Path(local_cache) / fname).is_file():
         log.info(f"Found local cache of {fname} at {local_path}")
         return local_path
     else:
         from cached_path import cached_path
-        return cached_path(
-            f"{str(folder).rstrip('/')}/{fname}", progress=progress, cache_dir=cache_dir)
+
+        return cached_path(f"{str(folder).rstrip('/')}/{fname}", progress=progress,
+                           cache_dir=cache_dir)
 
 
-def file_size(path: PathOrStr) -> int:
+def get_default_thread_count() -> int:
     """
-    Get the size of a local or remote file in bytes.
+    Get the default maximum number of threads allowed.
     """
-    if is_url(path):
-        from urllib.parse import urlparse
-
-        parsed = urlparse(str(path))
-        if parsed.scheme == "gs":
-            return _gcs_file_size(parsed.netloc, parsed.path.strip("/"))
-        elif parsed.scheme in ("s3", "r2", "weka"):
-            return _s3_file_size(parsed.scheme, parsed.netloc, parsed.path.strip("/"))
-        elif parsed.scheme in ("http", "https"):
-            return _http_file_size(parsed.scheme, parsed.netloc, parsed.path.strip("/"))
-        elif parsed.scheme == "file":
-            return file_size(str(path).replace("file://", "", 1))
-        else:
-            raise NotImplementedError(f"file size not implemented for '{parsed.scheme}' files")
-    else:
-        return os.stat(path).st_size
-
-
-def upload(source: PathOrStr, target: str, save_overwrite: bool = False):
-    """Upload source file to a target location on GCS or S3."""
-    from urllib.parse import urlparse
-
-    source = Path(source)
-    assert source.is_file()
-    parsed = urlparse(target)
-    if parsed.scheme == "gs":
-        _gcs_upload(source, parsed.netloc, parsed.path.strip("/"), save_overwrite=save_overwrite)
-    elif parsed.scheme in ("s3", "r2", "weka"):
-        _s3_upload(source, parsed.scheme, parsed.netloc, parsed.path.strip("/"), save_overwrite=save_overwrite)
-    else:
-        raise NotImplementedError(f"Upload not implemented for '{parsed.scheme}' scheme")
-
-
-def get_bytes_range(source: PathOrStr, bytes_start: int, num_bytes: int) -> bytes:
-    if is_url(source):
-        from urllib.parse import urlparse
-
-        parsed = urlparse(str(source))
-        if parsed.scheme == "gs":
-            return _gcs_get_bytes_range(parsed.netloc, parsed.path.strip("/"), bytes_start, num_bytes)
-        elif parsed.scheme in ("s3", "r2", "weka"):
-            return _s3_get_bytes_range(
-                parsed.scheme, parsed.netloc, parsed.path.strip("/"), bytes_start, num_bytes
-            )
-        elif parsed.scheme in ("http", "https"):
-            return _http_get_bytes_range(
-                parsed.scheme, parsed.netloc, parsed.path.strip("/"), bytes_start, num_bytes
-            )
-        elif parsed.scheme == "file":
-            return get_bytes_range(str(source).replace("file://", "", 1), bytes_start, num_bytes)
-        else:
-            raise NotImplementedError(f"get bytes range not implemented for '{parsed.scheme}' files")
-    else:
-        with open(source, "rb") as f:
-            f.seek(bytes_start)
-            return f.read(num_bytes)
-
-
-def find_latest_checkpoint(dir: PathOrStr) -> Optional[PathOrStr]:
-    if is_url(dir):
-        from urllib.parse import urlparse
-
-        parsed = urlparse(str(dir))
-        if parsed.scheme == "gs":
-            raise NotImplementedError
-        elif parsed.scheme in ("s3", "r2", "weka"):
-            return _s3_find_latest_checkpoint(parsed.scheme, parsed.netloc, parsed.path.strip("/"))
-        elif parsed.scheme == "file":
-            return find_latest_checkpoint(str(dir).replace("file://", "", 1))
-        else:
-            raise NotImplementedError(f"find_latest_checkpoint not implemented for '{parsed.scheme}' files")
-    else:
-        latest_step = 0
-        latest_checkpoint: Optional[Path] = None
-        for path in Path(dir).glob("step*"):
-            if path.is_dir():
-                try:
-                    step = int(path.name.replace("step", "").replace("-unsharded", ""))
-                except ValueError:
-                    continue
-                # We prioritize sharded checkpoints over unsharded checkpoints.
-                if step > latest_step or (step == latest_step and not path.name.endswith("-unsharded")):
-                    latest_step = step
-                    latest_checkpoint = path
-        return latest_checkpoint
-
-
-def _gcs_upload(source: Path, bucket_name: str, key: str, save_overwrite: bool = False):
-    from google.cloud import storage as gcs
-
-    storage_client = gcs.Client()
-    bucket = storage_client.bucket(bucket_name)
-    blob = bucket.blob(key)
-    if not save_overwrite and blob.exists():
-        raise FileExistsError(f"gs://{bucket_name}/{key} already exists. Use save_overwrite to overwrite it.")
-    blob.upload_from_filename(source)
-
-
-def _gcs_file_size(bucket_name: str, key: str) -> int:
-    from google.api_core.exceptions import NotFound
-    from google.cloud import storage as gcs
-
-    storage_client = gcs.Client()
-    bucket = storage_client.bucket(bucket_name)
-    blob = bucket.blob(key)
-    try:
-        blob.reload()
-    except NotFound:
-        raise FileNotFoundError(f"gs://{bucket_name}/{key}")
-    assert blob.size is not None
-    return blob.size
-
-
-def _gcs_get_bytes_range(bucket_name: str, key: str, bytes_start: int, num_bytes: int) -> bytes:
-    from google.api_core.exceptions import NotFound
-    from google.cloud import storage as gcs
-
-    storage_client = gcs.Client()
-    bucket = storage_client.bucket(bucket_name)
-    blob = bucket.blob(key)
-    try:
-        blob.reload()
-    except NotFound:
-        raise FileNotFoundError(f"gs://{bucket_name}/{key}")
-    return blob.download_as_bytes(start=bytes_start, end=bytes_start + num_bytes - 1)
-
-
-def _get_s3_profile_name(scheme: str) -> Optional[str]:
-    if scheme == "s3":
-        # For backwards compatibility, we assume S3 uses the default profile if S3_PROFILE is not set.
-        return os.environ.get("S3_PROFILE")
-    if scheme == "r2":
-        profile_name = os.environ.get("R2_PROFILE")
-        if profile_name is None:
-            raise OLMoEnvironmentError(
-                "R2 profile name is not set. Did you forget to set the 'R2_PROFILE' env var?"
-            )
-
-        return profile_name
-    if scheme == "weka":
-        profile_name = os.environ.get("WEKA_PROFILE")
-        if profile_name is None:
-            raise OLMoEnvironmentError(
-                "Weka profile name is not set. Did you forget to set the 'WEKA_PROFILE' env var?"
-            )
-
-        return profile_name
-
-    raise NotImplementedError(f"Cannot get profile name for scheme {scheme}")
-
-
-def _get_s3_endpoint_url(scheme: str) -> Optional[str]:
-    if scheme == "s3":
-        return None
-    if scheme == "r2":
-        r2_endpoint_url = os.environ.get("R2_ENDPOINT_URL")
-        if r2_endpoint_url is None:
-            raise OLMoEnvironmentError(
-                "R2 endpoint url is not set. Did you forget to set the 'R2_ENDPOINT_URL' env var?"
-            )
-
-        return r2_endpoint_url
-    if scheme == "weka":
-        weka_endpoint_url = os.environ.get("WEKA_ENDPOINT_URL")
-        if weka_endpoint_url is None:
-            raise OLMoEnvironmentError(
-                "Weka endpoint url is not set. Did you forget to set the 'WEKA_ENDPOINT_URL' env var?"
-            )
-
-        return weka_endpoint_url
-
-    raise NotImplementedError(f"Cannot get endpoint url for scheme {scheme}")
-
-
-@cache
-def _get_s3_client(scheme: str):
-    session = boto3.Session(profile_name=_get_s3_profile_name(scheme))
-    return session.client(
-        "s3",
-        endpoint_url=_get_s3_endpoint_url(scheme),
-        config=Config(retries={"max_attempts": 10, "mode": "standard"}),
-        use_ssl=not int(os.environ.get("OLMO_NO_SSL", "0")),
-    )
-
-
-def _wait_before_retry(attempt: int):
-    time.sleep(min(0.5 * 2**attempt, 3.0))
-
-
-def _s3_upload(
-    source: Path, scheme: str, bucket_name: str, key: str, save_overwrite: bool = False, max_attempts: int = 3
-):
-    err: Optional[Exception] = None
-    if not save_overwrite:
-        for attempt in range(1, max_attempts + 1):
-            try:
-                _get_s3_client(scheme).head_object(Bucket=bucket_name, Key=key)
-                raise FileExistsError(
-                    f"s3://{bucket_name}/{key} already exists. Use save_overwrite to overwrite it."
-                )
-            except boto_exceptions.ClientError as e:
-                if e.response["ResponseMetadata"]["HTTPStatusCode"] == 404:
-                    err = None
-                    break
-                err = e
-
-            if attempt < max_attempts:
-                log.warning("%s failed attempt %d with retriable error: %s", _s3_upload.__name__, attempt, err)
-                _wait_before_retry(attempt)
-
-        if err is not None:
-            raise OLMoNetworkError(f"Failed to check object existence during {scheme} upload") from err
-
-    try:
-        _get_s3_client(scheme).upload_file(source, bucket_name, key)
-    except boto_exceptions.ClientError as e:
-        raise OLMoNetworkError(f"Failed to upload to {scheme}") from e
-
-
-def _s3_file_size(scheme: str, bucket_name: str, key: str, max_attempts: int = 3) -> int:
-    err: Optional[Exception] = None
-    for attempt in range(1, max_attempts + 1):
+    env_val = os.environ.get(OLMO_NUM_THREADS_ENV_VAR)
+    if env_val is not None:
         try:
-            return _get_s3_client(scheme).head_object(Bucket=bucket_name, Key=key)["ContentLength"]
-        except boto_exceptions.ClientError as e:
-            if e.response["ResponseMetadata"]["HTTPStatusCode"] == 404:
-                raise FileNotFoundError(f"s3://{bucket_name}/{key}") from e
-            err = e
-
-        if attempt < max_attempts:
-            log.warning("%s failed attempt %d with retriable error: %s", _s3_file_size.__name__, attempt, err)
-            _wait_before_retry(attempt)
-
-    raise OLMoNetworkError(f"Failed to get {scheme} file size") from err
-
-
-def _s3_get_bytes_range(
-    scheme: str, bucket_name: str, key: str, bytes_start: int, num_bytes: int, max_attempts: int = 3
-) -> bytes:
-    err: Optional[Exception] = None
-    for attempt in range(1, max_attempts + 1):
-        try:
-            if num_bytes is None:
-                assert not bytes_start
-                return (
-                    _get_s3_client(scheme)
-                    .get_object(Bucket=bucket_name, Key=key)["Body"]
-                    .read()
-                )
-            else:
-                return (
-                    _get_s3_client(scheme)
-                    .get_object(
-                        Bucket=bucket_name, Key=key, Range=f"bytes={bytes_start}-{bytes_start + num_bytes - 1}"
-                    )["Body"]
-                    .read()
-                )
-        except boto_exceptions.ClientError as e:
-            if e.response["ResponseMetadata"]["HTTPStatusCode"] == 404:
-                raise FileNotFoundError(f"{scheme}://{bucket_name}/{key}") from e
-            err = e
-        except (boto_exceptions.HTTPClientError, boto_exceptions.ConnectionError) as e:
-            # ResponseStreamingError (subclass of HTTPClientError) can happen as
-            # a result of a failed read from the stream (http.client.IncompleteRead).
-            # Retrying can help in this case.
-            err = e
-
-        if attempt < max_attempts:
-            log.warning(
-                "%s failed attempt %d with retriable error: %s", _s3_get_bytes_range.__name__, attempt, err
-            )
-            _wait_before_retry(attempt)
-
-    # When torch's DataLoader intercepts exceptions, it may try to re-raise them
-    # by recalling their constructor with a single message arg. Torch has some
-    # logic to deal with the absence of a single-parameter constructor, but it
-    # doesn't gracefully handle other possible failures in calling such a constructor
-    # This can cause an irrelevant exception (e.g. KeyError: 'error'), resulting
-    # in us losing the true exception info. To avoid this, we change the exception
-    # to a type that has a single-parameter constructor.
-    raise OLMoNetworkError(f"Failed to get bytes range from {scheme}") from err
-
-
-def _s3_find_latest_checkpoint(scheme: str, bucket_name: str, prefix: str) -> Optional[str]:
-    if not prefix.endswith("/"):
-        prefix = f"{prefix}/"
-    response = _get_s3_client(scheme).list_objects(Bucket=bucket_name, Prefix=prefix, Delimiter="/")
-    assert not response["IsTruncated"]  # need to handle this if it happens
-    latest_step = 0
-    latest_checkpoint: Optional[str] = None
-    for item in response["CommonPrefixes"]:
-        prefix = item["Prefix"].strip("/")
-        checkpoint_name = os.path.split(prefix)[-1]
-        if not checkpoint_name.startswith("step"):
-            continue
-        try:
-            step = int(checkpoint_name.replace("step", "").replace("-unsharded", ""))
+            return int(env_val)
         except ValueError:
-            continue
-        # Make sure the checkpoint dir contains a config, otherwise the checkpoint is incomplete
-        # (upload might have have failed part way through).
-        try:
-            _s3_file_size(scheme, bucket_name, f"{prefix}/config.yaml")
-        except FileNotFoundError:
-            continue
-        # We prioritize sharded checkpoints over unsharded ones.
-        if step > latest_step or (step == latest_step and not checkpoint_name.endswith("-unsharded")):
-            latest_step = step
-            latest_checkpoint = f"{scheme}://{bucket_name}/{prefix}"
-    return latest_checkpoint
-
-
-def _http_file_size(scheme: str, host_name: str, path: str) -> int:
-    import requests
-
-    response = requests.head(f"{scheme}://{host_name}/{path}", allow_redirects=True)
-    return int(response.headers.get("content-length"))
-
-
-def _http_get_bytes_range(scheme: str, host_name: str, path: str, bytes_start: int, num_bytes: int) -> bytes:
-    import requests
-
-    response = requests.get(
-        f"{scheme}://{host_name}/{path}", headers={"Range": f"bytes={bytes_start}-{bytes_start+num_bytes-1}"}
-    )
-    result = response.content
-    assert (
-        len(result) == num_bytes
-    ), f"expected {num_bytes} bytes, got {len(result)}"  # Some web servers silently ignore range requests and send everything
-    return result
-
-
-def default_thread_count() -> int:
-    return int(os.environ.get("OLMO_NUM_THREADS") or min(32, (os.cpu_count() or 1) + 4))
-
-
-def pass_through_fn(fn, *args, **kwargs):
-    return fn(*args, **kwargs)
-
-
-def threaded_generator(g, maxsize: int = 16, thread_name: Optional[str] = None):
-    q: Queue = Queue(maxsize=maxsize)
-
-    sentinel = object()
-
-    def fill_queue():
-        try:
-            for value in g:
-                q.put(value)
-        except Exception as e:
-            q.put(e)
-        finally:
-            q.put(sentinel)
-
-    thread_name = thread_name or repr(g)
-    thread = Thread(name=thread_name, target=fill_queue, daemon=True)
-    thread.start()
-
-    for x in iter(q.get, sentinel):
-        if isinstance(x, Exception):
-            raise OLMoThreadError(f"generator thread {thread_name} failed") from x
-        else:
-            yield x
+            raise OLMoEnvironmentError(
+                f"Invalid value for {OLMO_NUM_THREADS_ENV_VAR} environment variable ('{env_val}')"
+            )
+    else:
+        return min(16, (os.cpu_count() or 1) + 4)
 
 
 def split_dict_of_list(batch, split_size):
@@ -732,84 +421,9 @@ def flatten_list(lst):
     return [x for xs in lst for x in xs]
 
 
-def roundrobin(*iterables):
-    """
-    Call the given iterables in a round-robin fashion. For example:
-    ``roundrobin('ABC', 'D', 'EF') --> A D E B F C``
-    """
-    # Adapted from https://docs.python.org/3/library/itertools.html#itertools-recipes
-    num_active = len(iterables)
-    nexts = cycle(iter(it).__next__ for it in iterables)
-    while num_active:
-        try:
-            for next in nexts:
-                yield next()
-        except StopIteration:
-            # Remove the iterator we just exhausted from the cycle.
-            num_active -= 1
-            nexts = cycle(islice(nexts, num_active))
-
-
-def add_cached_path_clients():
-    add_scheme_client(WekaClient)
-
-
-class WekaClient(SchemeClient):
-    recoverable_errors = SchemeClient.recoverable_errors + (
-        boto_exceptions.HTTPClientError,
-        boto_exceptions.ConnectionError,
-    )
-
-    scheme = "weka"
-
-    def __init__(self, resource: str) -> None:
-        SchemeClient.__init__(self, resource)
-        self.bucket_name, self.path = WekaClient._split_cloud_path(resource, "weka")
-        self.s3 = _get_s3_client("weka")
-        self.object_info = None
-
-    @staticmethod
-    def _split_cloud_path(url: str, provider: str) -> Tuple[str, str]:
-        """Split a full s3 path into the bucket name and path."""
-        from urllib.parse import urlparse
-
-        parsed = urlparse(url)
-        if not parsed.netloc or not parsed.path:
-            raise ValueError("bad {} path {}".format(provider, url))
-        bucket_name = parsed.netloc
-        provider_path = parsed.path
-        # Remove '/' at beginning of path.
-        if provider_path.startswith("/"):
-            provider_path = provider_path[1:]
-        return bucket_name, provider_path
-
-    def _ensure_object_info(self):
-        if self.object_info is None:
-            try:
-                self.object_info = self.s3.head_object(Bucket=self.bucket_name, Key=self.path)
-            except boto_exceptions.ClientError as e:
-                if e.response["ResponseMetadata"]["HTTPStatusCode"] == 404:
-                    raise FileNotFoundError(f"weka://{self.bucket_name}/{self.path}") from e
-                raise e
-
-    def get_etag(self) -> Optional[str]:
-        self._ensure_object_info()
-        assert self.object_info is not None
-        return self.object_info.get("ETag")
-
-    def get_size(self) -> Optional[int]:
-        self._ensure_object_info()
-        assert self.object_info is not None
-        return self.object_info.get("ContentLength")
-
-    def get_resource(self, temp_file: io.BufferedWriter) -> None:
-        self.s3.download_fileobj(Fileobj=temp_file, Bucket=self.bucket_name, Key=self.path)
-
-    def get_bytes_range(self, index: int, length: int) -> bytes:
-        response = self.s3.get_object(
-            Bucket=self.bucket_name, Key=self.path, Range=f"bytes={index}-{index+length-1}"
-        )
-        return response["Body"].read()
+def transpose_dict_of_lists(data: Dict[Any, List]) -> List[Dict]:
+    n = len(next(iter(data.values())))
+    return [{k: v[i] for k, v in data.items()} for i in range(n)]
 
 
 def log_metrics_to_console(prefix: str, metrics: Dict[str, float]):
@@ -822,13 +436,13 @@ def log_metrics_to_console(prefix: str, metrics: Dict[str, float]):
         elif value > 1000:
             return f"{int(value):,d}"
         elif value > 100:
-            return f"{value:.1f}"
-        elif value > 10:
             return f"{value:.2f}"
-        elif value > 1:
+        elif value > 10:
             return f"{value:.3f}"
-        else:
+        elif value > 1:
             return f"{value:.4f}"
+        else:
+            return f"{value:.5f}"
 
     logging.info(
         f"{prefix}\n"
@@ -927,3 +541,25 @@ def extract_points_from_point_count(text, image_w, image_h):
             point = point * np.array([image_w, image_h])
             all_points.append(point)
     return all_points
+
+
+def setup_gcp_credentials():
+    if "GOOGLE_APPLICATION_CREDENTIALS_JSON" in os.environ and "GOOGLE_APPLICATION_CREDENTIALS" not in os.environ:
+        credentials = "gcp_credentials.json"
+        if get_local_rank() == 0:
+            log.info("Writing GCP credentials to credentials.json")
+            with open(credentials, "w") as f:
+                f.write(os.environ["GOOGLE_APPLICATION_CREDENTIALS_JSON"])
+        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = abspath(credentials)
+        barrier()
+
+
+def setup_s3_credentials():
+    if "AWS_CREDENTIALS" in os.environ and "AWS_SHARED_CREDENTIALS_FILE" not in os.environ:
+        credentials = "aws_credentials"
+        if get_local_rank() == 0:
+            log.info("Writing AWS credentials to %s", credentials)
+            with open(credentials, "w") as f:
+                f.write(os.environ["AWS_CREDENTIALS"])
+        os.environ["AWS_SHARED_CREDENTIALS_FILE"] = abspath(credentials)
+        barrier()
