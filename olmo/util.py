@@ -328,15 +328,16 @@ def get_progress_bar() -> Progress:
 
 
 def resource_path(
-    folder: PathOrStr, fname: str, local_cache: Optional[PathOrStr] = None, progress: Optional[Progress] = None
+    folder: PathOrStr, fname: str, local_cache: Optional[PathOrStr] = None,
+    progress: Optional[Progress] = None, cache_dir: Optional[PathOrStr] = None
 ) -> Path:
     if local_cache is not None and (local_path := Path(local_cache) / fname).is_file():
         log.info(f"Found local cache of {fname} at {local_path}")
         return local_path
     else:
         from cached_path import cached_path
-
-        return cached_path(f"{str(folder).rstrip('/')}/{fname}", progress=progress)
+        return cached_path(
+            f"{str(folder).rstrip('/')}/{fname}", progress=progress, cache_dir=cache_dir)
 
 
 def file_size(path: PathOrStr) -> int:

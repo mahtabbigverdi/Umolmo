@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 import sys
 from abc import abstractmethod
 from collections import defaultdict
@@ -1468,7 +1469,7 @@ class MolmoVisionBackbone(nn.Module):
         self.reset_connector_parameters()  # resets the connector
         if self.config.vit_load_path:
             parent, name = self.config.vit_load_path.rsplit("/", 1)
-            state_dict_path = resource_path(parent, name)
+            state_dict_path = resource_path(parent, name, cache_dir=os.environ.get("MOLMO_CACHE_DIR"))
             assert state_dict_path.is_file(), f"Model file {str(state_dict_path)} not found"
             state_dict = torch.load(state_dict_path, map_location="cpu")
             self.image_vit.load_state_dict(state_dict)
@@ -1688,7 +1689,7 @@ class Molmo(nn.Module):
             self.reset_non_vision_parameters()
         else:
             parent, name = self.config.llm_load_path.rstrip("/").rsplit("/", 1)
-            state_dict_path = resource_path(parent, name)
+            state_dict_path = resource_path(parent, name, cache_dir=os.environ.get("MOLMO_CACHE_DIR"))
             assert state_dict_path.is_file(), f"Model file {str(state_dict_path)} not found"
             if state_dict_path.name.endswith("safetensors"):
                 state_dict = safetensors_file_to_state_dict(state_dict_path, map_location="cpu")
