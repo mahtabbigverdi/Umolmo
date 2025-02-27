@@ -33,7 +33,7 @@ def vit_activation_checkpoint_function(cfg: ModelConfig):
 class ViTMultiHeadDotProductAttention(nn.Module):
     """MDPA for the image ViT"""
 
-    def __init__(self, config: ModelConfig, use_bias: bool = True, is_vit_layer: Optional[bool] = True):
+    def __init__(self, config: ModelConfig, use_bias: bool = True, input_dim=None):
         super().__init__()
         self.config = config
         self.use_bias = use_bias
@@ -45,24 +45,24 @@ class ViTMultiHeadDotProductAttention(nn.Module):
         self.num_key_value_heads = v_cfg.image_num_key_value_heads
         self.num_key_value_groups = self.num_heads // self.num_key_value_heads
         self.initializer_range = v_cfg.initializer_range
-        self.is_vit_layer = is_vit_layer
 
-        nlayers = 1 if (is_vit_layer or config.vit_layers is None) else len(config.vit_layers)
+        if input_dim is None:
+            input_dim = self.embed_dim
 
         self.wq = nn.Linear(
-            nlayers * self.embed_dim,
+            input_dim,
             self.num_heads * self.head_dim,
             bias=use_bias,
             device=config.init_device,
             )
         self.wk = nn.Linear(
-            nlayers * self.embed_dim,
+            input_dim,
             self.num_key_value_heads * self.head_dim,
             bias=use_bias,
             device=config.init_device,
             )
         self.wv = nn.Linear(
-            nlayers * self.embed_dim,
+            input_dim,
             self.num_key_value_heads * self.head_dim,
             bias=use_bias,
             device=config.init_device,

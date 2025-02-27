@@ -1373,14 +1373,15 @@ class MolmoVisionBackbone(nn.Module):
 
         input_dim: int = None
         self.image_pooling_2d: nn.Module = None
+        pool_dim = config.vision_backbone.image_emb_dim * len(config.vit_layers)
         if config.image_pooling_2d in {ImagePooling2DType.attention, ImagePooling2DType.attention_meanq}:
-            self.image_pooling_2d = ViTMultiHeadDotProductAttention(config, is_vit_layer=False)
+            self.image_pooling_2d = ViTMultiHeadDotProductAttention(config, input_dim=pool_dim)
             input_dim = config.vision_backbone.image_emb_dim
         elif config.image_pooling_2d == ImagePooling2DType.attention_2wide:
             cfg = deepcopy(config)
             cfg.vision_backbone.image_emb_dim *= 2
             cfg.vision_backbone.image_head_dim *= 2
-            self.image_pooling_2d = ViTMultiHeadDotProductAttention(cfg, is_vit_layer=False)
+            self.image_pooling_2d = ViTMultiHeadDotProductAttention(cfg, input_dim=pool_dim)
             input_dim = cfg.vision_backbone.image_emb_dim
         elif config.image_pooling_2d in [ImagePooling2DType.none, ImagePooling2DType.stack]:
             self.image_pooling_2d = None
