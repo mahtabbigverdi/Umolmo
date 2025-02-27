@@ -988,34 +988,7 @@ class OLMoSequentialBlock(OLMoBlock):
         position_ids: Optional[torch.Tensor] = None,
         drop_mask: Optional[torch.Tensor] = None,
         layer_past: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
-        use_cache: bool = False,
-        force_eager=False,
-    ) -> Tuple[torch.Tensor, Optional[Tuple[torch.Tensor, torch.Tensor]]]:
-        # This is a hack so we can have access to both a statically compiled version of forward
-        # AND an eager or dynamically compiled version, forward can pass  to two identical
-        # versions, only one of which can be compiled
-        #
-        # torch 2.6 will fix this by with a method to force a compiled method to run in eager mode,
-        # but for now we forced to do this
-        if force_eager:
-            return self.forward_eager(x, attention_bias, position_ids, drop_mask, layer_past, use_cache)
-        else:
-            return self.forward_can_compile(x, attention_bias, position_ids, drop_mask, layer_past, use_cache)
-
-    def forward_eager(self, *args, **kwargs) -> Tuple[torch.Tensor, Optional[Tuple[torch.Tensor, torch.Tensor]]]:
-        return self._forward(*args, **kwargs)
-
-    def forward_can_compile(self, *args, **kwargs) -> Tuple[torch.Tensor, Optional[Tuple[torch.Tensor, torch.Tensor]]]:
-        return self._forward(*args, **kwargs)
-
-    def _forward(
-        self,
-        x: torch.Tensor,
-        attention_bias: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.Tensor] = None,
-        drop_mask: Optional[torch.Tensor] = None,
-        layer_past: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
-        use_cache: bool = False,
+        use_cache: bool = False
     ) -> Tuple[torch.Tensor, Optional[Tuple[torch.Tensor, torch.Tensor]]]:
         # Get query, key, value projections.
         # shape:
@@ -1506,7 +1479,7 @@ class MolmoVisionBackbone(nn.Module):
         if strategy in (ActivationCheckpointingStrategy.whole_layer, ActivationCheckpointingStrategy.vit_only):
             self.image_vit.set_grad_checkpointing()
     
-    def encode_image(self, images: torch.Tensor, force_eager=False) -> torch.Tensor:
+    def encode_image(self, images: torch.Tensor) -> torch.Tensor:
         """
         : param images: (batch_size, num_crops, num_patch, n_pixels)
         """
@@ -1519,7 +1492,7 @@ class MolmoVisionBackbone(nn.Module):
         # Output all hidden states
         # n_layers x (batch_num_crops, (1+)n_tokens, image_emb_dim)
         images = images.view(B * T, N, D)
-        image_features = self.image_vit(images, force_eager=force_eager)
+        image_features = self.image_vit(images)
 
         if cfg.vit_layers is not None:
             features = []
@@ -1541,12 +1514,12 @@ class MolmoVisionBackbone(nn.Module):
 
         return image_features
     
-    def forward(self, images: torch.Tensor, image_masks: torch.Tensor, force_eager=False) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    def forward(self, images: torch.Tensor, image_masks: torch.Tensor) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         cfg = self.config
 
         # image_features: (batch_size, num_crops(=num_image), num_patch, nximage_emb_dim)
         batch_size, num_image = images.shape[:2]
-        image_features = self.encode_image(images, force_eager=force_eager)
+        image_features = self.encode_image(images)
 
         if cfg.image_padding_embed:
             assert image_masks is not None
@@ -1852,8 +1825,7 @@ class Molmo(nn.Module):
         use_cache: bool = False,
         last_logits_only: bool = False,
         output_hidden_states: Optional[bool] = None,
-        append_last_valid_logits: Optional[torch.Tensor] = None,
-        force_eager=False
+        append_last_valid_logits: Optional[torch.Tensor] = None
     ) -> OLMoOutput:
         """
         :param input_ids: A tensor of shape `(batch_size, seq_len)`.
@@ -1937,7 +1909,7 @@ class Molmo(nn.Module):
         if images is not None:
             # shape: (batch_size, num_image, num_patch, d_model)
             # cls_embed: (batch_size, num_image, d_model)
-            image_features = self.vision_backbone(images, image_masks, force_eager=force_eager)
+            image_features = self.vision_backbone(images, image_masks)
             num_image, num_patch = image_features.shape[1:3]
             assert image_input_idx.shape == (batch_size, num_image, num_patch)
 
@@ -2014,15 +1986,13 @@ class Molmo(nn.Module):
                     # shape: (batch_size, seq_len, d_model)
                     x, cache = self._activation_checkpoint_fn(
                         block, x, attention_bias=attention_bias, position_ids=position_ids,
-                        drop_mask=response_mask, layer_past=layer_past, use_cache=use_cache,
-                        force_eager=force_eager
+                        drop_mask=response_mask, layer_past=layer_past, use_cache=use_cache
                     )
                 else:
                     # shape: (batch_size, seq_len, d_model)
                     x, cache = block(
                         x, attention_bias=attention_bias, position_ids=position_ids,
-                        drop_mask=response_mask, layer_past=layer_past, use_cache=use_cache,
-                        force_eager=force_eager
+                        drop_mask=response_mask, layer_past=layer_past, use_cache=use_cache
                     )
 
                 if attn_key_values is not None:
@@ -2358,20 +2328,21 @@ class Molmo(nn.Module):
             tokens_generated += 1
 
             # Run forward pass of model to get logits, then normalize to get log probs.
-            output = self(
-                input_ids,
-                attention_mask=attention_mask,
-                attention_bias=attention_bias,
-                images=_images,
-                image_masks=image_masks,
-                image_input_idx=_image_input_idx,
-                position_ids=_position_ids,
-                past_key_values=past_key_values,
-                use_cache=True,
-                last_logits_only=True,
-                append_last_valid_logits=_append_last_valid_logits,
-                force_eager=True
-            )
+            # We allow the pre-fill stage to compile, but generation is not compiled
+            with torch.compiler.set_stance("eager_on_recompile" if tokens_generated > 1 else "default"):
+                output = self(
+                    input_ids,
+                    attention_mask=attention_mask,
+                    attention_bias=attention_bias,
+                    images=_images,
+                    image_masks=image_masks,
+                    image_input_idx=_image_input_idx,
+                    position_ids=_position_ids,
+                    past_key_values=past_key_values,
+                    use_cache=True,
+                    last_logits_only=True,
+                    append_last_valid_logits=_append_last_valid_logits
+                )
             log_probs = F.log_softmax(output.logits[:, -1, :], dim=-1)
 
             # Create new state.

@@ -175,12 +175,15 @@ def main(cfg: TrainConfig) -> None:
             if cfg.model.block_group_size != 1:
                 raise OLMoConfigurationError("Compile block is only supported with block_group_size 1.")
             for block_idx, block in enumerate(olmo_model.transformer.blocks):
-                block.forward_can_compile = torch.compile(block.forward_can_compile, **cfg.compile.compile_args())
+                block.compile(**cfg.compile.compile_args())
             for block_idx, block in enumerate(olmo_model.vision_backbone.image_vit.transformer.resblocks):
-                block.forward_can_compile = torch.compile(block.forward_can_compile, **cfg.compile.compile_args())
+                block.compile(**cfg.compile.compile_args())
         elif cfg.compile.target == "image_blocks":
             for block_idx, block in enumerate(olmo_model.vision_backbone.image_vit.transformer.resblocks):
-                block.forward_can_compile = torch.compile(block.forward_can_compile, **cfg.compile.compile_args())
+                block.compile(**cfg.compile.compile_args())
+        elif cfg.compile.target == "llm_blocks":
+            for block_idx, block in enumerate(olmo_model.transformer.blocks):
+                block.compile(**cfg.compile.compile_args())
         elif cfg.compile.target == "transformers":
             if cfg.model.block_group_size != 1:
                 raise OLMoConfigurationError("Compile block is only supported with block_group_size 1.")
