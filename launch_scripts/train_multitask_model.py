@@ -44,7 +44,7 @@ AUX = [
     "st_qa",
     "tally_qa",
 
-    ("clocks", 250000),  # Downsample since it is huge
+    ("pixmo_clocks", 250000),  # Downsample since it is huge
     "pixmo_docs_charts",
     "pixmo_docs_tables",
     "pixmo_docs_other",
@@ -106,7 +106,7 @@ if __name__ == "__main__":
             "doc_qa",
             "ai2_diagram_v2_mix_transparent",
             "coco_2014_vqa_multi",
-            "clocks",
+            "pixmo_clocks",
             "android_control_ll",
             "pointing_eval:test",
             "countbench_qa:huggingface"
@@ -187,7 +187,6 @@ if __name__ == "__main__":
         evaluation = get_evaluation(
             task,
             args.inf_seq_len,
-            batch_size=get_world_size()*args.device_inf_batch_size,
             max_examples=max_inf_examples,
             num_workers=num_workers
         )
@@ -286,8 +285,6 @@ if __name__ == "__main__":
     )
 
     conf = OmegaConf.create(cfg)
-    if other_args:
-        overrides = [clean_opt(arg) for arg in other_args]
-        conf = OmegaConf.merge(conf, OmegaConf.from_dotlist(overrides))
+    conf.merge_with_dotlist([clean_opt(arg) for arg in other_args])
     cfg = cast(TrainConfig, OmegaConf.to_object(conf))
     train(cfg)

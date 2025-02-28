@@ -75,7 +75,7 @@ def get_evaluator(name) -> EvaluatorConfig:
         raise NotImplementedError(name)
 
 
-def get_evaluation(name, seq_len, batch_size, max_examples, num_workers=2) -> DatasetEvaluatorConfig:
+def get_evaluation(name, seq_len, max_examples, num_workers=2, device_batch_size=None) -> DatasetEvaluatorConfig:
     """Gets the default evaluation config for task (or task:split string) `name`"""
     if ":" in name:
         name, split = name.split(":")
@@ -137,6 +137,7 @@ def get_evaluation(name, seq_len, batch_size, max_examples, num_workers=2) -> Da
 
     return DatasetEvaluatorConfig(
         max_examples=max_examples,
+        device_eval_batch_size=device_batch_size,
         max_new_tokens=max_new_tokens,
         mm_evaluator=evaluator,
         label="ai2_diagram" if "ai2_diagram" in name else name,

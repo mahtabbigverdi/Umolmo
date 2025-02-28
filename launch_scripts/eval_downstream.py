@@ -125,7 +125,6 @@ def main():
     for task in tasks:
         eval_config = get_evaluation(
             name=task, seq_len=args.seq_len,
-            batch_size=args.device_batch_size*get_world_size(),
             max_examples=args.max_examples,
         )
         if args.max_new_tokens:
@@ -160,11 +159,9 @@ def main():
         ) if args.fsdp else None,
     )
 
-    if other_args:
-        config = OmegaConf.create(cfg)
-        overrides = [clean_opt(arg) for arg in other_args]
-        config.merge_with_dotlist(overrides)
-        cfg = cast(EvalConfig, OmegaConf.to_object(config))
+    config = OmegaConf.create(cfg)
+    config.merge_with_dotlist([clean_opt(arg) for arg in other_args])
+    cfg = cast(EvalConfig, OmegaConf.to_object(config))
     ModelEvaluator(cfg).run()
 
 
