@@ -34,7 +34,11 @@ def init_process_group() -> bool:
         backend="nccl",
         timeout=timedelta(minutes=int(os.environ.get("NCCL_TIMEOUT_MINUTES", 10)))
     )
-    log.info("Process group initialized")
+
+    # The math backend is very slow, make sure we don't use it accidentally
+    torch.backends.cuda.enable_math_sdp(False)
+
+    log.info("Process group initialized, math SDP disabled")
 
 
 def is_distributed() -> bool:
