@@ -81,8 +81,9 @@ class BeakerLogger:
         self.beaker.experiment.set_description(self.experiment, f"[Init] " + self.original_description)
 
     def add_wandb(self, wandb_url):
-        self.original_description = self.original_description + " (" + wandb_url + ")"
-        self.beaker.experiment.set_description(self.experiment, f"[Init] " + self.original_description)
+        if wandb_url not in self.original_description:
+            self.original_description = self.original_description + " (" + wandb_url + ")"
+            self.beaker.experiment.set_description(self.experiment, f"[Init] " + self.original_description)
 
     def log_progress(self, on_step, target_step):
         self.beaker.experiment.set_description(self.experiment, f"[{100*on_step/target_step:04.1f}%] " + self.original_description)
