@@ -250,7 +250,7 @@ def prepare_torchrun_environment():
 
     add_cached_path_clients()
     prepare_cli_environment()
-    log.info(f"Set up CLI environment")
+    log.info(f"Set up torchrun environment")
 
 
 def prepare_cli_environment(log_filter_type: Optional[LogFilterType] = None):
