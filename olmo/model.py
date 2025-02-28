@@ -1600,9 +1600,6 @@ class Molmo(nn.Module):
         self.config = config
         self.__cache = BufferCache()
 
-        # The math backend is very slow, make sure we don't use it accidentally
-        torch.backends.cuda.enable_math_sdp(False)
-
         # Validate config.
         if self.config.embedding_size is not None and self.config.embedding_size != self.config.vocab_size:
             if self.config.embedding_size < self.config.vocab_size:
@@ -2335,20 +2332,19 @@ class Molmo(nn.Module):
             # Run forward pass of model to get logits, then normalize to get log probs.
             # We allow the pre-fill stage to compile, but generation is not compiled
             # since it would require recompiling for each step as the KV cache grows
-            with torch.compiler.set_stance("force_eager" if tokens_generated > 1 else "default"):
-                output = self(
-                    input_ids,
-                    attention_mask=attention_mask,
-                    attention_bias=attention_bias,
-                    images=_images,
-                    image_masks=image_masks,
-                    image_input_idx=_image_input_idx,
-                    position_ids=_position_ids,
-                    past_key_values=past_key_values,
-                    use_cache=True,
-                    last_logits_only=True,
-                    append_last_valid_logits=_append_last_valid_logits
-                )
+            output = self(
+                input_ids,
+                attention_mask=attention_mask,
+                attention_bias=attention_bias,
+                images=_images,
+                image_masks=image_masks,
+                image_input_idx=_image_input_idx,
+                position_ids=_position_ids,
+                past_key_values=past_key_values,
+                use_cache=True,
+                last_logits_only=True,
+                append_last_valid_logits=_append_last_valid_logits
+            )
             log_probs = F.log_softmax(output.logits[:, -1, :], dim=-1)
 
             # Create new state.
@@ -2366,7 +2362,7 @@ class Molmo(nn.Module):
             state["attention_mask"] = attention_mask
         if attention_bias is not None:
             state["attention_bias"] = attention_bias
-        with torch.inference_mode():
+        with torch.inference_mode(), torch.compiler.set_stance("force_eager"):
             token_ids, scores = beam_search.search(initial_preds, state, step)
 
         return OLMoGenerateOutput(
