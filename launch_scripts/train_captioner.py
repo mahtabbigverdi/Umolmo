@@ -145,7 +145,7 @@ if __name__ == "__main__":
             connector_eps=1e-6,
             vit_eps=1e-6,
             llm_eps=1e-6,
-            metrics_log_interval=20
+            metrics_log_interval=-1
         ),
         scheduler=SchedulerConfig(
             name=SchedulerType.multimodal,
