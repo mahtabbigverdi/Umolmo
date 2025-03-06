@@ -353,39 +353,57 @@ dynamic mode you will see a significant performance drop. Autoregressive decodin
 done in a non-compiled path so it does not trigger an excessive number of re-compilations.
 
 ## Beaker
-`Dockerfile` can be used to build a beaker image. I have one built at `chrisc/molmo-torch2.5.1-cuda12.4`.
-Some ganty setting to use:
+`Dockerfile` can be used to build a beaker image. I have one built at `chrisc/molmo-torch2.6.0-cuda12.4`.
+Some gantry settings to use:
  
+
+### cirrascale
 Setup access to the data in weka
 ```
---env HF_DATASETS_CACHE=/weka/oe-training-default/mm-olmo/hf_datasets
 --env MOLMO_DATA_DIR=/weka/oe-training-default/mm-olmo
 --env HF_DATASETS_OFFLINE=1
+--env OLMO_SHARED_FS=1
 --weka oe-training-default:/weka/oe-training-default
+--env-secret HF_ACCESS_TOKEN=YOUR_HF_KEY_SECRET_NAME
 ```
 
+For jupiter, also set the environment variables from [here](https://beaker-docs.apps.allenai.org/experiments/distributed-training.html#ai2jupiter-cirrascale-2)
+
+### Augusta
+To run on Augusta, instead use:
+```
+ --env MOLMO_DATA_DIR="gs://mm-olmo"
+ --env HF_DATASETS_OFFLINE=1
+ --env OLMO_SHARED_FS="1"
+ --env NCCL_TIMEOUT_MINUTES="30"
+ --env-secret HF_ACCESS_TOKEN=YOUR_HF_KEY_SECRET_NAME
+ ```
+
+When running Augusta you can use GCP files path directly. 
+Not all datasets are supported, but all the pixmo datasets work.
+
+Be sure also set the environment variables from [here](https://beaker-docs.apps.allenai.org/compute/augusta.html)
+
+### Logging
 Setup wandb and access keys (first store your keys as beaker secrets):
 ```
 --env WANDB_ENTITY=prior-ai2 
 --env WANDB_PROJECT=cockatoo
 --env-secret WANDB_API_KEY=YOUR_WANDB_KEY_SECRET_NAME
---env-secret HF_ACCESS_TOKEN=YOUR_HF_KEY_SECRET_NAME
 ```
 
+### Experiment flags
 Runs for research on Molmo can use:
 ```
 --budget ai2/oe-training
 --workspace ai2/mm-olmo
 ```
 
-For reference here is a complete example of a gantry command to train 
-the captioner (please make sure to use you access keys and save folders before running it):
 
-`
-gantry run --name dense-captioner-ablations-v2_from-molmo-metaclip_12-11-35-36 --budget ai2/oe-training --preemptible --priority high --cluster ai2/jupiter-cirrascale-2 --no-nfs --gpus 8 --shared-memory 10GiB --venv base --beaker-image chrisc/molmo-v2 --install echo "no install" --workspace ai2/mm-olmo --env-secret WANDB_API_KEY=CHRISC_WANDB_API_KEY --env-secret HF_ACCESS_TOKEN=CHRISC_HF_ACCESS_TOKEN --env OMP_NUM_THREADS=8 --env HF_DATASETS_CACHE=/weka/oe-training-default/mm-olmo/hf_datasets --env MOLMO_DATA_DIR=/weka/oe-training-default/mm-olmo --env HF_DATASETS_OFFLINE=1 --env WANDB_ENTITY=prior-ai2 --env WANDB_PROJECT=cockatoo --description  launch_scripts/train_captioner.py qwen2_7b --save_overwrite --vision_backbone metaclip_l14_336 --weka oe-training-default:/weka/oe-training-default --replicas 4 --leader-selection --host-networking --propagate-failure --propagate-preemption --env LOG_FILTER_TYPE=local_rank0_only --env NCCL_SOCKET_IFNAME=ib --env NCCL_IB_HCA=^=mlx5_bond_0 --env OLMO_SHARED_FS=1 -- /bin/bash -c torchrun --nnodes 4:4 --rdzv_backend=c10d --rdzv_id=42 --rdzv_conf="read_timeout=600" --rdzv_endpoint=$BEAKER_LEADER_REPLICA_HOSTNAME:29401 --nproc-per-node 8 launch_scripts/train_captioner.py qwen2_7b --save_overwrite --vision_backbone metaclip_l14_336 --wandb.group=dense-captioner-ablations-v2 --wandb.name=from-molmo-metaclip --save_folder=/weka/oe-training-default/chrisc/cockatoo/models/dense-captioner-ablations-v2/from-molmo-metaclip
-`
+### Examples
 
-I recommend setting up a script to setup these defaults args.
+I have been using the script in `examples/run_gantry.py` to make launching jobs
+easier, but please don't launch directly since it will my personal beaker secrets.
 
 ## Citation
 
