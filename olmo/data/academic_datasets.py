@@ -59,9 +59,9 @@ class ChartQa(HfDataset):
         super().__init__(split, keep_in_memory=keep_in_memory)
         if self.parts != "both":
             # Filter out either human or aug datasets
-            flags = [int(self.parts == "human")]
+            to_keep = 0 if (self.parts == "human") else 1
             self.dataset = self.dataset.filter(
-                lambda x: x in flags,
+                lambda x: x == to_keep,
                 input_columns=["human_or_machine"]
             )
 
@@ -73,7 +73,7 @@ class ChartQa(HfDataset):
             answers=ex["label"],
             style="chart_qa",
             metadata=dict(
-                is_human=ex['human_or_machine'],
+                is_human=ex['human_or_machine'] == 0,
             )
         )
         if self.weighted:
