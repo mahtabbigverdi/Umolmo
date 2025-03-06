@@ -222,11 +222,6 @@ class Molmo(nn.Module):
         """Compile the model with `torch.compile`"""
         log.info(f"Compiling {target}...")
 
-        # Want the cache to be pre-filled to stop the compiler getting confused due to cache
-        # modifications, otherwise compiling + FSPD + activation checkpoints leads to runtime errors
-        self.warmup_cache(
-            self.device if self.device != torch.device("meta") else get_default_device())
-
         if target == "blocks":
             for block_idx, block in enumerate(self.transformer.blocks):
                 block.compile(**compile_kwargs)

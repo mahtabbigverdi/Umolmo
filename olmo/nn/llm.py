@@ -563,9 +563,6 @@ class Llm(nn.Module):
             )
 
     def reset_parameters(self) -> None:
-        if self.config.max_sequence_length is not None and self.blocks[0].rotary_emb is not None:
-            self.blocks[0].rotary_emb.warmup_cache(self.ln_f.weight.device)
-
         if self.config.additional_vocab_size:
             init_weights(
                 self.config,
@@ -590,9 +587,6 @@ class Llm(nn.Module):
             block.reset_parameters()
 
     def reset_with_pretrained_weights(self) -> None:
-        if self.config.max_sequence_length is not None and self.blocks[0].rotary_emb is not None:
-            self.blocks[0].rotary_emb.warmup_cache(self.ln_f.weight.device)
-
         if self.config.init_path is None:
             self.reset_parameters()
         else:

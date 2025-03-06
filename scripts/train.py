@@ -94,9 +94,9 @@ def run_trainer(cfg: TrainConfig) -> None:
         assert reset_opt and reset_train, "Unshared checkpoints do not support optim/train state loading"
 
     # Fail fast if we would be overwriting another save directory
-    if not cfg.dry_run and not is_resuming:
+    if not cfg.dry_run and not is_resuming and not cfg.save_overwrite:
         save_path = join(cfg.save_folder, "config.yaml")
-        if file_exists(save_path) and not cfg.save_overwrite:
+        if file_exists(save_path):
             raise OLMoConfigurationError(f"{save_path} already exists, use --save_overwrite to overwrite")
 
     barrier()
@@ -143,6 +143,9 @@ def run_trainer(cfg: TrainConfig) -> None:
     if cfg.activation_checkpointing:
         olmo_model.apply_activation_checkpointing(cfg.activation_checkpointing)
     if cfg.compile:
+        # Want the cache to be pre-filled to stop the compiler getting confused due to cache
+        # modifications, otherwise compiling + FSPD + activation checkpoints leads to runtime errors
+        olmo_model.warmup_cache(device)
         olmo_model.apply_compile(cfg.compile.target, **cfg.compile.compile_args())
 
     # Shard the model
@@ -205,7 +208,7 @@ def run_trainer(cfg: TrainConfig) -> None:
     else:
         evaluators = None
     if cfg.inf_eval_interval > 0 or cfg.eval_on_load:
-        inf_evaluators = [v.build_dataset_evaluator(cfg.model, device) for v in cfg.inf_evaluators]
+        inf_evaluators = [v.build_dataset_evaluator(cfg.model, None, device) for v in cfg.inf_evaluators]
     else:
         inf_evaluators = None
 
