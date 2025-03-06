@@ -217,15 +217,15 @@ class BatchDivisor(StrEnum):
 
 @dataclass
 class RuntimeData(BaseConfig):
+    args: str
     hostname: str
     date: str
     world_size: int
+    resuming_from: Optional[str]
     beaker_experiment_id: Optional[str]
     beaker_experiment_url: Optional[str]
-    wandb_url: Optional[str]
     wandb_id: Optional[str]
-    args: str
-    resuming_from: Optional[str]
+    wandb_url: Optional[str]
 
 
 @dataclass
@@ -544,9 +544,9 @@ class TrainConfig(BaseConfig):
     Whether to compile the loss function
     """
 
-    runtime_data: Optional[RuntimeData] = None
+    runtime_data: Optional[RuntimeData] = field(default=None, metadata={"omegaconf_ignore": True})
     """
-    Data about the current run, should not be set manually 
+    Data about the current run, filled in automatically 
     """
 
     @property
