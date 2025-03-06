@@ -7,7 +7,6 @@ import omegaconf
 from omegaconf import OmegaConf
 
 from launch_scripts.utils import get_evaluation, DEBUG_MODEL
-from utils import select_checkpoint
 from olmo.train.optim import OptimizerType, OptimizerConfig, SchedulerConfig, SchedulerType
 from olmo.train.trainer_config import (
     WandbConfig, BatchDivisor, SpeedMonitorConfig,
@@ -17,7 +16,7 @@ from olmo.train.trainer_config import (
 from olmo.nn.model import ModelConfig
 from olmo.data.data_loader import DataConfig, RootSizeMixture
 from olmo.torch_util import get_world_size
-from olmo.util import clean_opt, prepare_torchrun_environment
+from olmo.util import clean_opt, prepare_torchrun_environment, select_checkpoint
 from scripts.train import run_trainer as train
 
 log = logging.getLogger("train")
@@ -195,7 +194,6 @@ if __name__ == "__main__":
 
     cfg = TrainConfig(
         run_name="multitask_train",
-        no_pre_train_checkpoint=True,
         save_folder="debug_run" if debug else omegaconf.MISSING,
         seed=6198,
         dry_run=False,
@@ -211,7 +209,6 @@ if __name__ == "__main__":
         allow_resume=True,
         model=model_cfg,
         save_overwrite=debug,
-        save_dataloader_state=False,
         data=DataConfig(
             root_size_mixture=root_size_mixture,
             shuffle=True,
@@ -220,7 +217,6 @@ if __name__ == "__main__":
             sequence_length=args.seq_len,
             num_workers=num_workers,
             pad="to_max",
-            shuffle_messages=True,
             pin_memory=True,
             seed=50189,
         ),
@@ -241,7 +237,6 @@ if __name__ == "__main__":
             connector_eps=1e-6,
             vit_eps=1e-6,
             llm_eps=1e-6,
-            metrics_log_interval=20
         ),
         scheduler=SchedulerConfig(
             name=SchedulerType.multimodal,
@@ -260,7 +255,6 @@ if __name__ == "__main__":
         initial_model_checkpoint=checkpoint,
         save_interval=4000,
         save_num_checkpoints_to_keep=1,
-        save_interval_unsharded="${max_duration}",
         global_train_batch_size=global_batch_size,
         device_train_microbatch_size=args.device_train_batch_size,
         time_limit=None,
@@ -270,12 +264,14 @@ if __name__ == "__main__":
         batch_divisor=BatchDivisor.global_batch,
         precision="amp_bf16",
         console_log_interval=log_interval,
+        compile_loss=True,
         speed_monitor=SpeedMonitorConfig(window_size=20),
         softmax_auxiliary_loss=True,
         softmax_auxiliary_loss_scale=1e-4,
         eval_interval=eval_interval,
         inf_eval_interval=inf_eval_interval,
         inf_evaluators=evaluations,
+        save_final_unsharded_checkpoint=True,
         evaluators=[]
     )
 

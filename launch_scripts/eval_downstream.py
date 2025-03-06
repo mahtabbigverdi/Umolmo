@@ -30,18 +30,9 @@ def main():
                         help="Maximum number of examples to evaluate")
     parser.add_argument("--max_crops", type=int, default=None,
                         help="Override models default number of crops")
-    parser.add_argument("--seed", default=6198, type=int)
     parser.add_argument("--seq_len", default=1536, type=int,
                         help="Max sequence length to use")
     parser.add_argument("--device_batch_size", default=4, type=int)
-    parser.add_argument("--save_dir", default=None,
-                        help="Directory to save the evaluation results")
-    parser.add_argument("--save_to_checkpoint_dir", action="store_true",
-                        help="Save to the checkpoint directory")
-    parser.add_argument("--eval_name",
-                        help="Name to use as a prefix when saving results")
-    parser.add_argument("--pbar", action="store_true",
-                        help="Show a progress bar")
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--fsdp", action="store_true",
                         help="Load with FSDP, can be used to avoid OOMs")
@@ -50,7 +41,6 @@ def main():
     args, other_args = parser.parse_known_args()
 
     if args.high_res:
-        args.max_crops = 36
         args.seq_len = 4096
         args.eval_name = "36crop"
 
@@ -131,9 +121,6 @@ def main():
             subset_num_batches=None,
             max_examples=args.max_examples,
             max_new_tokens=args.max_new_tokens or base_config.max_new_tokens,
-            save_to_checkpoint_dir=args.save_to_checkpoint_dir,
-            save_dir=args.save_dir,
-            skip_if_metrics_cached=not args.overwrite,
         )
         inf_evaluators.append(eval_config)
 
@@ -143,14 +130,16 @@ def main():
         max_crops_override=args.max_crops,
         evaluations=inf_evaluators,
         load_path=checkpoint_dir,
-        seed=args.seed,
-        device_batch_size=args.device_batch_size,
-        pbar=args.pbar,
+        save_to_checkpoint_dir=args.save_to_checkpoint_dir,
         console_log_interval=10,
+        precision="amp_bf16",
+        eval_name="36crop" if args.high_res else None,
         fsdp=FSDPConfig(
             wrapping_strategy=FSDPWrapStrategy.by_block_and_size,
             precision=FSDPPrecision.float,
+            fsdp2=True
         ) if args.fsdp else None,
+        skip_if_metrics_cached=not args.overwrite,
     )
 
     config = OmegaConf.create(cfg)
