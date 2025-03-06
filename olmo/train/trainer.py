@@ -563,6 +563,10 @@ class Trainer:
         )
         if load_trainer_state:
             self.load_trainer_state_dict(trainer_state)
+            if self.global_step >= self.cfg.stop_at:
+                raise ValueError(f"Checkpointed it at {self.global_step}, but stop_at is {self.cfg.stop_at}")
+            if self.global_step >= self.max_steps:
+                raise ValueError(f"Checkpointed it at {self.global_step}, but max steps is {self.max_steps}")
         gc_cuda()
         barrier()
 
