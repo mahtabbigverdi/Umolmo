@@ -3,13 +3,13 @@ from abc import ABCMeta, abstractmethod
 from collections import defaultdict
 from dataclasses import dataclass, replace
 from math import cos, pi, sqrt
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union, cast
 
 import torch
 import torch.distributed as dist
 import torch.nn as nn
 from torch.distributed.fsdp import FullyShardedDataParallel
-from torch.optim.optimizer import Optimizer
+from torch.optim import Optimizer
 
 from olmo.config import BaseConfig, D, StrEnum
 from olmo.torch_util import get_default_device, is_distributed, listinstr
@@ -22,7 +22,6 @@ except ImportError:
     megablocks_available = False
 
 __all__ = [
-    "Optimizer",
     "LionW",
     "Scheduler",
     "CosWithWarmup",
@@ -104,12 +103,6 @@ class OptimizerConfig(BaseConfig):
         """
         Separate parameters into connector/vit/llm weight decay and non weight decay groups.
         """
-        param_group_defaults = {
-            "sharded": isinstance(model, FullyShardedDataParallel),
-            "max_grad_norm": max_grad_norm,
-            "max_grad_norm_ratio": max_grad_norm_ratio,
-        }
-
         param_groups_dict = dict(
             connector=[p for p in model.get_connector_parameters() if p.requires_grad],
             llm=[p for p in model.get_llm_parameters() if p.requires_grad],
@@ -133,21 +126,18 @@ class OptimizerConfig(BaseConfig):
                 "weight_decay": self.llm_weight_decay,
                 "betas": self.llm_betas,
                 "eps": self.llm_eps,
-                **param_group_defaults,
             },
             connector={
                 "lr": self.connector_learning_rate,
                 "weight_decay": self.connector_weight_decay,
                 "betas": self.connector_betas,
                 "eps": self.connector_eps,
-                **param_group_defaults,
             },
             vit={
                 "lr": self.vit_learning_rate,
                 "weight_decay": self.vit_weight_decay,
                 "betas": self.vit_betas,
                 "eps": self.vit_eps,
-                **param_group_defaults,
             },
         )
         non_weight_decay_name = set(model.get_non_weight_decay_params())
@@ -170,7 +160,7 @@ class OptimizerConfig(BaseConfig):
             ))
         return param_groups
 
-    def build_optimizer(self, max_grad_norm, max_grad_norm_ratio, model: nn.Module) -> 'Optimizer':
+    def build_optimizer(self, max_grad_norm, max_grad_norm_ratio, model: nn.Module) -> Optimizer :
         param_groups = self.get_param_groups(max_grad_norm, max_grad_norm_ratio, model)
 
         log.info(f"Constructing optimizer with {len(param_groups)} param groups")

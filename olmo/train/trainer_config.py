@@ -374,7 +374,7 @@ class TrainConfig(BaseConfig):
 
     save_overwrite: bool = False
     """
-    If ``True``, overwrite any conflicting checkpoint files.
+    If ``True``, overwrite existing files
     """
 
     initial_model_checkpoint: Optional[str] = None

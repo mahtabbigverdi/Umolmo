@@ -29,6 +29,10 @@ def test_select_checkpoint():
         os.mkdir(join(tmp_dir, "step2"))
         assert select_checkpoint(tmp_dir) == join(tmp_dir, "step2")
 
+        with open(join(tmp_dir, "step2", "model.pt"), "w") as f:
+            f.write("")
+        assert select_checkpoint(join(tmp_dir, "step2")) == join(tmp_dir, "step2")
+
         os.mkdir(join(tmp_dir, "step10"))
         assert select_checkpoint(tmp_dir) == join(tmp_dir, "step10")
 

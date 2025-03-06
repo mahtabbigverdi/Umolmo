@@ -84,10 +84,10 @@ class BeakerLogger:
 
     def add_wandb(self, wandb_url):
         # If there is an old wandb url (such as if the run was preempted), remove it
-        match = re.fullmatch(self.WANDB_REGEX, self.original_description)
+        match = re.match(self.WANDB_REGEX, self.original_description)
         if match:
             log.info(f"Removing old wandb url {wandb_url}")
-            self.original_description = self.original_description[:match.group(1).start]
+            self.original_description = self.original_description[:match.start(1)]
 
         self.original_description = self.original_description + " (" + wandb_url + ")"
         self.beaker.experiment.set_description(self.experiment, f"[Init] " + self.original_description)
@@ -414,38 +414,23 @@ class Trainer:
 
     def load_trainer_state_dict(self, state_dict: Dict[str, Any]) -> None:
         # Checkpoint paths.
+        normalized_save_folder = normalize_path(self.cfg.save_folder)
+
+        def _is_ours(filename):
+            return normalize_path(filename).startswith(normalized_save_folder)
+
         self.checkpoints = [
-            path
-            for path in state_dict["checkpoints"]
-            if path.is_dir() and path.resolve().parent == Path(self.cfg.save_folder).resolve()
-        ]
+            path for path in state_dict["checkpoints"] if _is_ours(path)]
         self.unsharded_checkpoints = [
-            path
-            for path in state_dict["unsharded_checkpoints"]
-            if path.is_dir() and path.resolve().parent == Path(self.cfg.save_folder).resolve()
-        ]
+            path for path in state_dict["unsharded_checkpoints"] if _is_ours(path)]
         self.ephemeral_checkpoints = [
-            path
-            for path in state_dict.get("ephemeral_checkpoints", [])
-            if path.is_dir() and path.resolve().parent == Path(self.cfg.save_folder).resolve()
-        ]
+            path for path in state_dict.get("ephemeral_checkpoints", []) if _is_ours(path)]
 
         # Dataset / dataloader position.
         checkpoint_epoch = state_dict.get("epoch", 0)
         self.global_step = state_dict["global_step"]
-        self.global_train_examples_seen_this_epoch = state_dict.get(
-            "global_train_examples_seen_this_epoch",
-            state_dict.get(  # for backwards compatibility
-                "global_train_examples_seen",
-                state_dict.get("global_data_step", self.global_step) * self.cfg.global_train_batch_size,
-            ),
-        )
-        self.global_train_tokens_seen = state_dict.get(
-            "global_train_tokens_seen",
-            state_dict.get("global_data_step", self.global_step)  # for backwards compatibility
-            * self.cfg.global_train_batch_size
-            * self.cfg.model.max_sequence_length,
-        )
+        self.global_train_examples_seen_this_epoch = state_dict["global_train_examples_seen_this_epoch"]
+        self.global_train_tokens_seen = state_dict["global_train_tokens_seen"]
 
         if not self.cfg.restore_dataloader:
             self.epoch = 0
@@ -471,32 +456,6 @@ class Trainer:
             assert isinstance(self.dataset.dataset, IterableDatasetMixture)
             log.info(f"Data loader will start at instance index {self.global_train_examples_seen_this_epoch:,d}")
             self.dataset.dataset.start_index = self.global_train_examples_seen_this_epoch
-
-        # Reset learning rate and weight decay to the values from the config, not the checkpoint.
-        log.info("Resetting learning rate...")
-        if self.cfg.model.vision_backbone is not None:
-            initial_lr_dict = {
-                "connector": self.cfg.optimizer.connector_learning_rate,
-                "vit": self.cfg.optimizer.vit_learning_rate,
-                "llm": self.cfg.optimizer.llm_learning_rate,
-            }
-            for group in self.optim.param_groups:
-                group_name = group["group_name"]
-                component_name = group_name.split("_")[0]
-                new_learning_rate = self.scheduler.get_lr(
-                    initial_lr_dict[component_name],
-                    self.scheduler_current,
-                    self.scheduler_max,
-                    group_name,
-                )
-                group["lr"] = new_learning_rate
-        else:
-            new_learning_rate = self.scheduler.get_lr(
-                self.cfg.optimizer.learning_rate, self.scheduler_current, self.scheduler_max
-            )
-            for group in self.optim.param_groups:
-                group["lr"] = new_learning_rate
-                group["initial_lr"] = self.cfg.optimizer.learning_rate
 
         # RNG states.
         if "rng" in state_dict and state_dict.get("world_size", get_world_size()) == get_world_size():
@@ -690,6 +649,7 @@ class Trainer:
         if compute_metrics:
             self._train_metrics.reset()
         loss = self.train_batch(batch, True)
+
         if compute_metrics:
             metrics = {f"train/{k}": v for k, v in self._train_metrics.compute().items()}
         else:
@@ -717,17 +677,16 @@ class Trainer:
 
         optim_metrics = {}
         grad_norms = []
-        for group_name, groups in param_norm_groups.items():
-            if any(group.get("max_grad_norm_ratio") is not None for group in groups):
-                raise NotImplementedError()
-            if all(group.get("max_grad_norm") is None for group in groups):
-                continue
-            max_grad_norm = groups[0]["max_grad_norm"]
-            assert all(group["max_grad_norm"] == max_grad_norm for group in groups)
-            params = flatten_lists(group["params"] for group in groups)
-            grad_norm = nn.utils.clip_grad_norm_(params, max_norm=max_grad_norm)
-            grad_norms.append(grad_norm)
-            optim_metrics[f"{group_name}_grad_norm"] = grad_norm
+        max_grad_norm = self.scheduler.get_max_grad_norm(
+            self.cfg.max_grad_norm, self.scheduler_current, self.scheduler_max)
+        if self.cfg.max_grad_norm_ratio is not None:
+            raise NotImplementedError()
+        if max_grad_norm is not None:
+            for group_name, groups in param_norm_groups.items():
+                params = flatten_lists(group["params"] for group in groups)
+                grad_norm = nn.utils.clip_grad_norm_(params, max_norm=max_grad_norm)
+                grad_norms.append(grad_norm)
+                optim_metrics[f"{group_name}_grad_norm"] = grad_norm
 
         # Adjust the learning rate.
         if self.cfg.model.vision_backbone is not None:
@@ -745,25 +704,10 @@ class Trainer:
                     self.scheduler_max,
                     group_name,
                 )
-                group["max_grad_norm"] = self.scheduler.get_max_grad_norm(
-                    self.cfg.max_grad_norm, self.scheduler_current, self.scheduler_max
-                )
-                group["max_grad_norm_ratio"] = self.scheduler.get_max_grad_norm(
-                    self.cfg.max_grad_norm_ratio, self.scheduler_current, self.scheduler_max
-                )
         else:
             for group in self.optim.param_groups:
-                # TODO (epwalsh): if we want to enable different LRs or gradient clipping settings per group
-                # we should pass `group["initial_lr"]` or `group["initial_max_grad_norm"]` here instead of
-                # the corresponding values from `self.cfg`.
                 group["lr"] = self.scheduler.get_lr(
                     self.cfg.optimizer.learning_rate, self.scheduler_current, self.scheduler_max
-                )
-                group["max_grad_norm"] = self.scheduler.get_max_grad_norm(
-                    self.cfg.max_grad_norm, self.scheduler_current, self.scheduler_max
-                )
-                group["max_grad_norm_ratio"] = self.scheduler.get_max_grad_norm(
-                    self.cfg.max_grad_norm_ratio, self.scheduler_current, self.scheduler_max
                 )
 
         # Optimizer step.
@@ -1033,26 +977,10 @@ class Trainer:
         stop_at: Optional[int] = self.cfg.stop_at
         save_checkpoints: bool = True
 
-        warmed_up = False
-
         with torch_profiler as p:
             for epoch in range(self.epoch or 0, self.max_epochs):
                 for batch in self.train_loader:
-                    if not warmed_up:
-                        # The first batch can take a while as the iterator compiles/warms up, this
-                        # can cause the nodes to think they got de-synced since some of the nodes
-                        # might take much longer to get it and start the forward pass then others.
-                        # To avoid this, we manually sync the nodes for the first batch
-                        barrier()
-                        warmed_up = True
-
                     # Bookkeeping.
-                    # NOTE: To track the global batch size / number of tokens per batch we make the assumption that all
-                    # batches see the same number of tokens, which should be the case for language model pre-training
-                    # (at least when drop_last=True).
-                    # Alternatively we'd have to use a distributed all reduce over seq_len here, but I don't want that
-                    # overhead. So for now I'm putting these assertions here so if the assumption is violated it will
-                    # fail loudly.
                     batch_size, seq_len = batch["input_ids"].shape
                     assert seq_len <= self.cfg.model.llm.max_sequence_length
                     assert (
@@ -1062,7 +990,10 @@ class Trainer:
                     global_batch_size = batch_size * get_world_size()  # assumes batch size equal across ranks
                     self.global_step += 1
                     self.global_train_examples_seen_this_epoch += global_batch_size
+
+                    # Note might be an aproximation if batches can have different sequence lens
                     self.global_train_tokens_seen += global_batch_size * seq_len
+
                     speed_monitor.batch_start(
                         self.global_train_tokens_seen,
                         batch_size * seq_len,  # num tokens in batch for this device

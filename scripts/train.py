@@ -2,9 +2,11 @@
 
 import logging
 import os
+import shutil
 import socket
 import sys
 from datetime import datetime
+from itertools import islice
 from os.path import join
 from pathlib import Path
 
@@ -17,7 +19,7 @@ from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 
 from olmo.exceptions import OLMoCliError, OLMoConfigurationError
 from olmo.io import file_exists, write_file
-from olmo.nn.checkpointer import Checkpointer
+from olmo.nn.checkpointer import Checkpointer, load_model_state_unsharded
 from olmo.torch_util import (
     barrier,
     get_global_rank,
@@ -27,10 +29,10 @@ from olmo.torch_util import (
     seed_all,
     freeze_module,
 )
-from olmo.train.distributed_checkpointing import load_model_state_unsharded
+from olmo.train.distributed_checkpointing import load_model_and_optim_state
 from olmo.train.optim import BoltOnWarmupScheduler
 from olmo.train.trainer import Trainer, BeakerLogger
-from olmo.train.trainer_config import TrainConfig, RuntimeData
+from olmo.train.trainer_config import TrainConfig, RuntimeData, CheckpointType
 from olmo.util import (
     clean_opt,
     log_extra_field,
@@ -85,9 +87,7 @@ def run_trainer(cfg: TrainConfig) -> None:
 
     if start_from is None:
         start_from = cfg.load_path
-        reset_opt, reset_train = cfg.reset_trainer_state, cfg.reset_optimizer_state
-    else:
-        start_from = None
+        reset_train, reset_opt = cfg.reset_trainer_state, cfg.reset_optimizer_state
 
     start_from_unsharded = start_from and file_exists(join(start_from, "model.pt"))
     if start_from_unsharded:
@@ -143,8 +143,9 @@ def run_trainer(cfg: TrainConfig) -> None:
     if cfg.activation_checkpointing:
         olmo_model.apply_activation_checkpointing(cfg.activation_checkpointing)
     if cfg.compile:
-        # Want the cache to be pre-filled to stop the compiler getting confused due to cache
-        # modifications, otherwise compiling + FSPD + activation checkpoints leads to runtime errors
+        # Want the cache to be pre-filled with the correct device to stop the compiler getting
+        # confused due to cache modifications, otherwise compiling + FSPD + activation checkpoints
+        # leads to runtime errors
         olmo_model.warmup_cache(device)
         olmo_model.apply_compile(cfg.compile.target, **cfg.compile.compile_args())
 
@@ -178,8 +179,8 @@ def run_trainer(cfg: TrainConfig) -> None:
     elif cfg.fsdp.fsdp2:
         log.info("Wrapping model with FDSP2...")
         olmo_model.apply_fsdp2(**cfg.fsdp.get_fsd2_args(cfg.autocast_precision))
+        olmo_model.to_empty(device=device)
         if start_from is None:
-            olmo_model.to_empty(device="cuda")
             olmo_model.reset_with_pretrained_weights()
         fsdp_model = olmo_model
     else:
@@ -289,13 +290,19 @@ def run_trainer(cfg: TrainConfig) -> None:
         beaker_logger=beaker_logger,
     ) as trainer:
 
-        # Load the starting checkpoint if there is one
         if start_from:
+            # Load the starting checkpoint if there is one
             if start_from_unsharded:
-                log.info(f"Loading unsharded checkpoint from {start_from}...")
-                load_model_state_unsharded(start_from, fsdp_model)
+                log.info(f"Loading unshared model from {start_from}")
+                load_model_state_unsharded(fsdp_model, start_from)
             else:
-                log.info(f"Loading sharded checkpoint from {start_from}...")
+                if reset_train and reset_opt:
+                    log.info(f"Loading model from {start_from}")
+                if not reset_opt and not reset_train:
+                    log.info(f"Resuming from checkpoint {start_from}")
+                else:
+                    log.info(f"Restoring checkpoint {start_from}, but resetting "
+                             f"{'Trainer' if reset_train else 'Optimizer'}")
                 trainer.restore_checkpoint(
                     start_from,
                     load_optimizer_state=not reset_opt,
@@ -322,6 +329,7 @@ def run_trainer(cfg: TrainConfig) -> None:
 
 
 if __name__ == "__main__":
+    # trainer.optim.state[trainer.optim.param_groups[0]["params"][11]]
     prepare_torchrun_environment()
 
     try:
