@@ -3,11 +3,16 @@ Model checkpointer
 
 Mostly from  https://github.com/allenai/OLMo-core/blob/main/src/olmo_core/train/checkpoint.py
 """
+from __future__ import annotations
+
 import dataclasses
+import logging
 import os
 import re
 import tempfile
+import time
 from contextlib import contextmanager
+from os.path import join
 from pathlib import Path
 from typing import Generator, Optional, Dict, Any, Union, ClassVar, Tuple, Callable
 
@@ -15,16 +20,61 @@ import torch
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
 from cached_path import cached_path
 from omegaconf import OmegaConf
-from torch import nn
+from torch import nn, nn as nn
+from torch.distributed.checkpoint import state_dict as dist_cp_sd
 
 from olmo.config import BaseConfig
 from olmo.io import PathOrStr, dir_is_empty, normalize_path, is_url, clear_directory, upload, \
-    list_directory, resource_path, write_file
+    list_directory, resource_path, write_file, file_exists
 from olmo.torch_util import barrier, get_fs_local_rank, get_global_rank
 from olmo.train.distributed_checkpointing import save_model_and_optim_state, \
     load_model_and_optim_state
 from olmo.train.optim import Optimizer
 from olmo.util import wait_for
+
+
+log = logging.getLogger(__name__)
+
+
+@torch.no_grad()
+def load_model_state_unsharded(dir: PathOrStr, model: nn.Module, cfg):
+    """
+    Load model state in-place for unsharded chechpoint saved in `dir`,
+    works for sharded and unsharded models
+    """
+    if get_global_rank() == 0:
+        state_dict = torch.load(resource_path(dir, Checkpointer.MODEL_FILENAME),
+                                map_location="cpu", weights_only=True)
+    else:
+        state_dict = {}
+    dist_cp_sd.set_model_state_dict(
+        model=model,
+        model_state_dict=state_dict,
+        options=dist_cp_sd.StateDictOptions(full_state_dict=True, broadcast_from_rank0=True)
+    )
+
+
+def is_unsharded_checkoint(dir: PathOrStr) -> bool:
+    return file_exists(join(dir, "model.pt"))
+
+
+def load_model_state(dir: PathOrStr, model: nn.Module, cfg: CheckpointerConfig = None):
+    """
+    Load model state in-place for sharded or unsharded chechpoint saved in `dir`,
+    """
+    t0 = time.perf_counter()
+    if is_unsharded_checkoint(dir):
+        log.info(f"Loading model state from unsharded checkpoint {dir}...")
+        load_model_state_unsharded(dir, model)
+    else:
+        log.info(f"Loading model state from sharded checkpoint {dir}...")
+        Checkpointer(cfg or CheckpointerConfig()).load(
+            dir, model,
+            optim=None,
+            load_optimizer_state=False,
+            load_trainer_state=False
+        )
+    log.info(f"Done in {time.perf_counter()-t0:0.1f} seconds")
 
 
 @dataclasses.dataclass
@@ -43,8 +93,10 @@ class CheckpointerConfig(BaseConfig):
 class Checkpointer:
     CONFIG_FILENAME: ClassVar[str] = "config.yaml"
     CHECKPOINT_DIR: ClassVar[str] = "step{step}"
+    MODEL_FILENAME: ClassVar[str] = "model.pt"
+    OPT_FILENAME: ClassVar[str] = "optim.pt"
 
-    save_overwrite: bool = None
+    save_overwrite: bool = False
     save_thread_count: Optional[int] = None
     load_thread_count: Optional[int] = None
     pre_download: bool = False
@@ -54,7 +106,7 @@ class Checkpointer:
     @classmethod
     def find_checkpoints(cls, dir: PathOrStr) -> Generator[Tuple[int, str], None, None]:
         """
-        Find checkpoints within a directory.
+        Find sharded checkpoints within a directory.
         """
         dir = normalize_path(dir)
         for path in list_directory(dir):
@@ -66,7 +118,7 @@ class Checkpointer:
     @classmethod
     def contains_checkpoint(cls, dir: PathOrStr) -> bool:
         """
-        Check if a directory is a checkpoint directory or contains a child checkpoint directory.
+        Check if a directory is a sharded checkpoint directory or contains a child checkpoint directory.
         """
         try:
             next(cls.find_checkpoints(dir))
@@ -127,13 +179,13 @@ class Checkpointer:
         sd_options = dist_cp_sd.StateDictOptions(full_state_dict=True, cpu_offload=True)
         state_dict = dist_cp_sd.get_model_state_dict(model, options=sd_options)
         if get_fs_local_rank() == 0:
-            self.write_file(dir, "model.pt", lambda f: torch.save(state_dict, f))
+            self.write_file(dir, self.MODEL_FILENAME, lambda f: torch.save(state_dict, f))
             del state_dict
         barrier()
         if optim is not None:
             optim_dict = dist_cp_sd.get_optimizer_state_dict(model, optim, options=sd_options)
             if get_fs_local_rank() == 0:
-                self.write_file(dir, "optim.pt", lambda f: torch.save(optim_dict, f))
+                self.write_file(dir, self.OPT_FILENAME, lambda f: torch.save(optim_dict, f))
                 del optim_dict
             barrier()
         if get_fs_local_rank() == 0:
@@ -147,7 +199,7 @@ class Checkpointer:
         self,
         dir: PathOrStr,
         model: nn.Module,
-        optim: Optimizer,
+        optim: Optimizer = None,
         *,
         load_optimizer_state: Optional[bool] = None,
         load_trainer_state: Optional[bool] = None,

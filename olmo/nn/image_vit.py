@@ -277,7 +277,6 @@ class DinoBlockCollection(nn.Module):
     def __init__(self, config: VitConfig):
         super().__init__()
         self.config = config
-        self.grad_checkpointing: bool = False
         self._activation_checkpoint_fn: Callable = vit_activation_checkpoint_function(self.config)
 
         self.resblocks = nn.ModuleList([
@@ -291,7 +290,7 @@ class DinoBlockCollection(nn.Module):
     def forward(self, x: torch.Tensor) -> List[torch.Tensor]:
         hidden_states = []
         for r in self.resblocks:
-            if self.grad_checkpointing and not torch.jit.is_scripting():
+            if self._activation_checkpoint_fn is not None:
                 x = self._activation_checkpoint_fn(r, x)
             else:
                 x = r(x)
@@ -421,12 +420,16 @@ class VisionTransformer(nn.Module):
                 key_errors = dist_cp_sd.set_model_state_dict(
                     model=self,
                     model_state_dict=state_dict,
-                    options=dist_cp_sd.StateDictOptions(full_state_dict=True, broadcast_from_rank0=True)
+                    options=dist_cp_sd.StateDictOptions(
+                        full_state_dict=True, broadcast_from_rank0=True, strict=False)
                 )
             else:
-                key_errors = self.load_state_dict(state_dict)
-            assert len(key_errors.unexpected_keys) == 0
-            assert len(key_errors.missing_keys) <= 1
+                key_errors = self.load_state_dict(state_dict, strict=False)
+            assert len(key_errors.missing_keys) == 0
+            # Missing keys are okay since we might have loaded fewer layers then in the checkpoint,
+            # But sanity check the missing keys just in case
+            for key in key_errors.unexpected_keys:
+                assert key.startswith("transformer.resblocks.")
         else:
             self.reset_parameters()
 

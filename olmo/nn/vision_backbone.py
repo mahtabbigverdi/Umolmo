@@ -1,6 +1,7 @@
+import logging
 import os
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Tuple, Optional
 
 import einops
@@ -11,6 +12,7 @@ from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import checkpoi
 from olmo.config import BaseConfig, D, StrEnum
 from olmo.nn.image_vit import VitConfig, VisionTransformer
 from olmo.nn.llm import Activation
+from olmo.torch_util import freeze_module
 from olmo.util import resource_path
 from torch.nn import functional as F
 from torch.distributed.fsdp import fully_shard
@@ -66,6 +68,9 @@ class VisionBackboneConfig(BaseConfig):
     vit_layers: Tuple = (-1,)
     """What layers to use from the VIT"""
 
+    skip_unused_layers: bool = True
+    """Don't load layers we don't need from the ViT"""
+
     image_pooling_h: int = 2
     """Pooling patch features height"""
 
@@ -93,6 +98,7 @@ class VisionBackboneConfig(BaseConfig):
         return h, w
 
     def build(self, llm_config, device):
+
         return MolmoVisionBackbone(self, llm_config, device)
 
 
@@ -187,9 +193,27 @@ class MolmoVisionBackbone(nn.Module):
             raise NotImplementedError(f"Unknown image projector: {config.image_projector}")
 
         self.image_feature_dropout = nn.Dropout(config.image_feature_dropout)
-        self.grad_checkpointing = False
 
-        self.image_vit: VisionTransformer = config.vit.build(device)
+        self.vit_layers = []
+        for layer in config.vit_layers:
+            if layer >= 0:
+                self.vit_layers.append(layer)
+            else:
+                self.vit_layers.append(config.vit.image_num_layers + layer)
+        last_layer_needed = (max(self.vit_layers)+1)
+
+        vit_cfg = self.config.vit
+        if last_layer_needed < config.vit.image_num_layers:
+            if self.config.skip_unused_layers:
+                vit_cfg = replace(vit_cfg, image_num_layers=last_layer_needed)
+                self.image_vit: VisionTransformer = vit_cfg.build(device)
+            else:
+                # We might need to keep the layers for checkpoint compatibility, but we
+                # freeze them since unfrozen layers with no gradient confuses torch's distributed
+                # optimizer checkpointer
+                self.image_vit: VisionTransformer = vit_cfg.build(device)
+                for block in self.image_vit.blocks[last_layer_needed-1:]:
+                    freeze_module(block)
 
         self.num_prefix_tokens = self.image_vit.num_prefix_tokens
         assert self.num_prefix_tokens in {0, 1}, "Only 0 or 1 prefix tokens are supported"
@@ -263,9 +287,9 @@ class MolmoVisionBackbone(nn.Module):
         images = images.view(B * T, N, D)
         image_features = self.image_vit(images)
 
-        if cfg.vit_layers is not None:
+        if self.vit_layers is not None:
             features = []
-            for layer in cfg.vit_layers:
+            for layer in self.vit_layers:
                 features.append(image_features[layer])
             image_features = torch.cat(features, dim=-1)
         else:
@@ -336,11 +360,7 @@ class MolmoVisionBackbone(nn.Module):
             query = image_features.mean(-2, keepdim=True)
             image_features = self.image_pooling_2d(query, image_features)
         elif cfg.image_pooling_2d not in {ImagePooling2DType.none, ImagePooling2DType.stack}:
-            if self.grad_checkpointing:
-                from torch.utils.checkpoint import checkpoint
-                image_features = checkpoint(self.image_pooling_2d, image_features[:, :1, :], image_features, use_reentrant=False)
-            else:
-                image_features = self.image_pooling_2d(image_features[:, :1, :], image_features)
+            image_features = self.image_pooling_2d(image_features[:, :1, :], image_features)
 
         h, w = cfg.llm_patches_per_crop()
         image_features = image_features.reshape(batch_size, num_image, h * w, -1)
@@ -350,11 +370,7 @@ class MolmoVisionBackbone(nn.Module):
             for module in self.image_projector:
                 image_features = module(image_features)
         else:
-            if self.grad_checkpointing:
-                from torch.utils.checkpoint import checkpoint
-                image_features = checkpoint(self.image_projector, image_features, use_reentrant=False)
-            else:
-                image_features = self.image_projector(image_features)
+            image_features = self.image_projector(image_features)
 
         # image_features: (batch_size, num_image, num_patch, d_model)
         # cls_embed: (batch_size, num_image, d_model)

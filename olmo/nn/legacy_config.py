@@ -90,6 +90,9 @@ def convert_legacay_config(config) -> ModelConfig:
     vision_backbone["init_path"] = config.pop("vit_load_path")
     vision_backbone = convert_vision_backbone(vision_backbone)
 
+    # Old version always loaded all layers
+    vision_backbone["skip_unused_layers"] = False
+
     # Fix up tokenizer
     tok = config["tokenizer"]
     for k in ["truncate_direction", "olmo_bos_token_id", "olmo_eos_token_id"]:

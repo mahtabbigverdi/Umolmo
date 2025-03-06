@@ -607,21 +607,11 @@ class Llm(nn.Module):
             else:
                 state_dict = {}
             if is_sharded:
-                # `dist_cp_sd.set_model_state_dict` does not support partial loads, so we
-                # have to add a new embedding value to the state dict in rank0
-                if (
-                    self.config.additional_vocab_size and
-                    get_global_rank() == 0 and
-                    "wte.new_embedding" not in state_dict
-                ):
-                    val = torch.empty(
-                        self.config.additional_vocab_size, self.config.d_model, device="cpu")
-                    nn.init.normal_(val, std=self.config.new_embedding_init_range)
-                    state_dict["wte.new_embedding"] = val
                 key_errors = dist_cp_sd.set_model_state_dict(
                     model=self,
                     model_state_dict=state_dict,
-                    options=dist_cp_sd.StateDictOptions(full_state_dict=True, broadcast_from_rank0=True)
+                    options=dist_cp_sd.StateDictOptions(
+                        full_state_dict=True, broadcast_from_rank0=True, strict=False)
                 )
             else:
                 key_errors = self.load_state_dict(state_dict, strict=False)

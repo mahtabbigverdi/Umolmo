@@ -39,8 +39,8 @@ from olmo.torch_util import (
     peak_gpu_memory,
     seed_all, get_world_size,
 )
-from olmo.train.distributed_checkpointing import load_model_and_optim_state, \
-    load_model_state_unsharded
+from olmo.train.distributed_checkpointing import load_model_and_optim_state
+from olmo.nn.checkpointer import load_model_state_unsharded, Checkpointer, load_model_state
 from olmo.train.trainer_config import FSDPConfig
 from olmo.util import (
     resource_path, log_metrics_to_console,
@@ -261,13 +261,7 @@ class ModelEvaluator:
                 assert self.config.fsdp.fsdp2
                 model.apply_fsdp2(**self.config.fsdp.get_fsd2_args(self.config.autocast_precision))
 
-            is_sharded = file_exists(join(cfg.load_path, "model.pt"))
-            if not is_sharded:
-                logging.info(f"Loading sharded checkpoint {cfg.load_path}...")
-                load_model_and_optim_state(join(cfg.load_path, "model_and_optim"), model)
-            else:
-                logging.info(f"Loading unsharded checkpoint {cfg.load_path}...")
-                load_model_state_unsharded(cfg.load_path, model)
+            load_model_state(cfg.load_path, model)
             model.eval()
             torch.cuda.empty_cache()
 
