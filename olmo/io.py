@@ -1,4 +1,5 @@
 import io
+import json
 import logging
 import os
 import re
@@ -8,6 +9,7 @@ import time
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import wraps
+from os.path import dirname, basename
 from pathlib import Path
 from typing import Callable, Generator, Optional, Tuple, Type, Union
 
@@ -105,6 +107,14 @@ def get_file_size(path: PathOrStr) -> int:
             raise NotImplementedError(f"file size not implemented for '{parsed.scheme}' files")
     else:
         return os.stat(path).st_size
+
+
+def read_json(path: PathOrStr):
+    return json.loads(get_bytes_range(path, 0, None).decode("utf-8"))
+
+
+def write_json(path: PathOrStr, data: dict, **kwargs):
+    write_file(dirname(path), basename(path), json.dumps(data, **kwargs), True)
 
 
 def get_bytes_range(path: PathOrStr, bytes_start: int, num_bytes: Optional[int]) -> bytes:

@@ -1,34 +1,26 @@
 # %%
-import dataclasses
+import argparse
+import hashlib
+import json
 import logging
+import os
+import re
 import tempfile
+from collections import defaultdict, Counter
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, asdict
 from datetime import datetime
 from json import JSONEncoder
-from pathlib import Path
-
-import wandb
-
-import argparse
-import re
-import time
-from collections import defaultdict, Counter
-from concurrent.futures import ThreadPoolExecutor
-from os.path import exists, join, expanduser, dirname, isdir, isfile
+from os.path import exists, join, dirname, isdir, isfile
 from typing import Dict, Tuple, List, Union
 
-from openai import OpenAI, BadRequestError
-import os
-import json
 import numpy as np
-import hashlib
-
-from openai.types.chat import ChatCompletion
+import wandb
+from openai import OpenAI, BadRequestError
 from tqdm import tqdm
 
-from olmo import TrainConfig
-
-from olmo.util import setup_logging, prepare_cli_environment
+from olmo.io import read_json, is_url, write_json
+from olmo.util import prepare_cli_environment
 
 METRIC_ORDER = ["name", "wandb", "step", "checkpoint", "src", "num_statements", "is_repeating",
                 "consistency", "recall", "recall_at_10", "loss", "acc"]
@@ -643,7 +635,6 @@ def main():
             None if args.no_cache else join(args.data_dir, "gpt4-cache"),
             args.cache_only
         ),
-        # Gpt4WithCache(args.model, None, args.cache_only),
         metrics,
         sample=args.sample,
     )
@@ -651,8 +642,7 @@ def main():
     # See if we were given a files containing a list of prediction files to process
     target_files = None
     if len(args.prediction_file) == 1 and isfile(args.prediction_file[0]):
-        with open(args.prediction_file[0]) as f:
-            source_files = json.load(f)
+        source_files = read_json(args.prediction_file[0])
         if isinstance(source_files, dict):
             target_files = list(source_files.items())
 
@@ -665,30 +655,22 @@ def main():
                 name, file = file.split(":", 1)
             else:
                 name = None
-            if isdir(file):
-                candidates = [x for x in os.listdir(file) if "dense_caption_eval-test" in x]
-                if len(candidates) == 0:
-                    raise ValueError(f"{file} is dir and not candidate prediction file found")
-                if len(candidates) > 1:
-                    raise ValueError(f"{file} is dir and not candidate prediction file found")
-                file = join(file, candidates[0], "predictions.json")
-                if not exists(file):
-                    raise ValueError()
             target_files.append((name, file))
 
     resolved_targets = []
     for name, file in target_files:
-        file = Path(file)
-        if file.is_dir():
-            candidates = [x for x in file.iterdir() if "dense_caption_eval-validation" in x.name]
-            if len(candidates) == 1:
-                logging.info(f"Selecting {candidates[0]} for {file.name}")
-                file = (candidates[0] / "predictions.json")
-            else:
-                raise ValueError(f"Unable to auto-select predictions in directory {file}")
-        if not file.exists():
-            raise FileNotFoundError(file)
-        resolved_targets.append((name, file.as_posix()))
+        if is_url(file):
+            # TODO add auto prediction finding here as well
+            resolved_targets.append((name, file))
+        else:
+            if isdir(file):
+                candidates = [x for x in file.iterdir() if "dense_caption_eval-validation" in x.name]
+                if len(candidates) == 1:
+                    logging.info(f"Selecting {candidates[0]} for {file.name}")
+                    file = (candidates[0] / "predictions.json")
+                else:
+                    raise ValueError(f"Unable to auto-select predictions in directory {file}")
+            resolved_targets.append((name, file))
     target_files = resolved_targets
 
     runs = None
@@ -713,12 +695,11 @@ def main():
         results_file = prefix + "results_v3.json"
         if args.save_metrics and exists(results_file):
            logging.info(f"Loading metrics from {results_file}")
-           with open(results_file) as f:
-               results = json.load(f)
+           results = read_json(results_file)
         else:
             try:
-                with open(file) as f:
-                    captions = json.load(f)
+                import pdb; pdb.set_trace()
+                captions = read_json(file)
             except Exception as e:
                 if len(target_files) == 1:
                     raise ValueError(f"Error reading {file}", e)
@@ -745,13 +726,12 @@ def main():
             if args.save_metrics:
                 metric_file = prefix + "all-results-v3.json"
                 logging.info(f"Saving eval to {metric_file}")
-                with open(metric_file, "w") as f:
-                    json.dump(dict(
-                        metrics=metrics,
-                        sample=args.sample,
-                        date=datetime.now().strftime("%Y%m%d-%H%M%S"),
-                        results={k: asdict(v) for k, v in full_eval.items()}
-                    ), f, indent=2)
+                write_json(metric_file, dict(
+                    metrics=metrics,
+                    sample=args.sample,
+                    date=datetime.now().strftime("%Y%m%d-%H%M%S"),
+                    results={k: asdict(v) for k, v in full_eval.items()}
+                ), indent=2)
 
             results = dict()
             if "consistency" in metrics:
@@ -773,8 +753,7 @@ def main():
             results = {k: float(v) for k, v in results.items()}
             if args.save_metrics:
                 logging.info(f"Saving scores to {results_file}")
-                with open(results_file, "w") as f:
-                    json.dump(dict(results), f, indent=2)
+                write_json(results_file, dict(results), indent=2)
 
         if name is not None:
             results["name"] = name
@@ -816,20 +795,7 @@ def main():
                     logging.warning(f"Unable to find loss for {run.id} {step}")
                 url = f"https://wandb.ai/prior-ai2/cockatoo/runs/{run.id}"
 
-            loss_file = "/".join(file.split("/")[:-2]) + f"/loss-ck{step}-dense_caption_loss.json"
-            if not exists(loss_file):
-                loss_file = "/".join(file.split("/")[:-3]) + f"/loss-ck{step}-dense_caption_loss.json"
-            if exists(loss_file) and loss_file != file:
-                with open(loss_file) as f:
-                    loss_data = json.load(f)
-                results.update({f"offline/{k}": v for k, v in loss_data.items()})
-
         config_file = join(dirname(dirname(file)), "config.yaml")
-        train_cfg = TrainConfig.load(config_file)
-        results["steps"] = train_cfg.max_duration // 1000
-        results["vit-lr"] = train_cfg.optimizer.vit_learning_rate*1e6
-        results["con-lr"] = train_cfg.optimizer.connector_learning_rate*1e4
-        results["llm-lr"] = train_cfg.optimizer.llm_learning_rate *1e6
         all_results.append(results)
 
         if args.show_with_hyperparameters:
