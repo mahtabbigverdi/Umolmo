@@ -8,7 +8,7 @@ from omegaconf import OmegaConf as om
 from omegaconf.errors import OmegaConfBaseException
 
 from olmo.exceptions import OLMoConfigurationError
-from olmo.io import PathOrStr
+from olmo.io import PathOrStr, read_file
 
 C = TypeVar("C", bound="BaseConfig")
 D = TypeVar("D", bound="DictConfig|ListConfig")
@@ -44,7 +44,7 @@ class BaseConfig:
         """Load from a YAML file."""
         schema = om.structured(cls)
         try:
-            raw = om.load(str(path))
+            raw = om.create(read_file(path))
 
             if key is not None:
                 raw = raw[key]  # type: ignore

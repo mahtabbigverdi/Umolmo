@@ -11,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import wraps
 from os.path import dirname, basename
 from pathlib import Path
-from typing import Callable, Generator, Optional, Tuple, Type, Union
+from typing import Callable, Generator, Optional, Tuple, Type, Union, Any
 
 try:
     from functools import cache
@@ -109,11 +109,21 @@ def get_file_size(path: PathOrStr) -> int:
         return os.stat(path).st_size
 
 
-def read_json(path: PathOrStr):
-    return json.loads(get_bytes_range(path, 0, None).decode("utf-8"))
+def read_file(path: PathOrStr, mode="r") -> Union[str, bytes]:
+    data = get_bytes_range(path, 0, None)
+    if mode == "r":
+        return data.decode("utf-8")
+    elif mode == "rb":
+        return data
+    else:
+        raise NotImplementedError(mode)
 
 
-def write_json(path: PathOrStr, data: dict, **kwargs):
+def read_json(path: PathOrStr) -> Any:
+    return json.loads(read_file(path))
+
+
+def write_json(path: PathOrStr, data: Any, **kwargs):
     write_file(dirname(path), basename(path), json.dumps(data, **kwargs), True)
 
 
