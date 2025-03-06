@@ -544,7 +544,7 @@ class TrainConfig(BaseConfig):
     Whether to compile the loss function
     """
 
-    runtime_data: Optional[RuntimeData] = field(default=None, metadata={"omegaconf_ignore": True})
+    runtime_data: Optional[RuntimeData] = None
     """
     Data about the current run, filled in automatically 
     """
