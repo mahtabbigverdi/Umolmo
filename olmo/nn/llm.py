@@ -342,7 +342,7 @@ class LlmConfig(BaseConfig):
     Compute attention in float32
     """
 
-    attention_dropout: float = 0.1
+    attention_dropout: float = 0.0
     """
     The dropout probability within the attention modules.
     """
