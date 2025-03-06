@@ -1,10 +1,13 @@
-# import ujson as json
+from __future__ import annotations
+
 import logging
+from dataclasses import dataclass
 from os import environ
-from typing import List
+from typing import List, Optional
 
 from transformers import AutoTokenizer
 
+from .config import BaseConfig, D
 from .torch_util import get_local_rank, barrier
 from .util import is_url
 
@@ -134,3 +137,34 @@ def get_special_token_ids(tokenizer):
 
     assert len(ids) == len(EXTRA_TOKENS)
     return {k: i for k, i in zip(EXTRA_TOKENS, ids)}
+
+
+@dataclass
+class TokenizerConfig(BaseConfig):
+    identifier: str = "gpt2"
+    tokenizer_dir: Optional[str] = None
+
+    @classmethod
+    def update_legacy_settings(cls, config: D) -> D:
+        config = config.copy()
+        # if tokenizer_cfg.identifier.startswith
+        if config.identifier[:3] == "mm:":
+            config.identifier = config.identifier[3:]
+        if config.identifier[:3] == "hf-":
+            config.identifier = config.identifier[3:]
+
+        if "tokenizer_adds_space" in config:
+            assert not config["tokenizer_adds_space"]
+            del config.tokenizer_adds_space
+
+        for k in ["olmo_eos_token_id", "olmo_bos_token_id", "truncate_direction"]:
+            if k in config:
+                del config[k]
+        return config
+
+    def build(self, pad_tokenizer_to):
+        return build_tokenizer(
+            self.identifier,
+            tokenizer_dir=self.tokenizer_dir,
+            pad_tokenizer_to=pad_tokenizer_to
+        )

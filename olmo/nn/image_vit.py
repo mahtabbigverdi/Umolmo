@@ -1,7 +1,9 @@
 import math
+import os
 from copy import deepcopy
+from dataclasses import dataclass
 from functools import partial
-from typing import Callable, List, Optional
+from typing import Callable, List, Optional, Tuple
 
 import torch
 import torch.backends.cuda
@@ -9,17 +11,81 @@ import torch.nn as nn
 import torch.nn.functional as F
 from transformers.activations import get_activation
 
-from .config import ModelConfig, AttentionType
+from olmo.config import BaseConfig, StrEnum
+from olmo.nn.llm import AttentionType, ActivationType
+from olmo.torch_util import get_global_rank
+from olmo.util import resource_path
+
+from torch.distributed.fsdp import fully_shard
+import torch.distributed.checkpoint.state_dict as dist_cp_sd
+
+
+class VisionBackboneType(StrEnum):
+    openai = "openai"
+    siglip = "siglip"
+    dino = "dino"
+
+
+@dataclass
+class VitConfig(BaseConfig):
+    """Config for a vision transformer"""
+
+    image_model_type: VisionBackboneType = VisionBackboneType.openai
+    image_default_input_size: Tuple[int, int] = (336, 336)
+    image_patch_size: int = 14
+    image_pos_patch_size: int = 14
+    image_emb_dim: int = 1024
+    image_num_heads: int = 16
+    image_num_key_value_heads: int = 16
+    image_num_layers: int = 24
+    image_head_dim: int = 64
+    image_mlp_dim: int = 4096
+    image_mlp_activations: ActivationType = ActivationType.gelu
+    image_dropout_rate: float = 0.0
+    image_num_pos: int = 577
+    image_norm_eps: float = 1e-5
+    attention_dropout: float = 0.0
+    residual_dropout: float = 0.0
+    initializer_range: float = 0.02
+
+    float32_attention: bool = True
+
+    attention_type: AttentionType = AttentionType.sdpa
+
+    activation_checkpointing: bool = True
+    """Use activation checkpointing for each layer"""
+
+    init_path: Optional[str] = None
+    """Path to initialize the ViT with"""
+
+    resize_mode: str = "default"
+    """How to resize images for this ViT"""
+
+    pad_value: float = 0
+    """Value to pad images with if the resize model pads image"""
+
+    normalize: str = "openai"
+    """How to normalize images for this ViT"""
+
+    def __post_init__(self):
+        self.image_default_input_size = tuple(self.image_default_input_size)  # type: ignore[assignment]
+
+    @property
+    def image_num_patch(self):
+        h, w = self.image_default_input_size
+        return h // self.image_patch_size, w // self.image_patch_size
+
+    def build(self, device):
+        return VisionTransformer(self, device)
 
 
 def _expand_token(token, batch_size: int):
     return token.view(1, 1, -1).expand(batch_size, -1, -1)
 
 
-def vit_activation_checkpoint_function(cfg: ModelConfig):
-    v_cfg = cfg.vision_backbone
+def vit_activation_checkpoint_function(cfg: VitConfig):
     preserve_rng_state = (
-        (v_cfg.attention_dropout == 0.0) and (v_cfg.residual_dropout == 0.0)
+        (cfg.attention_dropout == 0.0) and (cfg.residual_dropout == 0.0)
     )
     from torch.utils.checkpoint import checkpoint
 
@@ -33,18 +99,17 @@ def vit_activation_checkpoint_function(cfg: ModelConfig):
 class ViTMultiHeadDotProductAttention(nn.Module):
     """MDPA for the image ViT"""
 
-    def __init__(self, config: ModelConfig, use_bias: bool = True, input_dim=None):
+    def __init__(self, config: VitConfig, use_bias: bool = True, input_dim=None, device=None):
         super().__init__()
         self.config = config
         self.use_bias = use_bias
 
-        v_cfg = config.vision_backbone
-        self.embed_dim = v_cfg.image_emb_dim
-        self.num_heads = v_cfg.image_num_heads
-        self.head_dim = v_cfg.image_head_dim
-        self.num_key_value_heads = v_cfg.image_num_key_value_heads
+        self.embed_dim = config.image_emb_dim
+        self.num_heads = config.image_num_heads
+        self.head_dim = config.image_head_dim
+        self.num_key_value_heads = config.image_num_key_value_heads
         self.num_key_value_groups = self.num_heads // self.num_key_value_heads
-        self.initializer_range = v_cfg.initializer_range
+        self.initializer_range = config.initializer_range
 
         if input_dim is None:
             input_dim = self.embed_dim
@@ -53,30 +118,30 @@ class ViTMultiHeadDotProductAttention(nn.Module):
             input_dim,
             self.num_heads * self.head_dim,
             bias=use_bias,
-            device=config.init_device,
+            device=device,
             )
         self.wk = nn.Linear(
             input_dim,
             self.num_key_value_heads * self.head_dim,
             bias=use_bias,
-            device=config.init_device,
+            device=device,
             )
         self.wv = nn.Linear(
             input_dim,
             self.num_key_value_heads * self.head_dim,
             bias=use_bias,
-            device=config.init_device,
-            )
+            device=device,
+        )
         self.wo = nn.Linear(
             self.num_heads * self.head_dim,
             self.embed_dim,
             bias=use_bias,
-            device=config.init_device,
+            device=device,
             )
         self.attention_dropout: Optional[nn.Dropout] = None
-        if v_cfg.attention_dropout > 0:
-            self.attention_dropout = nn.Dropout(v_cfg.attention_dropout)
-        self.residual_dropout = nn.Dropout(v_cfg.residual_dropout)
+        if config.attention_dropout > 0:
+            self.attention_dropout = nn.Dropout(config.attention_dropout)
+        self.residual_dropout = nn.Dropout(config.residual_dropout)
 
     def reset_parameters(self):
         nn.init.normal_(self.wq.weight, std=self.initializer_range)
@@ -133,7 +198,7 @@ class ViTMultiHeadDotProductAttention(nn.Module):
                 xk.transpose(1, 2).contiguous(),
                 xv.transpose(1, 2).contiguous(),
                 is_causal=False,
-                dropout_p=self.config.vision_backbone.attention_dropout
+                dropout_p=self.config.attention_dropout
             ).transpose(1, 2)
         else:
             raise NotImplementedError(self.config.attention_type)
@@ -147,30 +212,29 @@ class ViTMultiHeadDotProductAttention(nn.Module):
 
 class ViTMLP(nn.Module):
 
-    def __init__(self, config: ModelConfig):
+    def __init__(self, config: VitConfig, device=None):
         super().__init__()
         self.config = config
-        v_cfg = config.vision_backbone
 
         self.w1 = nn.Linear(
-            v_cfg.image_emb_dim,
-            v_cfg.image_mlp_dim,
+            config.image_emb_dim,
+            config.image_mlp_dim,
             bias=True,
-            device=config.init_device,
+            device=device,
         )
         # Activation function.
         cfg = deepcopy(config)
-        cfg.activation_type = v_cfg.image_mlp_activations
-        self.act = get_activation(v_cfg.image_mlp_activations)
+        cfg.activation_type = config.image_mlp_activations
+        self.act = get_activation(config.image_mlp_activations)
         self.w2 = nn.Linear(
-            v_cfg.image_mlp_dim,
-            v_cfg.image_emb_dim,
+            config.image_mlp_dim,
+            config.image_emb_dim,
             bias=True,
-            device=config.init_device,
+            device=device,
         )
 
     def reset_parameters(self):
-        v_cfg = self.config.vision_backbone
+        v_cfg = self.config
         nn.init.trunc_normal_(self.w1.weight, std=math.sqrt(1 / v_cfg.image_emb_dim), a=-2.0, b=2.0)
         nn.init.trunc_normal_(self.w2.weight, std=math.sqrt(1 / v_cfg.image_mlp_dim), a=-2.0, b=2.0)
         nn.init.zeros_(self.w1.bias)
@@ -185,15 +249,12 @@ class ViTMLP(nn.Module):
 
 class BlockCollection(nn.Module):
 
-    def __init__(self, config: ModelConfig):
+    def __init__(self, config: VitConfig, device=None):
         super().__init__()
         self.config = config
-        self.grad_checkpointing: bool = False
-        self._activation_checkpoint_fn: Callable = vit_activation_checkpoint_function(self.config)
-
-        v_cfg = config.vision_backbone
+        self._activation_checkpoint_fn: Optional[Callable] = None
         self.resblocks = nn.ModuleList([
-            ResidualAttentionBlock(config) for _ in range(v_cfg.image_num_layers)
+            ResidualAttentionBlock(config, device) for _ in range(config.image_num_layers)
         ])
 
     def reset_parameters(self):
@@ -203,7 +264,7 @@ class BlockCollection(nn.Module):
     def forward(self, x: torch.Tensor) -> List[torch.Tensor]:
         hidden_states = []
         for r in self.resblocks:
-            if self.grad_checkpointing and not torch.jit.is_scripting():
+            if self._activation_checkpoint_fn:
                 x = self._activation_checkpoint_fn(r, x)
             else:
                 x = r(x)
@@ -213,15 +274,14 @@ class BlockCollection(nn.Module):
 
 class DinoBlockCollection(nn.Module):
 
-    def __init__(self, config: ModelConfig):
+    def __init__(self, config: VitConfig):
         super().__init__()
         self.config = config
         self.grad_checkpointing: bool = False
         self._activation_checkpoint_fn: Callable = vit_activation_checkpoint_function(self.config)
 
-        v_cfg = config.vision_backbone
         self.resblocks = nn.ModuleList([
-            DinoResidualAttentionBlock(config) for _ in range(v_cfg.image_num_layers)
+            DinoResidualAttentionBlock(config) for _ in range(config.image_num_layers)
         ])
 
     def reset_parameters(self):
@@ -241,22 +301,20 @@ class DinoBlockCollection(nn.Module):
 
 class ResidualAttentionBlock(nn.Module):
 
-    def __init__(self, config: ModelConfig):
+    def __init__(self, config: VitConfig, device=None):
         super().__init__()
         self.config = config
-
-        v_cfg = config.vision_backbone
         self.attention = ViTMultiHeadDotProductAttention(config)
         self.feed_forward = ViTMLP(config)
         self.attention_norm = nn.LayerNorm(
-            v_cfg.image_emb_dim,
-            eps=v_cfg.image_norm_eps,
-            device=config.init_device,
+            config.image_emb_dim,
+            eps=config.image_norm_eps,
+            device=device,
         )
         self.ffn_norm = nn.LayerNorm(
-            v_cfg.image_emb_dim,
-            eps=v_cfg.image_norm_eps,
-            device=config.init_device,
+            config.image_emb_dim,
+            eps=config.image_norm_eps,
+            device=device,
         )
 
     def reset_parameters(self):
@@ -273,28 +331,26 @@ class ResidualAttentionBlock(nn.Module):
 
 class DinoResidualAttentionBlock(nn.Module):
 
-    def __init__(self, config: ModelConfig):
+    def __init__(self, config: VitConfig, device=None):
         super().__init__()
         self.config = config
-
-        v_cfg = config.vision_backbone
         self.attention = ViTMultiHeadDotProductAttention(config)
         self.feed_forward = ViTMLP(config)
         self.attention_norm = nn.LayerNorm(
-            v_cfg.image_emb_dim,
-            eps=v_cfg.image_norm_eps,
-            device=config.init_device,
+            config.image_emb_dim,
+            eps=config.image_norm_eps,
+            device=device,
         )
         self.ffn_norm = nn.LayerNorm(
-            v_cfg.image_emb_dim,
-            eps=v_cfg.image_norm_eps,
-            device=config.init_device,
+            config.image_emb_dim,
+            eps=config.image_norm_eps,
+            device=device,
         )
         self.lambda1 = nn.Parameter(
-            torch.ones(v_cfg.image_emb_dim, device=config.init_device),
+            torch.ones(config.image_emb_dim, device=device),
         )
         self.lambda2 = nn.Parameter(
-            torch.ones(v_cfg.image_emb_dim, device=config.init_device),
+            torch.ones(config.image_emb_dim, device=device),
         )
 
     def reset_parameters(self):
@@ -313,40 +369,34 @@ class DinoResidualAttentionBlock(nn.Module):
 
 class VisionTransformer(nn.Module):
 
-    def __init__(self, config: ModelConfig):
+    def __init__(self, config: VitConfig, device=None):
         super().__init__()
         self.config = config
-
-        v_cfg = config.vision_backbone
         # class embeddings and positional embeddings
-        self.scale = v_cfg.image_emb_dim ** -0.5
+        self.scale = config.image_emb_dim ** -0.5
         self.class_embedding = nn.Parameter(
-            torch.zeros(v_cfg.image_emb_dim, device=config.init_device),
+            torch.zeros(config.image_emb_dim, device=device),
         )
         self.num_prefix_tokens: int = 1
         self.positional_embedding = nn.Parameter(
-            torch.zeros(v_cfg.image_num_pos, v_cfg.image_emb_dim, device=config.init_device),
+            torch.zeros(config.image_num_pos, config.image_emb_dim, device=device),
         )
 
-        image_patch_size = v_cfg.image_patch_size
+        image_patch_size = config.image_patch_size
         self.patch_embedding = nn.Linear(
             image_patch_size * image_patch_size * 3,
-            v_cfg.image_emb_dim,
+            config.image_emb_dim,
             bias=False,
-            device=config.init_device,
+            device=device,
             )
 
         self.pre_ln = nn.LayerNorm(
-            v_cfg.image_emb_dim,
-            eps=v_cfg.image_norm_eps,
-            device=config.init_device,
+            config.image_emb_dim,
+            eps=config.image_norm_eps,
+            device=device,
         )
 
         self.transformer = BlockCollection(config)
-
-    @torch.jit.ignore
-    def set_grad_checkpointing(self, enable=True):
-        self.transformer.grad_checkpointing = enable
 
     def reset_parameters(self):
         nn.init.normal_(self.class_embedding, std=self.scale)
@@ -354,6 +404,39 @@ class VisionTransformer(nn.Module):
         nn.init.normal_(self.patch_embedding.weight, std=0.02)
         self.pre_ln.reset_parameters()
         self.transformer.reset_parameters()
+
+    def reset_with_pretrained_weights(self):
+        if self.config.init_path:
+            is_sharded = hasattr(self.transformer.resblocks[0], "unshard")
+            assert is_sharded or get_global_rank() == 0
+            if get_global_rank() == 0:
+                parent, name = self.config.init_path.rsplit("/", 1)
+                state_dict_path = resource_path(parent, name, cache_dir=os.environ.get("MOLMO_CACHE_DIR"))
+                assert state_dict_path.is_file(), f"Model file {str(state_dict_path)} not found"
+                state_dict = torch.load(state_dict_path, map_location="cpu")
+            else:
+                state_dict = {}
+
+            if is_sharded:
+                key_errors = dist_cp_sd.set_model_state_dict(
+                    model=self,
+                    model_state_dict=state_dict,
+                    options=dist_cp_sd.StateDictOptions(full_state_dict=True, broadcast_from_rank0=True)
+                )
+            else:
+                key_errors = self.load_state_dict(state_dict)
+            assert len(key_errors.unexpected_keys) == 0
+            assert len(key_errors.missing_keys) <= 1
+        else:
+            self.reset_parameters()
+
+    def apply_fsdp2(self, *args, **kwargs):
+        for block in self.transformer.resblocks:
+            fully_shard(block, *args, **kwargs)
+        fully_shard(self, *args, **kwargs)
+
+    def apply_activation_checkpointing(self):
+        self.transformer._activation_checkpoint_fn = vit_activation_checkpoint_function(self.config)
 
     def add_pos_emb(self, x: torch.Tensor, patch_num: int) -> torch.Tensor:
         cls_emb = self.positional_embedding[0:1]
@@ -383,7 +466,7 @@ class VisionTransformer(nn.Module):
         : param x: (batch_size, num_patch, n_pixels)
         """
         if patch_num is None:
-            patch_num = self.config.vision_backbone.image_num_patch
+            patch_num = self.config.image_num_patch
         B, N, D = x.shape
 
         x = self.patch_embedding(x)
@@ -400,27 +483,25 @@ class VisionTransformer(nn.Module):
 
 class SiglipVisionTransformer(nn.Module):
 
-    def __init__(self, config: ModelConfig):
+    def __init__(self, config: VitConfig, device=None):
         super().__init__()
         self.config = config
-
-        v_cfg = config.vision_backbone
         # positional embeddings
-        self.scale = v_cfg.image_emb_dim ** -0.5
+        self.scale = config.image_emb_dim ** -0.5
         self.num_prefix_tokens: int = 0 # no class embeddings
         self.positional_embedding = nn.Parameter(
-            torch.zeros(v_cfg.image_num_pos, v_cfg.image_emb_dim, device=config.init_device),
+            torch.zeros(config.image_num_pos, config.image_emb_dim, device=device),
         )
 
-        image_patch_size = v_cfg.image_patch_size
+        image_patch_size = config.image_patch_size
         self.patch_embedding = nn.Linear(
             image_patch_size * image_patch_size * 3,
-            v_cfg.image_emb_dim,
+            config.image_emb_dim,
             bias=True,
-            device=config.init_device,
+            device=device,
         )
 
-        self.transformer = BlockCollection(config)
+        self.transformer = BlockCollection(config, device)
 
     @torch.jit.ignore
     def set_grad_checkpointing(self, enable=True):
@@ -431,6 +512,11 @@ class SiglipVisionTransformer(nn.Module):
         nn.init.normal_(self.patch_embedding.weight, std=0.02)
         nn.init.zeros_(self.patch_embedding.bias)
         self.transformer.reset_parameters()
+
+    def full_shard(self, *args, **kwargs):
+        for block in self.transformer.resblocks:
+            fully_shard(block, *args, **kwargs)
+        fully_shard(self, *args, **kwargs)
 
     def add_pos_emb(self, x: torch.Tensor, patch_num: int) -> torch.Tensor:
         pos_emb = self.positional_embedding
@@ -459,7 +545,7 @@ class SiglipVisionTransformer(nn.Module):
         : param x: (batch_size, num_patch, n_pixels)
         """
         if patch_num is None:
-            patch_num = self.config.vision_backbone.image_num_patch
+            patch_num = self.config.image_num_patch
         B, N, D = x.shape
 
         x = self.patch_embedding(x)
@@ -473,27 +559,25 @@ class SiglipVisionTransformer(nn.Module):
 
 class DinoVisionTransformer(nn.Module):
 
-    def __init__(self, config: ModelConfig):
+    def __init__(self, config: VitConfig, device=None):
         super().__init__()
         self.config = config
-
-        v_cfg = config.vision_backbone
         # class embeddings and positional embeddings
-        self.scale = v_cfg.image_emb_dim ** -0.5
+        self.scale = config.image_emb_dim ** -0.5
         self.class_embedding = nn.Parameter(
-            torch.zeros(v_cfg.image_emb_dim, device=config.init_device),
+            torch.zeros(config.image_emb_dim, device=device),
         )
         self.num_prefix_tokens: int = 1
         self.positional_embedding = nn.Parameter(
-            torch.zeros(v_cfg.image_num_pos, v_cfg.image_emb_dim, device=config.init_device),
+            torch.zeros(config.image_num_pos, config.image_emb_dim, device=device),
         )
 
-        image_patch_size = v_cfg.image_patch_size
+        image_patch_size = config.image_patch_size
         self.patch_embedding = nn.Linear(
             image_patch_size * image_patch_size * 3,
-            v_cfg.image_emb_dim,
+            config.image_emb_dim,
             bias=True,
-            device=config.init_device,
+            device=device,
         )
 
         self.transformer = DinoBlockCollection(config)
@@ -507,6 +591,11 @@ class DinoVisionTransformer(nn.Module):
         nn.init.normal_(self.positional_embedding, std=self.scale)
         nn.init.normal_(self.patch_embedding.weight, std=0.02)
         self.transformer.reset_parameters()
+
+    def full_shard(self, *args, **kwargs):
+        for block in self.transformer.resblocks:
+            fully_shard(block, *args, **kwargs)
+        fully_shard([self.patch_embedding, self.class_embedding, self.positional_embedding], *args, **kwargs)
 
     def add_pos_emb(self, x: torch.Tensor, patch_num: int) -> torch.Tensor:
         cls_emb = self.positional_embedding[0:1]
@@ -536,7 +625,7 @@ class DinoVisionTransformer(nn.Module):
         : param x: (batch_size, num_patch, n_pixels)
         """
         if patch_num is None:
-            patch_num = self.config.vision_backbone.image_num_patch
+            patch_num = self.config.image_num_patch
         B, N, D = x.shape
 
         x = self.patch_embedding(x)

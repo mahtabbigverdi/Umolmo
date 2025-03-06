@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 import re
 import shutil
 from os.path import join, exists
@@ -20,6 +21,16 @@ if DATA_HOME is not None:
 else:
     PIXMO_DATASETS = None
 """Where to save local version of the data after URLs filtering"""
+
+
+if "PIXMO_IMAGE_DIR" in os.environ:
+    PIXMO_IMAGES = os.environ["PIXMO_IMAGE_DIR"]
+elif DATA_HOME is not None:
+    PIXMO_IMAGES = join(DATA_HOME, "pixmo_images")
+else:
+    PIXMO_IMAGES = None
+"""Where to save downloaded images"""
+
 
 VERIFY = True
 """Verify SSL certificates when downloading"""

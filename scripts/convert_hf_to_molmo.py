@@ -9,7 +9,8 @@ import torch
 from transformers import AutoModel, AutoModelForCausalLM, CLIPModel, SiglipModel
 
 from launch_scripts.utils import VISION_BACKBONES, LLMS, DEFAULT_LOAD_PATHS
-from olmo import VisionBackboneConfig, ModelConfig, Molmo, BlockType
+from olmo.nn.image_vit import VitConfig
+from olmo.nn.llm import LlmConfig, BlockType
 from olmo.util import prepare_cli_environment
 
 
@@ -84,7 +85,7 @@ def interpolate_position_embeddings(
     return torch.cat((class_pos_embed, patch_pos_embed), dim=1)
 
 
-def convert_state_dict_clip(state_dict, vision_config: VisionBackboneConfig) -> Dict[str, Any]:
+def convert_state_dict_clip(state_dict, vision_config: VitConfig) -> Dict[str, Any]:
     state_dict = unflatten_dict(state_dict, sep=".")
 
     resblocks = {}
@@ -165,7 +166,7 @@ def convert_state_dict_clip(state_dict, vision_config: VisionBackboneConfig) -> 
     return out
 
 
-def convert_state_dict_siglip(state_dict, vision_config: VisionBackboneConfig) -> Dict[str, Any]:
+def convert_state_dict_siglip(state_dict, vision_config: VitConfig) -> Dict[str, Any]:
     state_dict = unflatten_dict(state_dict, sep=".")
 
     resblocks = {}
@@ -238,7 +239,7 @@ def convert_state_dict_siglip(state_dict, vision_config: VisionBackboneConfig) -
     return out
 
 
-def convert_state_dict_dino(state_dict, vision_config: VisionBackboneConfig) -> Dict[str, Any]:
+def convert_state_dict_dino(state_dict, vision_config: VitConfig) -> Dict[str, Any]:
     state_dict = unflatten_dict(state_dict, sep=".")
 
     resblocks = {}
@@ -315,7 +316,7 @@ def convert_state_dict_dino(state_dict, vision_config: VisionBackboneConfig) -> 
     return out
 
 
-def convert_state_dict_olmoe(state_dict, config: ModelConfig, block_type: BlockType) -> Dict[str, Any]:
+def convert_state_dict_olmoe(state_dict, config: LlmConfig, block_type: BlockType) -> Dict[str, Any]:
     state_dict = unflatten_dict(state_dict, sep=".")
     assert len(state_dict) == 2
     lmhead = state_dict["lm_head"]
@@ -380,7 +381,7 @@ def convert_state_dict_olmoe(state_dict, config: ModelConfig, block_type: BlockT
     return out
 
 
-def convert_state_dict_olmo_1024_preview(state_dict, config: ModelConfig, block_type: BlockType) -> Dict[str, Any]:
+def convert_state_dict_olmo_1024_preview(state_dict, config: LlmConfig, block_type: BlockType) -> Dict[str, Any]:
     state_dict = unflatten_dict(state_dict, sep=".")
     assert len(state_dict) == 2
     lmhead = state_dict["lm_head"]
@@ -435,7 +436,7 @@ def convert_state_dict_olmo_1024_preview(state_dict, config: ModelConfig, block_
     return out
 
 
-def convert_state_dict_qwen2(state_dict, config: ModelConfig, block_type: BlockType) -> Dict[str, Any]:
+def convert_state_dict_qwen2(state_dict, config: LlmConfig, block_type: BlockType) -> Dict[str, Any]:
     state_dict = unflatten_dict(state_dict, sep=".")
     assert len(state_dict) == 2
     lmhead = state_dict["lm_head"]
@@ -548,9 +549,7 @@ LLM_HF_SOURCES = {
 
 def main_vit(args: argparse.Namespace) -> None:
     hf_source = VIT_HF_SOURCES[args.model]
-    cfg = ModelConfig(vision_backbone=VISION_BACKBONES[args.model])
-    cfg.init_device = 'cpu'
-    v_cfg = cfg.vision_backbone
+    cfg = VISION_BACKBONES[args.model]
     convert_fn = CONVERT_FNS[args.model]
 
     output_path = str(Path(args.data_dir).joinpath(get_default_load_path(args.model)))
@@ -572,7 +571,7 @@ def main_vit(args: argparse.Namespace) -> None:
 
     logging.info("Converting...")
 
-    vit_state_dict = convert_fn(state_dict, v_cfg)
+    vit_state_dict = convert_fn(state_dict, cfg)
     
     logging.info("Saving...")
     torch.save(vit_state_dict, output_path)
@@ -581,7 +580,6 @@ def main_vit(args: argparse.Namespace) -> None:
 def main_llm(args: argparse.Namespace) -> None:
     hf_source = LLM_HF_SOURCES[args.model]
     cfg = LLMS[args.model]
-    cfg.init_device = 'cpu'
     convert_fn = CONVERT_FNS[args.model]
 
     output_path = str(Path(args.data_dir).joinpath(get_default_load_path(args.model)))

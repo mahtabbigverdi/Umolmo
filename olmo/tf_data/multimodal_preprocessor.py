@@ -10,12 +10,14 @@ import numpy as np
 import tensorflow as tf
 
 from olmo import tokenizer
+from olmo.config import BaseConfig
 from olmo.tf_data.data_utils import pad_to_bounding_box, \
     get_3d_subsegments, _append_to_innermost_axis, resize_and_pad, \
     apply_with_random_selector, make_autoregressive_inputs, \
     trim_and_pad_dataset, assert_not_truncated, normalize_image
 from olmo.tf_data.prompts import apply_keyword_prompt, STYLE_TO_GENERAL_PROMPT, GENERAL_PROMPTS_V1
 from olmo.tokenizer import get_special_token_ids
+from olmo.vision_backbone import VisionBackboneConfig
 
 
 def is_floating(image: Union[tf.Tensor, np.ndarray]) -> bool:
@@ -184,9 +186,6 @@ class MultiModalPreprocessor:
     overlap_margins: Tuple[int, int] = (4, 4)
     do_random_scale: Optional[bool] = False
     resize: str = "default"
-    random_scale_max: float = 1.1
-    random_scale_min: float = 0.9
-    random_scale_ratio: float = 0.5
     use_col_tokens: bool = True
 
     # Data about the ViT and connector we need when deciding the crops
@@ -201,12 +200,9 @@ class MultiModalPreprocessor:
     # Other settings
     loss_token_weighting: Optional[str] = None
     unconditioned: Union[bool, float] = False  # Ignore images
-    fix_image_input_idx: int = 2  # backwards compatibility fix
-    pad_to: Optional[int] = None  # experimental feature
     pad_value: Optional[float] = 0
 
     _special_tokens: Dict[str, int] = None
-    split_at: Optional[int] = None
     include_raw_image: Optional[bool] = False
 
     def get_max_total_crops(self):
@@ -1415,7 +1411,6 @@ class MultiModalPreprocessor:
         return MultiModalLMFeatureConverter(
             loss_token_weighting=self.loss_token_weighting,
             bos_id=self.tokenizer.bos_token_id,
-            fix_image_input_idx=self.fix_image_input_idx,
             pack=pack,
             special_tokens=list(self.special_token_ids.values()),
         )
@@ -1425,11 +1420,10 @@ class MultiModalLMFeatureConverter:
 
     def __init__(
         self, pack: bool = False, loss_token_weighting: str=None, bos_id: int = 1,
-        special_tokens=None, fix_image_input_idx=2
+        special_tokens=None,
     ):
         self.pack = pack
         self.bos_id = bos_id
-        self.fix_image_input_idx = fix_image_input_idx
         self.special_tokens = tf.constant(special_tokens) if special_tokens else None
         self.loss_token_weighting = loss_token_weighting
 
@@ -1451,13 +1445,8 @@ class MultiModalLMFeatureConverter:
         )
 
         image_input_idx = features["image_input_idx"]
-        if self.fix_image_input_idx == 2:
-            # plus one sine we have added BOS to the inputs
-            image_input_idx = tf.where(image_input_idx < 0,  image_input_idx, image_input_idx + 1)
-        else:
-            # Some old models trained like this, sometimes image_input_idx will go from -1 -> 0 didn't
-            # effect performance but keep this code path for backwards compatiblity with those checkpoints
-            image_input_idx = image_input_idx + 1
+        # plus one sine we have added BOS to the inputs
+        image_input_idx = tf.where(image_input_idx < 0,  image_input_idx, image_input_idx + 1)
 
         d = {
             "target_tokens": features["target_tokens"],

@@ -53,7 +53,8 @@ class DeterministicDataset:
             yield self[i]
 
     def get(self, idx, epoch=0):
-        rng = np.random.RandomState(self.seed + idx + len(self.dataset)*epoch)
+        rng = np.random.RandomState(
+            (self.seed * 195172 + idx + len(self.dataset)*epoch) % (2 ** 32 - 1))
         if idx >= len(self.dataset):
             # Padding example
             item = self.dataset.get(0, rng)

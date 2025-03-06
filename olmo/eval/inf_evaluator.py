@@ -16,13 +16,16 @@ from .evaluators import (
     HtmlTable, CountEval, PointCountEval, PointingEval, ClockEval, VqaEval,
     SavePredictions, AndroidControlEval, MathVistaEval, PointingEval
 )
-from ..config import EvaluatorConfig
+from ..config import BaseConfig
+from ..data.data_loader import DataConfig
 from ..torch_util import (
     get_global_rank,
     get_world_size,
     move_to_device,
 )
 from ..util import flatten_list
+
+__all__ = ["InfEvaluator", "EvaluatorConfig", "InfDatasetEvaluator", "InfDatasetEvaluatorConfig"]
 
 log = logging.getLogger(__name__)
 
@@ -71,54 +74,81 @@ class InfEvaluator:
         return resolved_metrics
 
 
-def build_inf_evaluator(cfg: EvaluatorConfig, default_save_dir=None) -> InfEvaluator:
-    evaluators = []
-    save_predictions = cfg.save_predictions
-    if save_predictions == "_default":
-        if default_save_dir is None:
-            logging.info(f"save_predictions is \"default\" but no default "
-                         f"save dir set so predictions will not be saved")
-        save_predictions = default_save_dir
-    if save_predictions:
-        evaluators.append(SavePredictions(
-            save_predictions,
-            log_examples=cfg.n_to_log,
-            save_tokens=cfg.save_tokens
-        ))
+@dataclasses.dataclass
+class EvaluatorConfig(BaseConfig):
+    """Config for `Evaluator` objects that compute metrics"""
 
-    if cfg.vqa_eval:
-        evaluators.append(VqaEval(cfg.vqa_eval.split(","), cfg.num_wandb_examples))
-    elif cfg.clock_eval:
-        evaluators.append(ClockEval(cfg.num_wandb_examples))
-    elif cfg.clock_bench_eval:
-        evaluators.append(ClockEval(cfg.num_wandb_examples, is_test=True))
-    elif cfg.math_vista_eval:
-        evaluators.append(MathVistaEval(cfg.num_wandb_examples))
-    elif cfg.point_count_eval:
-        evaluators.append(PointCountEval(cfg.num_wandb_examples))
-    elif cfg.count_eval:
-        evaluators.append(CountEval(cfg.num_wandb_examples))
-    elif cfg.android_eval:
-        evaluators.append(AndroidControlEval(cfg.num_wandb_examples))
-    if cfg.pointing_eval:
-        evaluators.append(PointingEval(cfg.num_wandb_examples))
-    else:
-        pass
-    return InfEvaluator(evaluators)
+    n_to_log: int = 10
+    """Num examples to log to console"""
+
+    num_wandb_examples: int = 0
+    """Num examples to log to Wandb as a HTML table"""
+
+    save_predictions: Optional[str] = "_default"  # saves with default name to checkpoint dir
+    """Where to save predictions files"""
+
+    save_tokens: bool = False
+    """If save predictions, should the tokens be saved"""
+
+    vqa_eval: str = ''
+    """name(s) of VQA-style eval to run, can be a comma seperated list"""
+
+    # Other individual types of eval
+    pointing_eval: bool = False
+    count_eval: bool = False
+    point_count_eval: bool = False
+    android_eval: bool = False
+    clock_eval: bool = False
+    clock_bench_eval: bool = False # Clock reading benchmark, coco/openimg/movies
+    math_vista_eval: bool = False
+
+    def build(self, default_save_dir=None) -> InfEvaluator:
+        evaluators = []
+        save_predictions = self.save_predictions
+        if save_predictions == "_default":
+            if default_save_dir is None:
+                logging.info(f"save_predictions is \"default\" but no default "
+                             f"save dir set so predictions will not be saved")
+            save_predictions = default_save_dir
+        if save_predictions:
+            evaluators.append(SavePredictions(
+                save_predictions,
+                log_examples=self.n_to_log,
+                save_tokens=self.save_tokens
+            ))
+
+        if self.vqa_eval:
+            evaluators.append(VqaEval(self.vqa_eval.split(","), self.num_wandb_examples))
+        elif self.clock_eval:
+            evaluators.append(ClockEval(self.num_wandb_examples))
+        elif self.clock_bench_eval:
+            evaluators.append(ClockEval(self.num_wandb_examples, is_test=True))
+        elif self.math_vista_eval:
+            evaluators.append(MathVistaEval(self.num_wandb_examples))
+        elif self.point_count_eval:
+            evaluators.append(PointCountEval(self.num_wandb_examples))
+        elif self.count_eval:
+            evaluators.append(CountEval(self.num_wandb_examples))
+        elif self.android_eval:
+            evaluators.append(AndroidControlEval(self.num_wandb_examples))
+        if self.pointing_eval:
+            evaluators.append(PointingEval(self.num_wandb_examples))
+        else:
+            pass
+        return InfEvaluator(evaluators)
 
 
 @dataclasses.dataclass
 class InfDatasetEvaluator:
     """Evaluates a model on a dataset"""
-
+    label: str
     dataloader: Any
     evaluator: InfEvaluator
     n_steps: int
-    label: str = None
     max_new_tokens: int = 448
     console_log_interval: Optional[int] = None
 
-    def evaluate_model(self, model, device, autocast_precision, is_distributed, pbar=False):
+    def run(self, model, device, autocast_precision, is_distributed, pbar=False):
         eval_dataloader = self.dataloader
         eval_it = iter(eval_dataloader)
         n_steps = self.n_steps
@@ -171,12 +201,74 @@ class InfDatasetEvaluator:
             # Log to console.
             if self.console_log_interval and not pbar:
                 if eval_step + 1 == n_steps or (eval_step + 1) % self.console_log_interval == 0:
-                    if total_steps:
-                        log.info(f"[eval_step={eval_step + 1}/{total_steps}]")
-                    else:
-                        log.info(f"[eval_step={eval_step + 1}/{n_steps}]")
+                    log.info(f"[eval_step={eval_step + 1}/{total_steps}]")
 
-        tokenizer = model.config.get_tokenizer()
+        tokenizer = model.config.build_tokenizer()
         metrics = self.evaluator(predictions, all_metadata, tokenizer, device)
         return metrics
 
+
+@dataclasses.dataclass
+class InfDatasetEvaluatorConfig(BaseConfig):
+    """Configuration for an inference evaluator"""
+
+    label: Optional[str] = None
+    """Label to use when logging"""
+
+    data: DataConfig = dataclasses.field(default_factory=DataConfig)
+    """Data to evaluate on"""
+
+    evaluator: EvaluatorConfig = dataclasses.field(default_factory=EvaluatorConfig)
+    """Evaluator to compute metrics from the generated outputs"""
+
+    max_new_tokens: int = 448
+    """Max number of tokens to generate"""
+
+    device_batch_size: int = 4
+    """Batch size"""
+
+    subset_num_batches: Optional[int] = None
+    """Number of matches to run on, if None use the entire dataset"""
+
+    max_examples: Optional[int] = None
+    """Max number of examples to run on, overrides `subset_num_batches`"""
+
+    console_log_interval: Optional[int] = None
+    """How often to log progress to console"""
+
+    def build_dataset_evaluator(
+        self,
+        model_config,
+        default_save_dir,
+        device,
+    ) -> InfDatasetEvaluator:
+        global_batch_size = self.device_batch_size * get_world_size()
+        if self.max_examples and self.max_examples > 0:
+            max_steps = max(self.max_examples // global_batch_size, 1)
+        elif self.subset_num_batches:
+            max_steps = self.subset_num_batches
+        else:
+            max_steps = None
+
+        eval_loader = self.data.build_eval_dataloader(
+            model_config,
+            self.device_batch_size,
+            for_inference=True,
+            pad_batches=True,
+            max_steps_for_padding=max_steps,
+        )
+        if self.max_examples is not None:
+            num_batches = self.max_examples // self.device_batch_size*get_world_size()
+        elif self.subset_num_batches is not None:
+            num_batches = self.subset_num_batches
+        else:
+            num_batches = len(eval_loader)
+
+        return InfDatasetEvaluator(
+            label=self.label,
+            dataloader=eval_loader,
+            evaluator=self.evaluator.build(default_save_dir),
+            n_steps=max_steps,
+            max_new_tokens=self.max_new_tokens,
+            console_log_interval=self.console_log_interval
+        )

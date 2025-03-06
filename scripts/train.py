@@ -2,66 +2,214 @@
 
 import logging
 import os
+import socket
 import sys
-from os import listdir
+from datetime import datetime
 from os.path import join
 from pathlib import Path
 
 import torch
-import torch.distributed as dist
-import torch.multiprocessing as mp
+import torch.distributed.checkpoint.state_dict as dist_cp_sd
 import wandb
 from beaker import Beaker
-from packaging import version
+from omegaconf import OmegaConf
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-from torch.distributed.fsdp import ShardingStrategy
 
-from olmo.config import CheckpointType, TrainConfig
-from olmo.data import build_train_dataloader
-from olmo.eval import build_loss_evaluators, build_inf_evaluators
 from olmo.exceptions import OLMoCliError, OLMoConfigurationError
-from olmo.model import Molmo
-from olmo.optim import BoltOnWarmupScheduler, build_optimizer, build_scheduler, \
-    build_multimodal_scheduler
+from olmo.io import file_exists, write_file
+from olmo.nn.checkpointer import Checkpointer
 from olmo.torch_util import (
     barrier,
-    get_default_device,
     get_global_rank,
     get_local_rank,
-    get_local_world_size,
     get_world_size,
     peak_gpu_memory,
     seed_all,
-    freeze_parameters_by_name,
+    freeze_module,
 )
-from olmo.train import Trainer, BeakerLogger
+from olmo.train.distributed_checkpointing import load_model_state_unsharded
+from olmo.train.optim import BoltOnWarmupScheduler
+from olmo.train.trainer import Trainer, BeakerLogger
+from olmo.train.trainer_config import TrainConfig, RuntimeData
 from olmo.util import (
-    add_cached_path_clients,
     clean_opt,
     log_extra_field,
-    prepare_cli_environment,
+    resource_path, prepare_torchrun_environment,
 )
 
 log = logging.getLogger("train")
 
 
-def main(cfg: TrainConfig) -> None:
+def run_trainer(cfg: TrainConfig) -> None:
     if cfg.run_name is None:
         log_extra_field("run_name", cfg.run_name)
 
-    # Sanity check
-    if (cfg.reset_optimizer_state or cfg.reset_trainer_state) and cfg.load_path is None:
-        log.warning(
-            "You want to reset the optimizer or trainer state, but we're not loading from the checkpoint. The"
-            "setting has no effect."
+    # Additional environment setup
+    torch.cuda.set_device(f"cuda:{get_local_rank()}")
+    device = torch.device("cuda")
+    seed_all(cfg.seed)
+    barrier()
+
+    # Display the configuration.
+    if get_global_rank() == 0:
+        log.info("Configuration:")
+        log.info(cfg)
+
+    # Figure out what checkpoint we are starting from, if any
+    start_from = None
+    reset_opt, reset_train = False, False
+    is_resuming = False
+    if cfg.allow_resume:
+        # Check if there is a checkpoint for us to resume from in our save folder, in which
+        # case we ignore `cfg.load_from` and use it
+        config_path = join(cfg.save_folder, "config.yaml")
+        try:
+            lastest_checkpoint = Checkpointer.latest_checkpoint(cfg.save_folder)
+        except FileNotFoundError:
+            lastest_checkpoint = None
+        if lastest_checkpoint:
+            log.info(f"Resuming from {lastest_checkpoint}")
+            if get_global_rank() == 0:
+                saved_config = TrainConfig.load(config_path)
+                if saved_config.model != cfg.model:
+                    log.warning("Model config does not match the one resuming from")
+                if saved_config.optimizer != cfg.optimizer:
+                    log.warning("Optimizer config does not match the one resuming from")
+                if saved_config.data != cfg.data:
+                    log.warning("Data config does not match the one resuming from")
+            start_from = str(lastest_checkpoint)
+            reset_opt, reset_train = False, False
+            is_resuming = True
+        else:
+            logging.info("Not resuming since no latest checkpoint found")
+
+    if start_from is None:
+        start_from = cfg.load_path
+        reset_opt, reset_train = cfg.reset_trainer_state, cfg.reset_optimizer_state
+    else:
+        start_from = None
+
+    start_from_unsharded = start_from and file_exists(join(start_from, "model.pt"))
+    if start_from_unsharded:
+        assert reset_opt and reset_train, "Unshared checkpoints do not support optim/train state loading"
+
+    # Fail fast if we would be overwriting another save directory
+    if not cfg.dry_run and not is_resuming:
+        save_path = join(cfg.save_folder, "config.yaml")
+        if file_exists(save_path) and not cfg.save_overwrite:
+            raise OLMoConfigurationError(f"{save_path} already exists, use --save_overwrite to overwrite")
+
+    barrier()
+
+    # Init the model
+    with torch.device("meta"):
+        olmo_model = cfg.model.build_model()
+
+    # Freeze parameters depending on what we are tuning
+    if cfg.model.vision_backbone is not None and not cfg.ft_connector:
+        log.info(f"Freezing connector")
+        for param in olmo_model.get_connector_parameters():
+            param.requires_grad = False
+    if cfg.model.vision_backbone is not None and not cfg.ft_vit:
+        log.info(f"Freezing vision backbone")
+        for param in olmo_model.get_vit_parameters():
+            param.requires_grad = False
+    if not cfg.ft_llm:
+        log.info(f"Freezing LLM")
+        for param in olmo_model.get_llm_parameters():
+            param.requires_grad = False
+    elif cfg.ft_embedding != "all":
+        freeze_wte, freeze_out, freeze_ln_f = True, True, True
+        if cfg.ft_embedding == "ln_f":
+            freeze_ln_f = False
+        elif cfg.ft_embedding == "lm_head":
+            freeze_ln_f = False
+            freeze_out = False
+        elif cfg.ft_embedding == "wte":
+            freeze_wte = False
+        else:
+            raise NotImplementedError(cfg.fsdp)
+        if freeze_ln_f:
+            log.info(f"Freezing LLM: ln_f")
+            freeze_module(olmo_model.transformer.ln_f)
+        if freeze_out and hasattr(olmo_model.transformer, "ff_out"):
+            log.info(f"Freezing LLM: ff_out")
+            freeze_module(olmo_model.transformer.ff_out)
+        if freeze_wte:
+            log.info(f"Freezing LLM: wte")
+            olmo_model.transformer.wte.embedding.requires_grad = False
+
+    # Do some other model setup
+    if cfg.activation_checkpointing:
+        olmo_model.apply_activation_checkpointing(cfg.activation_checkpointing)
+    if cfg.compile:
+        olmo_model.apply_compile(cfg.compile.target, **cfg.compile.compile_args())
+
+    # Shard the model
+    if cfg.fsdp and not cfg.fsdp.fsdp2:
+        log.info("Wrapping model with FDSP...")
+        if start_from is None:
+            # Just run our `reset_with_pretrained_weights` on rank0 and broadcast so we
+            # don't have to port all the init logic to a FSDP param_init_fn function
+            if get_global_rank() == 0:
+                olmo_model = olmo_model.to_empty(device="cpu")
+                olmo_model.reset_with_pretrained_weights()
+            sync_module_states = True
+        else:
+            sync_module_states = False
+
+        # meta-device parameters can just become empty since we are either broadcasting from rank0
+        # or going to load a checkpoint anyway
+        def dummy_init_fn(module: torch.nn.Module) -> None:
+            module.to_empty(device=device, recurse=False)
+
+        fsdp_model = FSDP(
+            olmo_model,
+            **cfg.fsdp.get_fsd_args(cfg.autocast_precision),
+            param_init_fn=dummy_init_fn,
+            auto_wrap_policy=olmo_model.get_fsdp_wrap_policy(cfg.fsdp.wrapping_strategy),
+            device_id=get_local_rank(),
+            sync_module_states=sync_module_states,
         )
 
-    if cfg.load_path is not None and cfg.model.low_cpu_fsdp:
-        log.warning(
-            "When loading a checkpoint to resume/finetune, the `low_cpu_fsdp` will be ignored."
-        )
-        cfg.model.low_cpu_fsdp = False
-    
+    elif cfg.fsdp.fsdp2:
+        log.info("Wrapping model with FDSP2...")
+        olmo_model.apply_fsdp2(**cfg.fsdp.get_fsd2_args(cfg.autocast_precision))
+        if start_from is None:
+            olmo_model.to_empty(device="cuda")
+            olmo_model.reset_with_pretrained_weights()
+        fsdp_model = olmo_model
+    else:
+        raise NotImplementedError()
+
+    # This can help prevent OOMs for large models with FSPD1
+    torch.cuda.empty_cache()
+
+    log.info(f"Total number of parameters: {olmo_model.num_params():,d}")
+    log.info(f"Number of non-embedding parameters: {olmo_model.num_params(include_embedding=False):,d}")
+    if olmo_model.config.llm.block_type == "moe":
+        log.info(f"Number of active parameters: {olmo_model.num_params(include_inactive_params=False):,d}")
+    log.info(f"Peak GPU Memory (MB) after FSDP: {int(peak_gpu_memory() or 0)}")
+    log.info("Model:")
+    log.info(fsdp_model)
+
+    # Construct optimizer/scheduler/checkpointer
+    optim = cfg.optimizer.build_optimizer(cfg.max_grad_norm, cfg.max_grad_norm_ratio, fsdp_model)
+    scheduler = cfg.scheduler.build()
+    checkpointer = cfg.checkpointer_config.build(cfg.save_overwrite)
+
+    # Construct data loader and evaluators
+    train_loader = cfg.data.build_train_dataloader(cfg.model, cfg.global_train_batch_size, device)
+    if cfg.eval_interval > 0 or cfg.eval_on_load:
+        evaluators = [v.build_dataset_evaluator(cfg.model, device) for v in cfg.evaluators]
+    else:
+        evaluators = None
+    if cfg.inf_eval_interval > 0 or cfg.eval_on_load:
+        inf_evaluators = [v.build_dataset_evaluator(cfg.model, device) for v in cfg.inf_evaluators]
+    else:
+        inf_evaluators = None
+
+    # Maybe build the BeakerLogger
     if "BEAKER_EXPERIMENT_ID" in os.environ and "BEAKER_TOKEN" in os.environ:
         if get_global_rank() == 0:
             experiment_id = os.environ["BEAKER_EXPERIMENT_ID"]
@@ -76,53 +224,6 @@ def main(cfg: TrainConfig) -> None:
             logging.info(f"Beaker log interval set to {cfg.beaker_log_interval}, but beaker env variables are missing")
         beaker_logger = None
 
-    # Set CUDA device.
-    torch.cuda.set_device(f"cuda:{get_local_rank()}")
-    device = torch.device("cuda")
-
-    barrier()
-
-    # Fill some configuration options.
-    cfg.model.precision = cfg.precision
-    cfg.device_train_batch_size = cfg.global_train_batch_size // get_world_size()
-    assert cfg.device_train_batch_size is not None  # for mypy
-    cfg.device_train_grad_accum = cfg.device_train_batch_size // cfg.device_train_microbatch_size
-
-    # Display and save configuration.
-    if get_global_rank() == 0:
-        log.info("Configuration:")
-        log.info(cfg)
-
-        if cfg.allow_resume:
-            config_path = Path(cfg.save_folder) / "config.yaml"
-            if config_path.exists():
-                lastest_checkpoint = Path(cfg.save_folder) / "latest"
-                if lastest_checkpoint.exists():
-                    logging.info(f"Resuming from {lastest_checkpoint}")
-                    saved_config = TrainConfig.load(config_path)
-                    if saved_config.model != cfg.model:
-                        logging.warning("Model config does not match the one resuming from")
-                    if saved_config.optimizer != cfg.optimizer:
-                        logging.warning("Optimizer config does not match the one resuming from")
-                    if saved_config.data != cfg.data:
-                        logging.warning("Data config does not match the one resuming from")
-                    cfg.load_path = str(lastest_checkpoint)
-                else:
-                    logging.info("Not resuming since no latest checkpoint found")
-
-        if not cfg.dry_run and (cfg.load_path is None or Path(cfg.load_path).parent != Path(cfg.save_folder)):
-            # Save config.
-            save_path = Path(cfg.save_folder) / "config.yaml"
-            if save_path.is_file() and not cfg.save_overwrite:
-                raise OLMoConfigurationError(f"{save_path} already exists, use --save_overwrite to overwrite")
-            else:
-                log.info(f"Saving config to {save_path}")
-                save_path.parent.mkdir(exist_ok=True, parents=True)
-                cfg.save(save_path)
-            del save_path
-
-    barrier()
-
     # Maybe start W&B run.
     if cfg.wandb is not None and (get_global_rank() == 0 or not cfg.wandb.rank_zero_only):
         wandb_dir = Path(cfg.save_folder) / "wandb"
@@ -133,6 +234,8 @@ def main(cfg: TrainConfig) -> None:
             wandb_cfg["beaker_experiment_id"] = os.environ["BEAKER_EXPERIMENT_ID"]
             if beaker_logger is not None:
                 wandb_cfg["beaker_url"] = beaker_logger.beaker.experiment.url(beaker_logger.experiment)
+        if is_resuming:
+            wandb_cfg["resuming_from"] = start_from
         wandb.init(
             dir=str(wandb_dir),
             project=cfg.wandb.project,
@@ -143,234 +246,70 @@ def main(cfg: TrainConfig) -> None:
             config=wandb_cfg,
         )
         wandb_url = wandb.run.get_url()
-        beaker_logger.add_wandb(wandb_url)  # add to beaker description
+        if beaker_logger is not None:
+            beaker_logger.add_wandb(wandb_url)  # add wandb url to beaker description
 
-    barrier()
-
-    # Set seed.
-    seed_all(cfg.seed)
-
-    # Construct data loader.
-    train_loader = build_train_dataloader(cfg, device)
-
-    # Construct evaluators.
-    if cfg.eval_interval > 0 or cfg.eval_on_load:
-        evaluators = build_loss_evaluators(cfg, device)
-    else:
-        evaluators = None
-    inf_evaluators = build_inf_evaluators(cfg, device)
-    barrier()
-
-    # Initialize the model.
-    logging.info(f"Building model")
-    olmo_model = Molmo(cfg.model)
-
-    # Freeze model components.
-    if cfg.model.vision_backbone is not None and not cfg.ft_connector:
-        freeze_parameters_by_name(olmo_model, Molmo.get_connector_parameters(), warn=False)
-    if cfg.model.vision_backbone is not None and not cfg.ft_vit:
-        log.info(f"Freezing vision backbone")
-        freeze_parameters_by_name(olmo_model, Molmo.get_vit_parameters(), warn=False)
-    if not cfg.ft_llm:
-        log.info(f"Freezing LLM")
-        freeze_parameters_by_name(olmo_model, Molmo.get_llm_parameters(), warn=False)
-    if cfg.ft_embedding != "all":
-        if cfg.ft_embedding == "ln_f":
-            log.info(f"Freezing LLM: wte.embedding, ff_out")
-            freeze_names = ["transformer.wte.embedding", "transformer.wte.weight"]
-            freeze_names += ["transformer.ff_out"]
-        elif cfg.ft_embedding == "lm_head":
-            log.info(f"Freezing LLM: wte.embedding")
-            freeze_names = ["transformer.wte.embedding", "transformer.wte.weight"]
-        else:
-            assert cfg.ft_embedding == "wte"
-            log.info(f"Freezing LLM: ln_f, ff_out")
-            freeze_names = ["transformer.ln_f", "transformer.ff_out"]
-        freeze_parameters_by_name(olmo_model, tuple(freeze_names), warn=False)
-
-    if cfg.compile is not None:
-        log.info(f"Compiling {cfg.compile.target}...")
-        if cfg.compile.target == "model":
-            torch.compile(olmo_model, **cfg.compile.compile_args())
-        elif cfg.compile.target == "blocks":
-            if cfg.model.block_group_size != 1:
-                raise OLMoConfigurationError("Compile block is only supported with block_group_size 1.")
-            for block_idx, block in enumerate(olmo_model.transformer.blocks):
-                block.compile(**cfg.compile.compile_args())
-            for block_idx, block in enumerate(olmo_model.vision_backbone.image_vit.transformer.resblocks):
-                block.compile(**cfg.compile.compile_args())
-        elif cfg.compile.target == "image_blocks":
-            for block_idx, block in enumerate(olmo_model.vision_backbone.image_vit.transformer.resblocks):
-                block.compile(**cfg.compile.compile_args())
-        elif cfg.compile.target == "llm_blocks":
-            for block_idx, block in enumerate(olmo_model.transformer.blocks):
-                block.compile(**cfg.compile.compile_args())
-        elif cfg.compile.target == "transformers":
-            if cfg.model.block_group_size != 1:
-                raise OLMoConfigurationError("Compile block is only supported with block_group_size 1.")
-            olmo_model.transformer.compile(**cfg.compile.compile_args())
-            olmo_model.vision_backbone.image_vit.transformer.compile(**cfg.compile.compile_args())
-        else:
-            raise NotImplementedError(cfg.compile.target)
-
-    olmo_model.set_activation_checkpointing(cfg.activation_checkpointing)
-
-    listdir(cfg.save_folder)
-
-    sync_module_states = True
-    if cfg.load_path is None:
-        # Sine we typically load some parameters from a pre-trained checkpoint, we init the rank0
-        # model on the cpu and then use `sync_module_states` in FSDP to sync the parameters
-        # with the rest of the devices
-        init_weights = False
-        if get_local_rank() == 0:
-            if cfg.model.init_device == "meta":
-                olmo_model.to_empty(device="cpu")
-            if cfg.initial_model_checkpoint:
-                logging.warning(f"Loading model checkpoint {cfg.initial_model_checkpoint}")
-                state_dict = torch.load(join(cfg.initial_model_checkpoint, "model.pt"), map_location="cpu")
-                olmo_model.load_state_dict(state_dict)
-                del state_dict
-            else:
-                olmo_model.reset_with_pretrained_weights()
-    else:
-        init_weights = True
-
-    log.info(f"Total number of parameters: {olmo_model.num_params():,d}")
-    log.info(f"Number of non-embedding parameters: {olmo_model.num_params(include_embedding=False):,d}")
-    if olmo_model.config.block_type == "moe":
-        log.info(f"Number of active parameters: {olmo_model.num_params(include_inactive_params=False):,d}")    
-    log.info(f"Peak GPU Memory (MB) before FSDP: {int(peak_gpu_memory() or 0)}")
-
-    # Wrap the model in FSDP.
-    log.info("Wrapping model with FDSP...")
-    wrap_policy = olmo_model.get_fsdp_wrap_policy(cfg.fsdp.wrapping_strategy)
-
-    if init_weights or version.parse(torch.__version__) >= version.parse("2.1.0"):
-        # Model is already initialized, so give FSDP a do-nothing init function
-        # so it doesn't re-initialize the parameters
-        def dummy_init_fn(module: torch.nn.Module) -> None:
-            module.to_empty(device=get_default_device(), recurse=False)
-
-        param_init_fn = dummy_init_fn
-    else:
-        param_init_fn = None
-
-    # Set up device mesh for hybrid sharding in order to specify which nodes are assoicated to a given model replica
-    device_mesh = None
-    hybrid_sharding_fsdp_kwargs = {}
-    if cfg.fsdp.sharding_strategy in (ShardingStrategy.HYBRID_SHARD, ShardingStrategy._HYBRID_SHARD_ZERO2):
-        if version.parse(torch.__version__) < version.parse("2.2.0"):
-            # Device mesh was not added to PyTorch until v2.2.0
-            raise OLMoConfigurationError(
-                "OLMo training does not correctly support hybrid sharding before torch 2.2.0"
-            )
-
-        from torch.distributed.device_mesh import init_device_mesh
-
-        num_model_replicas = cfg.fsdp.hybrid_sharding_num_model_replicas or (
-            get_world_size() // get_local_world_size()
-        )
-
-        if num_model_replicas <= 0:
-            raise OLMoConfigurationError("fsdp.hybrid_sharding_num_model_replicas must be a positive integer")
-
-        if get_world_size() % num_model_replicas != 0:
-            raise OLMoConfigurationError("fsdp.hybrid_sharding_num_model_replicas must divide world size")
-
-        device_mesh = init_device_mesh("cuda", (num_model_replicas, get_world_size() // num_model_replicas))
-        hybrid_sharding_fsdp_kwargs["device_mesh"] = device_mesh
-
-    fsdp_model = FSDP(
-        olmo_model,
-        sharding_strategy=cfg.fsdp.sharding_strategy,
-        mixed_precision=cfg.fsdp_precision,
-        auto_wrap_policy=wrap_policy,
-        use_orig_params=cfg.fsdp.use_orig_params,  # needed for compile and some of our optimizer/parameter metrics
-        limit_all_gathers=True,
-        device_id=get_local_rank(),
-        sync_module_states=sync_module_states,
-        param_init_fn=param_init_fn,
-        **hybrid_sharding_fsdp_kwargs,
+    # Fill in some runtime data so it will be recorded when we save the config
+    cfg.runtime_data = RuntimeData(
+        hostname=socket.gethostname(),
+        date=datetime.now().strftime("%m/%d/%Y, %H:%M"),
+        world_size=get_world_size(),
+        beaker_experiment_id=os.environ.get("BEAKER_EXPERIMENT_ID"),
+        beaker_experiment_url=(None if beaker_logger is None else
+                               beaker_logger.beaker.experiment.url(beaker_logger.experiment)),
+        wandb_url=wandb.run.get_url() if wandb.run else None,
+        wandb_id=wandb.run.id if wandb.run else None,
+        args=" ".join(sys.argv),
+        resuming_from=start_from if is_resuming else None
     )
 
-    # This can prevent OOMs if loading a LLM checkpoint, presumably due to
-    # reducing memory fragmentation
-    torch.cuda.empty_cache()
-    log.info(f"Peak GPU Memory (MB) after FSDP: {int(peak_gpu_memory() or 0)}")
-    log.info("Model:")
-    log.info(fsdp_model)
+    # Save the config in a top-level file, note if we are resuming
+    # the current config will still be saved next to new checkpoints
+    if not cfg.dry_run and not is_resuming:
+        if get_global_rank() == 0:
+            write_file(cfg.save_folder, "config.yaml",
+                       OmegaConf.to_yaml(cfg, resolve=True), cfg.save_overwrite)
+    barrier()
 
-    # Construct optimizer and learning rate scheduler.
-    optim = build_optimizer(cfg, fsdp_model)
-    if cfg.model.vision_backbone is not None:
-        scheduler = build_multimodal_scheduler(cfg)
-    else:
-        scheduler = build_scheduler(cfg)
-
-    # Consolidate components into `Trainer` object.
     with Trainer(
         cfg=cfg,
         epoch=cfg.epoch,
         model=olmo_model,
         fsdp_model=fsdp_model,
+        checkpointer=checkpointer,
         optim=optim,
         scheduler=scheduler,
         train_loader=train_loader,
         device=device,
         evaluators=evaluators,
         inference_evaluators=inf_evaluators,
-        beaker_logger=beaker_logger
+        beaker_logger=beaker_logger,
     ) as trainer:
-        if not cfg.dry_run and not cfg.no_pre_train_checkpoint and cfg.load_path is None:
-            checkpoint_type = (
-                CheckpointType.sharded if cfg.save_num_checkpoints_to_keep != 0 else CheckpointType.unsharded
-            )
 
-            # We save a checkpoint up-front to make sure this won't fail (due to disk space or whatever).
-            log.info("Saving pre-train checkpoint...")
-            checkpoint_path, local_checkpoint_cache = trainer.save_checkpoint(checkpoint_type=checkpoint_type)
-            log.info(f"Checkpoint saved to {checkpoint_path}")
-
-            # And they we verify that we can load it.
-            log.info("Attempting to load pre-train checkpoint...")
-            trainer.restore_checkpoint(
-                checkpoint_path,
-                checkpoint_type=checkpoint_type,
-                local_cache=local_checkpoint_cache,
-                load_dataloader_state=False,
-            )
-            log.info("Checkpoint successfully loaded")
-
-            # But now we can remove it so we don't take up unnecessary space.
-            log.info("Removing pre-train checkpoint...")
-            trainer.remove_checkpoint(checkpoint_type=checkpoint_type)
-            log.info("Successfully removed checkpoint")
-
-        if cfg.load_path is not None:
-            log.info(f"Loading checkpoint from {cfg.load_path}...")
-            trainer.restore_checkpoint(
-                cfg.load_path,
-                load_optimizer_state=not cfg.reset_optimizer_state,
-                load_trainer_state=not cfg.reset_trainer_state,
-                load_dataloader_state=cfg.save_dataloader_state and not cfg.reset_dataloader_state,
-                sharded_checkpointer=cfg.load_path_sharded_checkpointer,
-            )
+        # Load the starting checkpoint if there is one
+        if start_from:
+            if start_from_unsharded:
+                log.info(f"Loading unsharded checkpoint from {start_from}...")
+                load_model_state_unsharded(start_from, fsdp_model)
+            else:
+                log.info(f"Loading sharded checkpoint from {start_from}...")
+                trainer.restore_checkpoint(
+                    start_from,
+                    load_optimizer_state=not reset_opt,
+                    load_trainer_state=not reset_train,
+                )
             log.info("Checkpoint successfully loaded")
 
             # If we have to, set a new scheduler:
-            if cfg.reset_optimizer_state and not cfg.reset_trainer_state:
+            if reset_opt and not reset_train:
                 trainer.scheduler = BoltOnWarmupScheduler.wrap(
                     trainer.scheduler,
                     trainer.global_step,
                     int(trainer.global_step + cfg.scheduler.t_warmup),
                 )
+            barrier()
 
-        if cfg.force_save_unsharded:
-            log.info("Saving unsharded checkpoint...")
-            checkpoint_path, _ = trainer.save_checkpoint(checkpoint_type=CheckpointType.unsharded)
-            log.info(f"Unsharded checkpoint saved to {checkpoint_path}")
-
+        # Ready to start training
         if not cfg.dry_run:
             log.info("Starting training...")
             trainer.fit()
@@ -380,20 +319,7 @@ def main(cfg: TrainConfig) -> None:
 
 
 if __name__ == "__main__":
-    try:
-        mp.set_start_method("spawn", force=True)
-    except RuntimeError as e:
-        print(f"failed to set multiprocessing start method: {e}")
-    log.info(f"Multiprocessing start method set to '{mp.get_start_method()}'")
-
-    # Initialize process group.
-    dist.init_process_group(backend="nccl")
-    log.info("Process group initialized")
-
-    prepare_cli_environment()
-    log.info("CLI environment prepared")
-
-    add_cached_path_clients()
+    prepare_torchrun_environment()
 
     try:
         yaml_path, args_list = sys.argv[1], sys.argv[2:]
@@ -401,4 +327,4 @@ if __name__ == "__main__":
         raise OLMoCliError(f"Usage: {sys.argv[0]} [CONFIG_PATH] [OPTIONS]")
 
     cfg = TrainConfig.load(yaml_path, [clean_opt(s) for s in args_list])
-    main(cfg)
+    run_trainer(cfg)

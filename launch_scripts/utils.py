@@ -1,33 +1,39 @@
 import logging
-import re
-from os.path import join
-from pathlib import Path
 from typing import Dict
 
-import numpy as np
+from olmo.data.data_formatter import DataFormatter
+from olmo.data.data_loader import DataConfig
+from olmo.data.model_preprocessor import MultiModalPreprocessorConfig
+from olmo.eval.inf_evaluator import InfDatasetEvaluatorConfig, EvaluatorConfig
+from olmo.nn.image_vit import VitConfig
+from olmo.nn.llm import LlmConfig, AttentionType, LayerNormType
+from olmo.nn.model import ModelConfig
+from olmo.tokenizer import TokenizerConfig
+from olmo.nn.vision_backbone import VisionBackboneConfig
 
-from olmo import DataConfig, DatasetEvaluatorConfig
-from olmo.config import EvaluatorConfig, ModelConfig, VisionBackboneConfig, \
-    TokenizerConfig, LayerNormType, AttentionType
-from olmo.io import file_exists, list_directory
+log = logging.getLogger(__name__)
+
 
 DEBUG_MODEL = ModelConfig(
-    d_model=128,
-    n_heads=2,
-    n_layers=1,
-    max_sequence_length=4096,
-    additional_vocab_size=128,
-    vocab_size=152064,
-    rope=True,
-    embedding_size=None,
-    weight_tying=False,
+    llm=LlmConfig(
+        d_model=128,
+        n_heads=2,
+        n_layers=1,
+        max_sequence_length=4096,
+        additional_vocab_size=128,
+        vocab_size=152064,
+        rope=True,
+        embedding_size=None,
+        weight_tying=False,
+        tokenizer=TokenizerConfig(
+            identifier="Qwen/Qwen2-7B",
+        )
+    ),
     vision_backbone=VisionBackboneConfig(
-        image_num_layers=1,
+        vit=VitConfig(image_num_layers=1)
     ),
-    crop_mode="resize",
-    tokenizer=TokenizerConfig(
-        identifier="Qwen/Qwen2-7B",
-    ),
+    data_formatter=DataFormatter(),
+    mm_preprocessor=MultiModalPreprocessorConfig(crop_mode="resize", max_crops=1)
 )
 
 
@@ -75,7 +81,7 @@ def get_evaluator(name) -> EvaluatorConfig:
         raise NotImplementedError(name)
 
 
-def get_evaluation(name, seq_len, max_examples, num_workers=2, device_batch_size=None) -> DatasetEvaluatorConfig:
+def get_evaluation(name, seq_len, max_examples, num_workers=2, device_batch_size=None) -> InfDatasetEvaluatorConfig:
     """Gets the default evaluation config for task (or task:split string) `name`"""
     if ":" in name:
         name, split = name.split(":")
@@ -129,23 +135,23 @@ def get_evaluation(name, seq_len, max_examples, num_workers=2, device_batch_size
         max_new_tokens = 12
 
     ds = DataConfig(
-        dataset=task_name, sequence_length=seq_len,
-        for_inference=True,
-        split=split, shuffle=True, drop_last=True,
-        num_workers=num_workers, pad="to_max", pin_memory=True
+        dataset=task_name, sequence_length=seq_len, split=split, shuffle=True,
+        num_workers=num_workers, pad="to_max", pin_memory=True, drop_last=False,
+        seed=691203
     )
 
-    return DatasetEvaluatorConfig(
+    return InfDatasetEvaluatorConfig(
         max_examples=max_examples,
-        device_eval_batch_size=device_batch_size,
+        device_batch_size=device_batch_size,
         max_new_tokens=max_new_tokens,
-        mm_evaluator=evaluator,
+        evaluator=evaluator,
         label="ai2_diagram" if "ai2_diagram" in name else name,
-        data=ds
+        data=ds,
+        console_log_interval="${console_log_interval}"  # Use log interval in top-level config
     )
 
 
-DEFAULT_VISION_BACKBONE = VisionBackboneConfig(
+DEFAULT_VISION_BACKBONE = VitConfig(
     image_model_type="openai",
     image_default_input_size=(336, 336),
     image_patch_size=14,
@@ -166,7 +172,7 @@ DEFAULT_VISION_BACKBONE = VisionBackboneConfig(
 )
 
 
-SIGLIP_VISION_BACKBONE = VisionBackboneConfig(
+SIGLIP_VISION_BACKBONE = VitConfig(
     image_model_type="siglip",
     image_default_input_size=(378, 378),
     image_patch_size=14,
@@ -188,7 +194,7 @@ SIGLIP_VISION_BACKBONE = VisionBackboneConfig(
 )
 
 
-DINOV2_LARGE_336_VISION_BACKBONE = VisionBackboneConfig(
+DINOV2_LARGE_336_VISION_BACKBONE = VitConfig(
     image_model_type="dino",
     image_default_input_size=(336, 336),
     image_patch_size=14,
@@ -210,7 +216,7 @@ DINOV2_LARGE_336_VISION_BACKBONE = VisionBackboneConfig(
 )
 
 
-METACLIP_L14_336_VISION_BACKBONE = VisionBackboneConfig(
+METACLIP_L14_336_VISION_BACKBONE = VitConfig(
     image_model_type="openai",
     image_default_input_size=(336, 336),
     image_patch_size=14,
@@ -232,7 +238,7 @@ METACLIP_L14_336_VISION_BACKBONE = VisionBackboneConfig(
 )
 
 
-OLMOE = ModelConfig(
+OLMOE = LlmConfig(
     d_model=2048,
     n_heads=16,
     n_layers=16,
@@ -242,7 +248,6 @@ OLMOE = ModelConfig(
     rope=True,
     rope_full_precision=True,
     rope_theta=10000.0,
-    low_cpu_fsdp=True,
     attention_type='sdpa',
     attention_layer_norm=True,
     residual_dropout=0.1,
@@ -262,9 +267,6 @@ OLMOE = ModelConfig(
     additional_vocab_size=128,
     new_embedding_init_range=0.02,
     weight_tying=False,
-    init_device='meta',
-    precision='amp_bf16',
-    image_projector='mlp',
     normalize_input_embeds=False,
     use_position_ids=True,
 
@@ -284,12 +286,10 @@ OLMOE = ModelConfig(
     tokenizer=TokenizerConfig(
         identifier='allenai/OLMoE-1B-7B-0924',
     ),
-    image_pooling_2d="attention_meanq",
-    image_padding_embed="pad_and_partial_pad",
 )
 
 
-OLMO_1024_PREVIEW = ModelConfig(
+OLMO_1024_PREVIEW = LlmConfig(
     d_model=4096,
     n_heads=32,
     n_kv_heads=None,
@@ -299,7 +299,6 @@ OLMO_1024_PREVIEW = ModelConfig(
     mlp_hidden_size=22016,
     activation_type="swiglu",
     block_type="sequential",
-    block_group_size=1,
     rope=True,
     rope_full_precision=True,
     rope_theta=500000,
@@ -318,22 +317,15 @@ OLMO_1024_PREVIEW = ModelConfig(
     additional_vocab_size=128,
     weight_tying=False,
     attention_type=AttentionType.sdpa,
-    init_device="meta",
-    init_fn="normal",
-    init_std=0.02,
-    init_cutoff_factor=3.0,
-    precision="amp_bf16",
     norm_after=True,
     tokenizer=TokenizerConfig(
         identifier="allenai/dolma2-tokenizer",
     ),
     embedding_dropout=0,
-    image_pooling_2d="attention_meanq",
-    image_padding_embed="pad_and_partial_pad",
 )
 
 
-QWEN2_7B = ModelConfig(
+QWEN2_7B = LlmConfig(
     vocab_size=152064,
     max_sequence_length=4096,
     residual_dropout=0,
@@ -357,11 +349,9 @@ QWEN2_7B = ModelConfig(
     tokenizer=TokenizerConfig(
         identifier="Qwen/Qwen2-7B",
     ),
-    image_pooling_2d="attention_meanq",
-    image_padding_embed="pad_and_partial_pad",
 )
 
-QWEN25_15B = ModelConfig(
+QWEN25_15B = LlmConfig(
     vocab_size=151936,
     max_sequence_length=4096,
     residual_dropout=0,
@@ -385,12 +375,10 @@ QWEN25_15B = ModelConfig(
     tokenizer=TokenizerConfig(
         identifier="Qwen/Qwen2.5-1.5B",
     ),
-    image_pooling_2d="attention_meanq",
-    image_padding_embed="pad_and_partial_pad",
 )
 
 
-QWEN25_3B = ModelConfig(
+QWEN25_3B = LlmConfig(
     vocab_size=151936,
     max_sequence_length=4096,
     residual_dropout=0,
@@ -414,14 +402,10 @@ QWEN25_3B = ModelConfig(
     tokenizer=TokenizerConfig(
         identifier="Qwen/Qwen2.5-3B",
     ),
-    image_pooling_2d="attention_meanq",
-    image_padding_embed="pad_and_partial_pad",
 )
 
 
-QWEN2_72B = ModelConfig(
-    init_device="meta",
-    low_cpu_fsdp=True,
+QWEN2_72B = LlmConfig(
     additional_vocab_size=128,
     vocab_size=152064,
     max_sequence_length=4096,
@@ -445,8 +429,6 @@ QWEN2_72B = ModelConfig(
     tokenizer=TokenizerConfig(
         identifier="Qwen/Qwen2-72B",
     ),
-    image_pooling_2d="attention_meanq",
-    image_padding_embed="pad_and_partial_pad",
 )
 
 
@@ -464,7 +446,7 @@ DEFAULT_LOAD_PATHS = {
 }
 
 
-VISION_BACKBONES: Dict[str, VisionBackboneConfig] = {
+VISION_BACKBONES: Dict[str, VitConfig] = {
     "openai": DEFAULT_VISION_BACKBONE,
     "siglip": SIGLIP_VISION_BACKBONE,
     "dinov2_large_336": DINOV2_LARGE_336_VISION_BACKBONE,
@@ -472,7 +454,7 @@ VISION_BACKBONES: Dict[str, VisionBackboneConfig] = {
 }
 
 
-LLMS: Dict[str, ModelConfig] = {
+LLMS: Dict[str, LlmConfig] = {
     "olmoe": OLMOE,
     "olmo_1024_preview": OLMO_1024_PREVIEW,
     "qwen2_7b": QWEN2_7B,
@@ -482,21 +464,3 @@ LLMS: Dict[str, ModelConfig] = {
 }
 
 
-def select_checkpoint(checkpoint):
-    """
-    returns the latest unsharded is checkpoint directory in `checkpoint`, returns `checkpoint`
-    if it is already a checkpoint dir
-    """
-    if file_exists(join(checkpoint, "model.pt")):
-        return checkpoint
-    candidates = []
-    for file in list_directory(checkpoint, include_files=False):
-        match = re.match(".*/step([0-9]+)-unsharded.*", file)
-        if match:
-            candidates.append((file, int(match.group(1))))
-    if len(candidates) == 0:
-        raise FileNotFoundError(f"{checkpoint} does not contain a model file or any "
-                                f"unsharded checkpoint")
-    checkpoint_dir = max(candidates, key=lambda x: x[1])[0]
-    logging.info(f"Selected {checkpoint_dir} as oldest checkpoint in {checkpoint_dir}")
-    return checkpoint_dir

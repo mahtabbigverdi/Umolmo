@@ -3,6 +3,7 @@ import logging
 import os
 import re
 import shutil
+import tempfile
 import time
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -19,7 +20,6 @@ import requests
 from cached_path import cached_path
 from cached_path.schemes import S3Client, SchemeClient, add_scheme_client
 
-from .aliases import PathOrStr
 from .exceptions import OLMoEnvironmentError, OLMoNetworkError
 
 log = logging.getLogger(__name__)
@@ -29,6 +29,9 @@ log = logging.getLogger(__name__)
 ############################################
 # Ported from
 # https://github.com/allenai/OLMo-core/blob/2b43d59bff28f83fba39980a4ad9e53041ba56f7/src/olmo_core/utils.py
+
+
+PathOrStr = Union[str, os.PathLike]
 
 
 def normalize_path(path: PathOrStr) -> str:
@@ -165,6 +168,52 @@ def upload(source: PathOrStr, target: str, save_overwrite: bool = False):
         )
     else:
         raise NotImplementedError(f"Upload not implemented for '{parsed.scheme}' scheme")
+
+
+def write_file(dir: PathOrStr, fname: str, contents: Union[str, bytes, Callable], save_overwrite) -> PathOrStr:
+    """
+    Write something to a file in a local or remote directory.
+
+    :param dir: The path/URL of the directory to write the file to.
+    :param fname: The name of the file to write, relative to ``dir``.
+    :param contents: The contents of the file to write, or function that writes to a byte file handle
+    :param save_overwrite: Overwrite any existing file.
+
+    :returns: The path/URL of the file.
+    """
+    dir = normalize_path(dir)
+    fname = normalize_path(fname)
+
+    if not is_url(dir):
+        Path(dir).mkdir(exist_ok=True, parents=True)
+
+    mode = "wt" if isinstance(contents, str) else "wb"
+    tmp_path = None
+    try:
+        tmp_file = tempfile.NamedTemporaryFile(
+            mode=mode, delete=False, dir=None if is_url(dir) else dir
+        )
+        tmp_path = Path(tmp_file.name)
+        if isinstance(contents, (str, bytes)):
+            tmp_file.write(contents)
+        else:
+            contents(tmp_file)
+        tmp_file.flush()
+
+        target: PathOrStr
+        if is_url(dir):
+            target = f"{dir}/{fname}"
+            upload(tmp_path, target, save_overwrite=save_overwrite)
+        else:
+            target = Path(dir) / fname
+            if target.is_file() and not save_overwrite:
+                raise FileExistsError(target)
+            target.parent.mkdir(exist_ok=True, parents=True)
+            tmp_path.rename(target)
+        return target
+    finally:
+        if tmp_path is not None:
+            tmp_path.unlink(missing_ok=True)
 
 
 def copy_file(source: PathOrStr, target: PathOrStr, save_overwrite: bool = False):

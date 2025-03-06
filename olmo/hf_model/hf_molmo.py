@@ -3,9 +3,10 @@ import argparse
 import torch
 from transformers import AutoModelForCausalLM
 
-from olmo import Molmo, ModelConfig, ActivationType, LayerNormType, TokenizerConfig, \
+from olmo import Molmo
+from olmo.model_config import ModelConfig, LayerNormType, ActivationType, ImagePooling2DType, \
     VisionBackboneConfig
-from olmo.config import ImagePooling2DType
+from olmo.tokenizer import TokenizerConfig
 
 
 def load_hf_model(repo_id) -> Molmo:

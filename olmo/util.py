@@ -6,30 +6,32 @@ import os
 import re
 import socket
 import sys
+import uuid
+
 import torch.multiprocessing as mp
 import time
 import warnings
 from datetime import datetime
-from enum import Enum
-from os.path import abspath
+from os.path import abspath, join
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Union, List
 
 import numpy as np
 import rich
+from datasets import disable_progress_bar as disable_hf_datasets_progress_bar
 from rich.console import Console, ConsoleRenderable
 from rich.highlighter import NullHighlighter
 from rich.progress import Progress
 from rich.text import Text
 from rich.traceback import Traceback
 
-from .aliases import PathOrStr
+from .config import StrEnum
 from .exceptions import (
     OLMoCliError,
     OLMoEnvironmentError,
     OLMoError,
 )
-from .io import add_cached_path_clients
+from .io import add_cached_path_clients, PathOrStr, file_exists, dir_is_empty, list_directory
 from .torch_util import get_global_rank, get_local_rank, get_node_rank, is_distributed, \
     barrier, init_process_group
 
@@ -53,19 +55,6 @@ def compute_hash(data: str) -> str:
 def load_json(file):
     with open(file, "r") as f:
         return json.load(f)
-
-
-class StrEnum(str, Enum):
-    """
-    This is equivalent to Python's :class:`enum.StrEnum` since version 3.11.
-    We include this here for compatibility with older version of Python.
-    """
-
-    def __str__(self) -> str:
-        return self.value
-
-    def __repr__(self) -> str:
-        return f"'{str(self)}'"
 
 
 _log_extra_fields: Dict[str, Any] = {}
@@ -112,11 +101,7 @@ def setup_logging(log_filter_type: LogFilterType = LogFilterType.rank0_only) -> 
     logging.setLogRecordFactory(log_record_factory)
 
     handler: logging.Handler
-    if (
-        os.environ.get("OLMo_NONINTERACTIVE", False)
-        or os.environ.get("DEBIAN_FRONTEND", None) == "noninteractive"
-        or not sys.stdout.isatty()
-    ):
+    if not is_interactive():
         handler = logging.StreamHandler(sys.stdout)
         formatter = logging.Formatter(
             "%(asctime)s\t%(hostname)s:%(local_rank)s\t%(name)s:%(lineno)s\t%(levelname)s\t%(message)s"
@@ -218,7 +203,11 @@ def filter_warnings():
         category=FutureWarning,
         message="You are using `torch.load` with `weights_only=False`.*",
     )
-
+    warnings.filterwarnings(
+        action="ignore",
+        category=UserWarning,
+        message="`_get_pg_default_device` will be deprecated,",
+    )
     # Allow GCP to use personal credentials without filling the logs with warning
     # warnings.filterwarnings(
     #     action="ignore",
@@ -253,9 +242,20 @@ def prepare_torchrun_environment():
     log.info(f"Set up torchrun environment")
 
 
+def is_interactive() -> bool:
+    return not (
+        os.environ.get("OLMo_NONINTERACTIVE", False)
+        or os.environ.get("DEBIAN_FRONTEND", None) == "noninteractive"
+        or not sys.stdout.isatty()
+    )
+
+
 def prepare_cli_environment(log_filter_type: Optional[LogFilterType] = None):
     if log_filter_type is None:
         log_filter_type = LogFilterType(os.environ.get("LOG_FILTER_TYPE", "rank0_only"))
+    if (get_global_rank() != 0) or not is_interactive():
+        disable_hf_datasets_progress_bar()
+
     rich.reconfigure(width=max(rich.get_console().width, 180), soft_wrap=True)
     setup_logging(log_filter_type=log_filter_type)
     install_excepthook()
@@ -563,3 +563,34 @@ def setup_s3_credentials():
                 f.write(os.environ["AWS_CREDENTIALS"])
         os.environ["AWS_SHARED_CREDENTIALS_FILE"] = abspath(credentials)
         barrier()
+
+
+def generate_uuid() -> str:
+    """
+    Generate a unique ID.
+    """
+    return str(uuid.uuid4())
+
+
+def select_checkpoint(checkpoint, prefer_unsharded=False):
+    """
+    returns the latest is checkpoint directory in `checkpoint`, returns `checkpoint`
+    if it is already a checkpoint dir
+    """
+    if file_exists(join(checkpoint, "model.pt")) or not dir_is_empty(join(checkpoint, "model_and_optim")):
+        return checkpoint
+
+    # This might be a model save directory, check for checkpoints based on the filename
+    candidates = []
+    for file in list_directory(checkpoint, include_files=False):
+        match = re.match(".*/step([0-9]+)(-unsharded)?.*", file)
+        if match:
+            sharded_val = bool(match.group(2))
+            if not prefer_unsharded:
+                sharded_val = not sharded_val
+            candidates.append((file, int(match.group(1)), sharded_val))
+    if len(candidates) == 0:
+        raise FileNotFoundError(f"{checkpoint} is not a checkpoint, and does not contain any checkpoints")
+    checkpoint_dir = max(candidates, key=lambda x: x[1:])[0]
+    log.info(f"Selected {checkpoint_dir} as oldest checkpoint in {checkpoint_dir}")
+    return checkpoint_dir

@@ -24,6 +24,7 @@ from .vqa import vqa_score, anls_metric, relaxed_correctness, \
     a_okvqa_score, select_mc_option, mmmu_score, real_world_qa_score, math_vista_score
 from ..html_utils import build_html_table, postprocess_prompt, BoxesToVisualize, \
     get_html_image_with_boxes
+from ..io import write_file
 from ..torch_util import (
     get_global_rank,
     get_world_size, barrier,
@@ -220,9 +221,12 @@ class SavePredictions(Evaluator):
                     dist.gather_object(json_data, None)
 
             if get_global_rank() == 0:
-                json_file = os.path.join(self.output_dir, self.get_file_name(step, None) + ".json")
-                with open(json_file, "w") as f:
-                    json.dump(json_data, f)
+                write_file(
+                    self.output_dir,
+                    self.get_file_name(step, None) + ".json",
+                    json.dumps(json_data, indent=2),
+                    save_overwrite=True
+                )
                 log.info("done saving json")
         return metrics
 

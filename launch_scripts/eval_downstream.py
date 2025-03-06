@@ -1,23 +1,18 @@
 """Evals a checkpoint on multiple tasks, run this script with 'torchrun'."""
 import argparse
 import logging
-import re
 from dataclasses import replace
-from pathlib import Path
 from typing import cast
 
-import torch.distributed as dist
-import torch.multiprocessing as mp
 from omegaconf import OmegaConf
 
-from olmo.config import EvalConfig, FSDPConfig, FSDPWrapStrategy, FSDPPrecision
-from olmo.torch_util import get_world_size
+from launch_scripts.utils import get_evaluation
+from utils import select_checkpoint
+from olmo.train.trainer_config import FSDPConfig, FSDPWrapStrategy, FSDPPrecision
 from olmo.util import (
-    add_cached_path_clients,
     clean_opt,
-    prepare_cli_environment, prepare_torchrun_environment, )
-from scripts.mm_eval import ModelEvaluator
-from launch_scripts.utils import get_evaluation, select_checkpoint
+    prepare_torchrun_environment, )
+from scripts.mm_eval import ModelEvaluator, DatasetEvaluatorConfig, EvalConfig
 
 log = logging.getLogger(__name__)
 
@@ -58,7 +53,6 @@ def main():
         args.max_crops = 36
         args.seq_len = 4096
         args.eval_name = "36crop"
-
 
     tasks = []
     for task in args.tasks:
@@ -123,34 +117,34 @@ def main():
 
     inf_evaluators = []
     for task in tasks:
-        eval_config = get_evaluation(
-            name=task, seq_len=args.seq_len,
-            max_examples=args.max_examples,
-        )
-        if args.max_new_tokens:
-            eval_config = replace(eval_config, max_new_tokens=args.max_new_tokens)
-        inf_evaluators.append(replace(
-            eval_config,
-            mm_evaluator=replace(
-                eval_config.mm_evaluator,
+        base_config = get_evaluation(name=task, seq_len=args.seq_len, max_examples=args.max_examples)
+        eval_config = DatasetEvaluatorConfig(
+            label=base_config.label,
+            data=base_config.data,
+            generative_evaluator=replace(
+                base_config.evaluator,
                 n_to_log=4,
                 num_wandb_examples=300,
                 save_predictions="_default",
             ),
+            device_batch_size=args.device_batch_size,
+            subset_num_batches=None,
+            max_examples=args.max_examples,
+            max_new_tokens=args.max_new_tokens or base_config.max_new_tokens,
             save_to_checkpoint_dir=args.save_to_checkpoint_dir,
             save_dir=args.save_dir,
-            eval_name=args.eval_name,
             skip_if_metrics_cached=not args.overwrite,
-        ))
+        )
+        inf_evaluators.append(eval_config)
 
-    checkpoint_dir = select_checkpoint(args.checkpoint)
+    checkpoint_dir = "debug" if args.checkpoint == "debug" else select_checkpoint(args.checkpoint)
 
     cfg = EvalConfig(
         max_crops_override=args.max_crops,
         evaluations=inf_evaluators,
         load_path=checkpoint_dir,
         seed=args.seed,
-        device_inf_eval_batch_size=args.device_batch_size,
+        device_batch_size=args.device_batch_size,
         pbar=args.pbar,
         console_log_interval=10,
         fsdp=FSDPConfig(
@@ -162,7 +156,7 @@ def main():
     config = OmegaConf.create(cfg)
     config.merge_with_dotlist([clean_opt(arg) for arg in other_args])
     cfg = cast(EvalConfig, OmegaConf.to_object(config))
-    ModelEvaluator(cfg).run()
+    cfg.build().run()
 
 
 if __name__ == "__main__":

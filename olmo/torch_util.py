@@ -1,8 +1,10 @@
+from __future__ import annotations
+
 import gc
 import os
 import logging
 from datetime import timedelta
-from typing import Optional, TypeVar, List, Tuple
+from typing import Optional, TypeVar, List, Tuple, MutableMapping
 
 import torch
 import torch.distributed as dist
@@ -195,3 +197,21 @@ def freeze_parameters_by_name(model: torch.nn.Module, freeze_names: Tuple[str], 
             freeze_module(module_or_param)
         else:
             module_or_param.requires_grad = False
+
+
+class BufferCache(dict, MutableMapping[str, torch.Tensor]):
+    """
+    Cache for attention biases and other things that would normally be stored as buffers.
+    We avoid using buffers because we've run into various issues doing so with FSDP.
+    In general it appears the way FSDP handles buffers is not well-defined.
+    It doesn't shard them but apparently it does synchronize them across processes, which we want to avoid
+    since (A) it isn't necessary, and (B) we sometimes have `-inf` in these biases which might get turned into
+    NaNs when they're synchronized due to casting or some other issue.
+    """
+
+
+def get_element_size(dtype: torch.dtype) -> int:
+    """
+    Get the size in bytes of element of the given PyTorch dtype.
+    """
+    return torch._utils._element_size(dtype)  # type: ignore

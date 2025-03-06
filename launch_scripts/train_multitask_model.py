@@ -4,23 +4,21 @@ from os.path import join, exists
 from typing import cast, List
 
 import omegaconf
-import torch.distributed as dist
-import torch.multiprocessing as mp
 from omegaconf import OmegaConf
 
-from launch_scripts.utils import get_evaluation, DEBUG_MODEL, select_checkpoint
-from olmo import TrainConfig
-from olmo.config import DataConfig, \
-    ModelConfig, WandbConfig, OptimizerConfig, OptimizerType, SchedulerConfig, SchedulerType, \
-    BatchDivisor, SpeedMonitorConfig, ActivationCheckpointingStrategy, FSDPConfig, FSDPWrapStrategy, \
-    FSDPPrecision, RootSizeMixture, CompilerConfig
-from olmo.torch_util import get_world_size
-from olmo.util import (
-    add_cached_path_clients,
-    clean_opt,
-    prepare_cli_environment, prepare_torchrun_environment,
+from launch_scripts.utils import get_evaluation, DEBUG_MODEL
+from utils import select_checkpoint
+from olmo.train.optim import OptimizerType, OptimizerConfig, SchedulerConfig, SchedulerType
+from olmo.train.trainer_config import (
+    WandbConfig, BatchDivisor, SpeedMonitorConfig,
+    FSDPConfig, FSDPWrapStrategy,
+    FSDPPrecision, CompilerConfig, TrainConfig
 )
-from scripts.train import main as train
+from olmo.nn.model import ModelConfig
+from olmo.data.data_loader import DataConfig, RootSizeMixture
+from olmo.torch_util import get_world_size
+from olmo.util import clean_opt, prepare_torchrun_environment
+from scripts.train import run_trainer as train
 
 log = logging.getLogger("train")
 
@@ -133,6 +131,7 @@ if __name__ == "__main__":
 
     debug = args.checkpoint in ["debug", "debug2"]
     if debug:
+        checkpoint = None
         model_cfg = DEBUG_MODEL
         if args.checkpoint == "debug2":
             model_cfg.max_crops = 12
@@ -187,6 +186,7 @@ if __name__ == "__main__":
         evaluation = get_evaluation(
             task,
             args.inf_seq_len,
+            device_batch_size=args.device_inf_batch_size,
             max_examples=max_inf_examples,
             num_workers=num_workers
         )
@@ -214,7 +214,6 @@ if __name__ == "__main__":
         save_dataloader_state=False,
         data=DataConfig(
             root_size_mixture=root_size_mixture,
-            for_inference=False,
             shuffle=True,
             split="train",
             drop_last=True,
@@ -258,13 +257,11 @@ if __name__ == "__main__":
             precision=FSDPPrecision.float
         ),
         load_path=None,
-        initial_model_checkpoint=None if "debug" in checkpoint else checkpoint,
+        initial_model_checkpoint=checkpoint,
         save_interval=4000,
         save_num_checkpoints_to_keep=1,
         save_interval_unsharded="${max_duration}",
         global_train_batch_size=global_batch_size,
-        device_inf_eval_batch_size=args.device_inf_batch_size,
-        device_eval_batch_size=args.device_eval_batch_size,
         device_train_microbatch_size=args.device_train_batch_size,
         time_limit=None,
         max_duration=duration,
@@ -276,11 +273,9 @@ if __name__ == "__main__":
         speed_monitor=SpeedMonitorConfig(window_size=20),
         softmax_auxiliary_loss=True,
         softmax_auxiliary_loss_scale=1e-4,
-        activation_checkpointing=ActivationCheckpointingStrategy.whole_layer,
         eval_interval=eval_interval,
         inf_eval_interval=inf_eval_interval,
         inf_evaluators=evaluations,
-        eval_subset_num_batches=eval_subset_batches,
         evaluators=[]
     )
 

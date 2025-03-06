@@ -17,27 +17,18 @@ import numpy as np
 import requests
 import urllib3
 from PIL import ImageFile
-from urllib3.exceptions import MaxRetryError
 from urllib3.util import Retry
 from requests.adapters import HTTPAdapter
 
 from tqdm import tqdm
 
 from olmo.data.dataset import DATA_HOME
-from olmo.data.model_preprocessor import setup_pil
 from olmo.io import _s3_get_bytes_range
 
-if "PIXMO_IMAGE_DIR" in os.environ:
-    PIXMO_IMAGES = os.environ["PIXMO_IMAGE_DIR"]
-elif DATA_HOME is not None:
-    PIXMO_IMAGES = join(DATA_HOME, "pixmo_images")
-else:
-    PIXMO_IMAGES = None
-"""Where to save downloaded images"""
 
-
-PIL.Image.MAX_IMAGE_PIXELS = None
-ImageFile.LOAD_TRUNCATED_IMAGES = True
+def setup_pil():
+    PIL.Image.MAX_IMAGE_PIXELS = None
+    ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 
 @dataclasses.dataclass

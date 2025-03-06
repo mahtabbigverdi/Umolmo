@@ -1,6 +1,6 @@
 """Class to build metrics for a model based on the loss"""
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from itertools import islice
 from typing import Any, Dict, Optional, Union, List
 
@@ -9,14 +9,18 @@ from torch.utils.data import DataLoader
 from torchmetrics import Metric, MeanMetric
 from tqdm import tqdm
 
-from olmo.torch_util import move_to_device
+from olmo.config import BaseConfig, D
+from olmo.data.data_loader import DataConfig
+from olmo.nn.model import ModelConfig
+from olmo.torch_util import move_to_device, get_world_size
 
-__all__ = ["LossDatasetEvaluator", "LossMetrics"]
+__all__ = ["LossMetrics", "LossDatasetEvaluator", "LossDatasetEvaluatorConfig"]
 
 log = logging.getLogger(__name__)
 
 
 class LossMetrics:
+    """Aggregates loss metrics from a forward pass"""
 
     def __init__(self, device, collect_outputs=False):
         self.eval_metrics: Dict[str, MeanMetric] = dict(
@@ -64,13 +68,13 @@ class LossMetrics:
 
 @dataclass
 class LossDatasetEvaluator:
-    """Evaluates a model on a dataset based its on its loss and other forward-pass metrics"""
+    """Evaluates a model on a dataset based on its loss and other forward-pass metrics"""
     label: str
     eval_loader: DataLoader
     evaluator: LossMetrics
     num_batches: Optional[int] = None
-    z_loss: Optional[float] = None
     console_log_interval: Optional[int] = None
+    z_loss: Optional[float] = None
 
     def run(self, model, device, autocast_precision, loss_fn=None, pbar=False):
         # Reset metrics.
@@ -113,10 +117,58 @@ class LossDatasetEvaluator:
                     compute_z_loss=self.z_loss is not None, z_loss_scale=self.z_loss,
                 )
                 self.evaluator.update(batch, model_out, ce_loss, z_loss)
-            # Log to console.
-            if eval_step + 1 == num_eval_batches or (eval_step + 1) % self.console_log_interval == 0:
-                log.info(f"[eval_step={eval_step + 1}/{num_eval_batches}]")
 
-        if hasattr(self.eval_loader, "reset"):
-            self.eval_loader.reset()  # Reset the loader to free RAM
+            if self.console_log_interval and not pbar:
+                if eval_step + 1 == num_eval_batches or (eval_step + 1) % self.console_log_interval == 0:
+                    log.info(f"[eval_step={eval_step + 1}/{num_eval_batches}]")
         return self.evaluator.compute()
+
+
+@dataclass
+class LossDatasetEvaluatorConfig(BaseConfig):
+    """Configuration for a loss evaluation"""
+
+    label: Optional[str] = None
+    """Label to use when logging"""
+
+    data: DataConfig = field(default_factory=DataConfig)
+    """Data to evaluate on"""
+
+    device_batch_size: int = 4
+    """Batch size, can default to the eval batch set set in the global config"""
+
+    subset_num_batches: Optional[int] = None
+    """Number of matches to run on, if None use the entire dataset"""
+
+    max_examples: Optional[int] = None
+    """Max number of examples to run on, overrides `subset_num_batches`"""
+
+    console_log_interval: Optional[int] = None
+    """How often to log progress to console"""
+
+    @classmethod
+    def update_legacy_settings(cls, config: D) -> D:
+        config = config.copy()
+        if getattr(config, "mm_evaluator", None):
+            config.generative_evaluator = LossDatasetEvaluatorConfig.update_legacy_settings(config.generative_evaluator)
+        if getattr(config, "data", None):
+            config.data = DataConfig.update_legacy_settings(config.data)
+        return config
+
+    def build_dataset_evaluator(self, model_config: ModelConfig, device) -> LossDatasetEvaluator:
+        eval_loader = self.data.build_eval_dataloader(
+            model_config, self.device_batch_size, for_inference=False)
+        if self.max_examples is not None:
+            num_batches = self.max_examples // self.device_batch_size*get_world_size()
+        elif self.subset_num_batches is not None:
+            num_batches = self.subset_num_batches
+        else:
+            num_batches = len(eval_loader)
+
+        return LossDatasetEvaluator(
+            label=self.label,
+            eval_loader=eval_loader,
+            evaluator=LossMetrics(device),
+            num_batches=num_batches,
+            console_log_interval=self.console_log_interval
+        )

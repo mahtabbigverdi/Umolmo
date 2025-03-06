@@ -6,14 +6,16 @@ import logging
 import math
 import os
 import random
+import re
 import shutil
 import time
 from collections import deque, defaultdict
 from dataclasses import dataclass, field
-from itertools import islice
+from os.path import join
 from pathlib import Path
 from pstats import SortKey
 from typing import Any, Callable, Deque, Dict, List, Optional, Tuple, Union
+import torch.distributed.checkpoint.state_dict as dist_cp_sd
 
 import numpy as np
 import torch
@@ -21,30 +23,26 @@ import torch.distributed as dist
 import torch.nn.functional as F
 import wandb
 from beaker import Beaker, Experiment
+from omegaconf import OmegaConf
 from packaging import version
+from torch import nn
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.utils.data import DataLoader
 from torch.utils.data import IterableDataset
-from torchmetrics import Metric
 from wandb.sdk.data_types.base_types.wb_value import WBValue
 
-from .aliases import PathOrStr
-from .checkpoint import Checkpointer, FullCheckpointer, build_sharded_checkpointer
-from .config import (
-    BlockType,
-    CheckpointType,
-    SchedulerUnits,
-    ShardedCheckpointerType,
-    SpeedMonitorConfig,
+from .distributed_checkpointing import save_state_dict
+from .trainer_config import (
+    SpeedMonitorConfig, CheckpointType,
     TrainConfig, BatchDivisor,
 )
-from .data.iterable_dataset_mixture import IterableDatasetMixture
-from .eval.inf_evaluator import InfDatasetEvaluator
-from .eval.loss_evaluator import LossMetrics, LossDatasetEvaluator
-from .exceptions import OLMoConfigurationError
-from .model import Molmo
-from .optim import Optimizer, Scheduler
-from .torch_util import (
+from olmo.data.iterable_dataset_mixture import IterableDatasetMixture
+from olmo.eval.inf_evaluator import InfDatasetEvaluator
+from olmo.eval.loss_evaluator import LossMetrics, LossDatasetEvaluator
+from olmo.exceptions import OLMoConfigurationError
+from olmo.nn.model import Molmo
+from olmo.train.optim import Optimizer, Scheduler, SchedulerUnits
+from olmo.torch_util import (
     barrier,
     gc_cuda,
     get_fs_local_rank,
@@ -54,7 +52,10 @@ from .torch_util import (
     peak_gpu_memory,
     synchronize_flag,
     synchronize_value, get_local_world_size, )
-from .io import upload
+from olmo.io import upload, PathOrStr, clear_directory, is_url, normalize_path
+from ..config import StrEnum
+from ..nn.checkpointer import Checkpointer
+from ..util import flatten_lists
 
 try:
     from megablocks.layers.moe import (
@@ -65,13 +66,14 @@ try:
 except ImportError:
     pass
 
-__all__ = ["SpeedMonitor", "LRMonitor", "Trainer"]
 
 log = logging.getLogger(__name__)
 
 
 @dataclass
 class BeakerLogger:
+    WANDB_REGEX = ".*( \(https://wandb.ai/.*\))$"
+
     beaker: Beaker
     experiment: Experiment
     log_interval: int
@@ -81,9 +83,14 @@ class BeakerLogger:
         self.beaker.experiment.set_description(self.experiment, f"[Init] " + self.original_description)
 
     def add_wandb(self, wandb_url):
-        if wandb_url not in self.original_description:
-            self.original_description = self.original_description + " (" + wandb_url + ")"
-            self.beaker.experiment.set_description(self.experiment, f"[Init] " + self.original_description)
+        # If there is an old wandb url (such as if the run was preempted), remove it
+        match = re.fullmatch(self.WANDB_REGEX, self.original_description)
+        if match:
+            log.info(f"Removing old wandb url {wandb_url}")
+            self.original_description = self.original_description[:match.group(1).start]
+
+        self.original_description = self.original_description + " (" + wandb_url + ")"
+        self.beaker.experiment.set_description(self.experiment, f"[Init] " + self.original_description)
 
     def log_progress(self, on_step, target_step):
         self.beaker.experiment.set_description(self.experiment, f"[{100*on_step/target_step:04.1f}%] " + self.original_description)
@@ -207,6 +214,7 @@ class Trainer:
     device: torch.device
     evaluators: List[LossDatasetEvaluator]
     inference_evaluators: List[InfDatasetEvaluator]
+    checkpointer: Checkpointer
     epoch: Optional[int] = None
     global_step: int = 0
 
@@ -232,6 +240,19 @@ class Trainer:
 
     def __post_init__(self):
         self._train_metrics = LossMetrics(self.device)
+
+        # If save folder is a local directory, make sure we're using a shared filesystem.
+        if not is_url(self.cfg.save_folder) and get_fs_local_rank() != get_global_rank():
+            raise OLMoConfigurationError(
+                "Checkpointing to a local directory requires a shared filesystem. "
+                "If you do have a shared filesystem please set the env var 'OLMO_SHARED_FS=1' "
+                "or set 'FS_LOCAL_RANK' to the global rank for each process."
+            )
+
+        if self.evaluators:
+            assert len(set(x.label for x in self.evaluators)) == len(self.evaluators), "non-unique eval labels"
+        if self.inference_evaluators:
+            assert len(set(x.label for x in self.inference_evaluators)) == len(self.inference_evaluators), "non-unique eval lbels"
 
         if self.cfg.fused_loss:
             import flash_attn
@@ -285,10 +306,13 @@ class Trainer:
 
             self.loss_fn = fused_loss_fn
 
-        if self.model.config.block_type == BlockType.moe:
-            from .config import config_to_moe_args
-
-            self.moe_args = config_to_moe_args(self.cfg.model)            
+        if self.cfg.compile_loss:
+            if torch.cuda.is_available():
+                self._loss_fn = torch.compile(self.loss_fn, dynamic=False)
+            else:
+                log.warning(
+                    "compile_loss was set to True, but CUDA is not available. Compiling only works with CUDA. Ignoring."
+                )
 
     @property
     def dataset(self) -> IterableDataset:
@@ -456,11 +480,6 @@ class Trainer:
                 "vit": self.cfg.optimizer.vit_learning_rate,
                 "llm": self.cfg.optimizer.llm_learning_rate,
             }
-            weight_decay_dict = {
-                "connector": self.cfg.optimizer.connector_weight_decay,
-                "vit": self.cfg.optimizer.vit_weight_decay,
-                "llm": self.cfg.optimizer.llm_weight_decay,
-            }
             for group in self.optim.param_groups:
                 group_name = group["group_name"]
                 component_name = group_name.split("_")[0]
@@ -471,8 +490,6 @@ class Trainer:
                     group_name,
                 )
                 group["lr"] = new_learning_rate
-                if "weight_decay" in group and group["weight_decay"] > 0.0:
-                    group["weight_decay"] = weight_decay_dict[component_name]
         else:
             new_learning_rate = self.scheduler.get_lr(
                 self.cfg.optimizer.learning_rate, self.scheduler_current, self.scheduler_max
@@ -480,8 +497,6 @@ class Trainer:
             for group in self.optim.param_groups:
                 group["lr"] = new_learning_rate
                 group["initial_lr"] = self.cfg.optimizer.learning_rate
-                if "weight_decay" in group and group["weight_decay"] > 0.0:
-                    group["weight_decay"] = self.cfg.optimizer.weight_decay
 
         # RNG states.
         if "rng" in state_dict and state_dict.get("world_size", get_world_size()) == get_world_size():
@@ -501,237 +516,71 @@ class Trainer:
         torch.set_rng_state(rng_state["torch"])
         torch.cuda.set_rng_state(rng_state["cuda"])
 
-    def _save_checkpoint(
-        self, checkpointer: Checkpointer, checkpoint_type: CheckpointType
-    ) -> Tuple[PathOrStr, Optional[PathOrStr]]:
+    def save_checkpoint(self, checkpoint_type: CheckpointType) -> Tuple[PathOrStr, Optional[PathOrStr]]:
         if checkpoint_type == CheckpointType.sharded:
             suffix = ""
             current_checkpoints = self.checkpoints
-            link_latest = get_fs_local_rank() == 0
             num_checkpoints_to_keep = self.cfg.save_num_checkpoints_to_keep
-        elif checkpoint_type == CheckpointType.unsharded:
-            suffix = "-unsharded"
-            current_checkpoints = self.unsharded_checkpoints
-            link_latest = get_global_rank() == 0
-            num_checkpoints_to_keep = self.cfg.save_num_unsharded_checkpoints_to_keep
         elif checkpoint_type == CheckpointType.sharded_ephemeral:
             suffix = ""
             current_checkpoints = self.ephemeral_checkpoints
-            link_latest = get_fs_local_rank() == 0
             num_checkpoints_to_keep = 1
         else:
             raise NotImplementedError(checkpoint_type)
 
+        self.last_sharded_checkpoint_step = self.global_step
+
         # Zero-gradients to avoid gathering them.
         self.optim.zero_grad(set_to_none=True)
 
-        checkpoint_dir = Path(self.cfg.save_folder) / f"step{self.global_step}{suffix}"
-        remote_checkpoint_dir: Optional[str] = None
-        if self.cfg.remote_save_folder is not None:
-            remote_checkpoint_dir = f"{self.cfg.remote_save_folder.rstrip('/')}/{checkpoint_dir.name}"
+        checkpoint_dir = join(self.cfg.save_folder, f"step{self.global_step}{suffix}")
         current_checkpoints.append(checkpoint_dir)
 
-        # Save the checkpoint.
-        try:
-            checkpointer.save_checkpoint(
-                checkpoint_dir,
-                self.fsdp_model,
-                self.optim,
-                self.trainer_state_dict(),
-                upload_to=remote_checkpoint_dir,
-            )
-        except FileExistsError:
-            raise OLMoConfigurationError(
-                f"Checkpoint for step {self.global_step} already exists, use --save-overwrite to overwrite it"
-            )
-
-        if link_latest:
-            # Link to 'latest'.
-            latest_path = Path(self.cfg.save_folder) / f"latest{suffix}"
-            latest_path.unlink(missing_ok=True)
-            try:
-                latest_path.symlink_to(checkpoint_dir.name, target_is_directory=True)
-            except FileExistsError:
-                # Same as above, caught when another (file-system) local rank 0 has already made the 'latest' symlink.
-                # This can happen when nodes are saving to a common NFS drive but otherwise have distinct
-                # file-systems.
-                if latest_path.resolve().name != checkpoint_dir.name:
-                    raise
-
-        # Save multimodal dataset checkpoint
-        if self.cfg.save_dataloader_state:
-            data_ckpt_fname = checkpoint_dir / f"rank{get_global_rank()}_data.bin"
-            self.dataset.save(data_ckpt_fname)
-
-        # Remove old checkpoints.
-        if num_checkpoints_to_keep > 0:
-            while len(current_checkpoints) > num_checkpoints_to_keep:
-                self.remove_checkpoint(0, checkpoint_type)
-
-        barrier()
-
-        if remote_checkpoint_dir is not None:
-            return remote_checkpoint_dir, checkpoint_dir
-        else:
-            return checkpoint_dir, None
-
-    def save_sharded_checkpoint(self) -> Tuple[PathOrStr, Optional[PathOrStr]]:
-        checkpointer = build_sharded_checkpointer(self.cfg)
-        result = self._save_checkpoint(checkpointer, CheckpointType.sharded)
-        self.last_sharded_checkpoint_step = self.global_step
-        return result
-
-    def save_ephemeral_checkpoint(self) -> Tuple[PathOrStr, Optional[PathOrStr]]:
-        checkpointer = build_sharded_checkpointer(self.cfg)
-        result = self._save_checkpoint(checkpointer, CheckpointType.sharded_ephemeral)
-        self.last_sharded_checkpoint_step = self.global_step
-        return result
-
-    def _remove_sharded_checkpoint(self, idx: int, checkpoints: List[Path]):
-        oldest_checkpoint = checkpoints.pop(idx)
-        barrier()
-        if get_fs_local_rank() == 0 and oldest_checkpoint.is_dir():
-            shutil.rmtree(oldest_checkpoint, ignore_errors=True)
-            latest_path = Path(self.cfg.save_folder) / "latest"
-            if latest_path.resolve() == oldest_checkpoint.resolve():
-                latest_path.unlink()
-        barrier()
-
-    def remove_sharded_checkpoint(self, idx: int = 0):
-        self._remove_sharded_checkpoint(idx, self.checkpoints)
-
-    def remove_ephemeral_checkpoint(self, idx: int = 0):
-        self._remove_sharded_checkpoint(idx, self.ephemeral_checkpoints)
-
-    def restore_sharded_checkpoint(
-        self,
-        load_path: PathOrStr,
-        local_cache: Optional[PathOrStr] = None,
-        *,
-        load_optimizer_state: bool = True,
-        load_trainer_state: bool = True,
-        sharded_checkpointer: Optional[ShardedCheckpointerType] = None,
-    ):
-        # Zero-gradients to avoid gathering them.
-        self.optim.zero_grad(set_to_none=True)
-        checkpointer = build_sharded_checkpointer(self.cfg, name=sharded_checkpointer)
-        trainer_state = checkpointer.restore_checkpoint(
-            load_path,
+        self.checkpointer.save(
+            checkpoint_dir,
             self.fsdp_model,
             self.optim,
-            local_cache=local_cache,
-            load_optimizer_state=load_optimizer_state,
+            self.trainer_state_dict(),
+            config=self.cfg,
         )
-        if load_trainer_state:
-            self.load_trainer_state_dict(trainer_state)
+
+        self.remove_checkpoints(current_checkpoints, num_checkpoints_to_keep)
         barrier()
-
-    def save_unsharded_checkpoint(self) -> Tuple[PathOrStr, Optional[PathOrStr]]:
-        checkpointer = FullCheckpointer(self.cfg)
-        result = self._save_checkpoint(checkpointer, CheckpointType.unsharded)
-        self.last_unsharded_checkpoint_step = self.global_step
-        return result
-
-    def remove_unsharded_checkpoint(self, idx: int = 0):
-        barrier()
-        oldest_checkpoint = self.unsharded_checkpoints.pop(idx)
-        if get_global_rank() == 0 and oldest_checkpoint.is_dir():
-            shutil.rmtree(oldest_checkpoint, ignore_errors=True)
-            latest_path = Path(self.cfg.save_folder) / "latest-unsharded"
-            if latest_path.resolve() == oldest_checkpoint.resolve():
-                latest_path.unlink()
-        barrier()
-
-    def restore_unsharded_checkpoint(
-        self,
-        load_path: PathOrStr,
-        local_cache: Optional[PathOrStr] = None,
-        *,
-        load_optimizer_state: bool = True,
-        load_trainer_state: bool = True,
-    ):
-        # Zero-gradients to avoid gathering them.
-        self.optim.zero_grad(set_to_none=True)
-        checkpointer = FullCheckpointer(self.cfg)
-        trainer_state = checkpointer.restore_checkpoint(
-            load_path,
-            self.fsdp_model,
-            self.optim,
-            local_cache=local_cache,
-            load_optimizer_state=load_optimizer_state,
-        )
-        if load_trainer_state:
-            self.load_trainer_state_dict(trainer_state)
-        barrier()
-
-    def save_checkpoint(
-        self, checkpoint_type: CheckpointType = CheckpointType.sharded
-    ) -> Tuple[PathOrStr, Optional[PathOrStr]]:
-        result: Tuple[PathOrStr, Optional[PathOrStr]]
-        if checkpoint_type == CheckpointType.sharded:
-            result = self.save_sharded_checkpoint()
-        elif checkpoint_type == CheckpointType.unsharded:
-            result = self.save_unsharded_checkpoint()
-        elif checkpoint_type == CheckpointType.sharded_ephemeral:
-            result = self.save_ephemeral_checkpoint()
-        else:
-            raise NotImplementedError(checkpoint_type)
-
         gc_cuda()
-        return result
+        return checkpoint_dir
 
     def restore_checkpoint(
         self,
         load_path: PathOrStr,
-        *,
-        checkpoint_type: Optional[CheckpointType] = None,
         local_cache: Optional[PathOrStr] = None,
         load_optimizer_state: bool = True,
         load_trainer_state: bool = True,
-        load_dataloader_state: bool = True,
-        sharded_checkpointer: Optional[ShardedCheckpointerType] = None,
     ):
-        if checkpoint_type == CheckpointType.unsharded or (
-            checkpoint_type is None and str(load_path).rstrip("/").endswith("-unsharded")
-        ):
-            self.restore_unsharded_checkpoint(
-                load_path,
-                local_cache=local_cache,
-                load_optimizer_state=load_optimizer_state,
-                load_trainer_state=load_trainer_state,
-            )
-        elif checkpoint_type == CheckpointType.sharded or checkpoint_type is None:
-            self.restore_sharded_checkpoint(
-                load_path,
-                local_cache=local_cache,
-                load_optimizer_state=load_optimizer_state,
-                load_trainer_state=load_trainer_state,
-                sharded_checkpointer=sharded_checkpointer,
-            )
-        elif checkpoint_type is not None:
-            raise NotImplementedError(checkpoint_type)
-
-        if load_dataloader_state:
-            # Restore multimodal dataset checkpoint
-            logging.info("Loading dataloader state...")
-            data_ckpt_fname = os.path.join(load_path, f"rank{get_global_rank()}_data.bin")
-            self.dataset.restore(data_ckpt_fname)
-            logging.info("Done")
-
+        trainer_state = self.checkpointer.load(
+            load_path, self.fsdp_model, self.optim,
+            load_optimizer_state=load_optimizer_state,
+            load_trainer_state=load_trainer_state,
+        )
+        if load_trainer_state:
+            self.load_trainer_state_dict(trainer_state)
         gc_cuda()
+        barrier()
 
-    def remove_checkpoint(self, idx: int = 0, checkpoint_type: CheckpointType = CheckpointType.sharded):
-        if checkpoint_type == CheckpointType.sharded:
-            self.remove_sharded_checkpoint(idx=idx)
-        elif checkpoint_type == CheckpointType.unsharded:
-            self.remove_unsharded_checkpoint(idx=idx)
-        elif checkpoint_type == CheckpointType.sharded_ephemeral:
-            self.remove_ephemeral_checkpoint(idx=idx)
-        else:
-            raise NotImplementedError(checkpoint_type)
+    def _remove_sharded_checkpoint(self, idx: int, checkpoints: List[Path]):
+        oldest_checkpoint = checkpoints.pop(idx)
+        barrier()
+        if get_fs_local_rank() == 0:
+            clear_directory(oldest_checkpoint)
+        barrier()
+
+    def remove_checkpoints(self, current_checkpoints, num_checkpoints_to_keep):
+        if num_checkpoints_to_keep > 0:
+            while len(current_checkpoints) > num_checkpoints_to_keep:
+                self._remove_sharded_checkpoint(0, current_checkpoints)
 
     def move_to_device(self, batch, device):
         return move_to_device(batch, device)
+
 
     def get_labels(self, batch: Dict[str, Any]) -> torch.Tensor:
         # Labels are just input IDs shifted to the left (first item is ignored).
@@ -780,7 +629,6 @@ class Trainer:
 
     def train_batch(self, batch: Dict[str, Any], compute_metrics) -> Tuple[torch.Tensor, Optional[Dict]]:
         # Split into micro-batches.
-        # logging.info(str({k: str(v.shape) for k, v in batch.items()}))
         micro_batches = self.split_batch(batch)
         loss_masks = batch["loss_masks"] * (batch["loss_masks"] > 0)
         if self.cfg.batch_divisor == BatchDivisor.global_batch:
@@ -843,16 +691,38 @@ class Trainer:
         else:
             metrics = {}
 
-        # Clip gradient norms and collect param/gradient/optim metrics.
         should_log_optim_metrics_this_step = self.should_log_optim_metrics_this_step()
-        optim_metrics = self.optim.clip_grads_and_collect_metrics(
-            self.global_step,
-            collect_param_metrics=should_log_optim_metrics_this_step,
-            # passing this process group here ensures metrics are reduced correctly when we're using
-            # HYBRID sharding.
-            process_group=self.fsdp_model.process_group,
-            multi_modal=self.cfg.model.vision_backbone is not None,
-        )
+        if should_log_optim_metrics_this_step:
+            # No current implementation of per-parameter metrics because I am not sure the
+
+            # old very complex one makes sense anymore
+            raise NotImplementedError()
+
+        # Clip gradient norms
+        param_norm_groups = defaultdict(list)
+        for group in self.optim.param_groups:
+            group_name = group["group_name"]
+            if group_name.endswith("_no_decay"):
+                norm_group_name = group_name[:-len("_no_decay")]
+            elif group_name.endswith("_decay"):
+                norm_group_name = group_name[:-len("_decay")]
+            else:
+                raise ValueError(f"Cannot parse group name {group_name}")
+            param_norm_groups[norm_group_name].append(group)
+
+        optim_metrics = {}
+        grad_norms = []
+        for group_name, groups in param_norm_groups.items():
+            if any(group.get("max_grad_norm_ratio") is not None for group in groups):
+                raise NotImplementedError()
+            if all(group.get("max_grad_norm") is None for group in groups):
+                continue
+            max_grad_norm = groups[0]["max_grad_norm"]
+            assert all(group["max_grad_norm"] == max_grad_norm for group in groups)
+            params = flatten_lists(group["params"] for group in groups)
+            grad_norm = nn.utils.clip_grad_norm_(params, max_norm=max_grad_norm)
+            grad_norms.append(grad_norm)
+            optim_metrics[f"{group_name}_grad_norm"] = grad_norm
 
         # Adjust the learning rate.
         if self.cfg.model.vision_backbone is not None:
@@ -900,15 +770,6 @@ class Trainer:
             metrics[f"optim/{key}"] = value.item()
         self.cur_train_loss = loss.item()
         self.min_train_loss = min(self.min_train_loss, self.cur_train_loss)
-
-        # Maybe collect post-step optimizer-specific metrics.
-        if should_log_optim_metrics_this_step:
-            optim_metrics = self.optim.get_post_step_metrics(
-                self.fsdp_model, process_group=self.fsdp_model.process_group
-            )
-            for key, value in optim_metrics.items():
-                metrics[f"optim/{key}"] = value.item()
-
         return metrics
 
     def eval_step(self, batch: Dict[str, Any], evaluator: LossMetrics) -> None:
@@ -991,6 +852,8 @@ class Trainer:
         optim_log_interval = self.cfg.optimizer.metrics_log_interval
         if optim_log_interval is None:
             optim_log_interval = self.cfg.wandb.log_interval
+        elif optim_log_interval <= 0:
+            return False
         else:
             optim_log_interval = max(optim_log_interval, self.cfg.wandb.log_interval)
         return self.global_step % optim_log_interval == 0
@@ -1011,7 +874,7 @@ class Trainer:
         for evaluator in self.inference_evaluators:
             t0 = time.perf_counter()
             log.info(f"Running evaluation for '{evaluator.label}'...")
-            dataset_metrics = evaluator.evaluate_model(
+            dataset_metrics = evaluator.run(
                 self.fsdp_model,
                 device=self.device,
                 autocast_precision=self.cfg.autocast_precision,
@@ -1023,16 +886,18 @@ class Trainer:
             log.info(f"Eval for '{evaluator.label}' done in {time.perf_counter()-t0:0.1f} seconds")
         return all_metrics
 
-    def eval(self) -> Dict[str, Any]:
-        # Zero gradients and set model to 'eval' mode.
+    def loss_eval(self) -> Dict[str, Union[float, WBValue]]:
         self.optim.zero_grad(set_to_none=True)
         self.fsdp_model.eval()
-
         eval_metrics = {}
         for evaluator in self.evaluators:
             t0 = time.perf_counter()
             log.info(f"Running evaluation for '{evaluator.label}'...")
-            metrics = evaluator.run(self.fsdp_model, self.device, autocast_precision=self.cfg.autocast_precision, loss_fn=self.loss_fn)
+            metrics = evaluator.run(
+                self.fsdp_model, self.device,
+                autocast_precision=self.cfg.autocast_precision,
+                loss_fn=self.loss_fn
+            )
             eval_metrics.update({f"{evaluator.label}/{k}": v for k, v in metrics.items()})
             log.info(f"Eval for '{evaluator.label}' done in {time.perf_counter()-t0:0.1f} seconds")
             self.log_metrics_to_console(f"{evaluator.label}", metrics)
@@ -1097,7 +962,7 @@ class Trainer:
             gc.disable()
 
         if self.cfg.load_path is not None and self.global_step > 0 and self.cfg.eval_on_load:
-            eval_metrics = self.eval()
+            eval_metrics = self.loss_eval()
             if wandb.run is not None:
                 wandb.log(eval_metrics, step=self.global_step)
 
@@ -1105,7 +970,6 @@ class Trainer:
         self.fsdp_model.train()
 
         # Initialize monitors.
-        assert self.cfg.device_train_batch_size is not None
         speed_monitor = SpeedMonitor(self.cfg.speed_monitor)
         lr_monitor = LRMonitor(self.optim)
         batch_monitor = BatchStatsMonitor()
@@ -1141,10 +1005,6 @@ class Trainer:
                 p.export_chrome_trace(
                     str(trace_path := (profiler_output_dir / f"{p.step_num}.chrome_trace.json.gz"))
                 )
-                if self.cfg.remote_save_folder is not None:
-                    upload_folder = f"{self.cfg.remote_save_folder.rstrip('/')}/profiler"
-                    log.info(f"Tracing complete, uploading results to '{upload_folder}'...")
-                    upload(trace_path, f"{upload_folder}/{trace_path.name}")
 
             from torch.profiler import ProfilerActivity
 
@@ -1189,7 +1049,7 @@ class Trainer:
                     # overhead. So for now I'm putting these assertions here so if the assumption is violated it will
                     # fail loudly.
                     batch_size, seq_len = batch["input_ids"].shape
-                    assert seq_len <= self.cfg.model.max_sequence_length
+                    assert seq_len <= self.cfg.model.llm.max_sequence_length
                     assert (
                         batch_size == (self.cfg.global_train_batch_size // get_world_size()),
                         f"batch size is {batch_size}, but bs={self.cfg.global_train_batch_size} among {get_local_world_size()} world size"
@@ -1215,15 +1075,9 @@ class Trainer:
 
                     # Maybe collect other metrics.
                     if should_log_this_step:
-                        # Speed metrics.
                         metrics.update(speed_monitor.check())
-                        # System metrics.
                         metrics.update(self.system_metrics())
-
-                        # Learning rate metrics.
                         metrics.update(batch_monitor.check(self.device))
-
-                        # Learning rate metrics.
                         metrics.update(lr_monitor.check())
 
                     # Do beaker logging
@@ -1231,6 +1085,7 @@ class Trainer:
                         self.beaker_logger and
                         (
                             (self.global_step % self.beaker_logger.log_interval == 0) or
+                            # Log on step 0 so we can tell the model is done initializing
                             (self.beaker_logger.log_interval == 0 and self.global_step == 1)
                         )
                     ):
@@ -1270,12 +1125,11 @@ class Trainer:
                         )
                     ):
                         log.info("Saving checkpoint...")
-                        checkpoint_path, _ = self.save_checkpoint(CheckpointType.sharded)
+                        checkpoint_path = self.save_checkpoint(CheckpointType.sharded)
                         log.info(f"Checkpoint saved to {checkpoint_path}")
 
                         # Remove any ephemeral checkpoints.
-                        while self.ephemeral_checkpoints:
-                            self.remove_ephemeral_checkpoint()
+                        self.remove_checkpoints(self.ephemeral_checkpoints, 0)
 
                         # Reset speed monitor so that we don't count the time taken to save checkpoints.
                         speed_monitor.reset()
@@ -1294,25 +1148,13 @@ class Trainer:
                         # Reset speed monitor so that we don't count the time taken to save checkpoints.
                         speed_monitor.reset()
 
-                    # Maybe save unsharded checkpoint.
-                    if (
-                        save_checkpoints
-                        and self.cfg.save_interval_unsharded is not None
-                        and self.global_step % self.cfg.save_interval_unsharded == 0
-                        and self.cfg.save_num_unsharded_checkpoints_to_keep != 0
-                    ):
-                        log.info("Saving unsharded checkpoint...")
-                        checkpoint_path, _ = self.save_checkpoint(CheckpointType.unsharded)
-                        log.info(f"Unsharded checkpoint saved to {checkpoint_path}")
-
-                        # Reset speed monitor so that we don't count the time taken to save checkpoints.
-                        speed_monitor.reset()
-
                     # Maybe run evaluations.
                     last_step = stop_at and (self.global_step >= stop_at)
                     if not cancel_initiated and self.cfg.eval_interval > 0 and (
-                        self.global_step % self.cfg.eval_interval == 0 or last_step):
-                        eval_metrics = self.eval()
+                        self.global_step % self.cfg.eval_interval == 0 or
+                        (last_step and self.cfg.eval_on_last_step)
+                    ):
+                        eval_metrics = self.loss_eval()
 
                         # Log metrics to W&B.
                         if wandb.run is not None:
@@ -1327,7 +1169,8 @@ class Trainer:
                     if not cancel_initiated and (
                         self.inference_evaluators and
                         self.cfg.inf_eval_interval and
-                        (self.global_step % self.cfg.inf_eval_interval == 0 or last_step)
+                        (self.global_step % self.cfg.inf_eval_interval == 0 or
+                         (self.cfg.eval_on_last_step and last_step))
                     ):
                         eval_metrics = self.inference_eval()
 
@@ -1375,18 +1218,16 @@ class Trainer:
         # Save final checkpoint.
         if save_checkpoints:
             if (
-                self.cfg.save_interval_unsharded is not None
-                and self.last_unsharded_checkpoint_step != self.global_step
-            ):
-                log.info("Saving final unsharded model checkpoint...")
-                checkpoint_path, _ = self.save_checkpoint(CheckpointType.unsharded)
-                log.info(f"Unsharded checkpoint saved to {checkpoint_path}")
-            elif (
                 self.cfg.save_num_checkpoints_to_keep != 0
                 and self.last_sharded_checkpoint_step != self.global_step
             ):
                 log.info("Saving final checkpoint...")
-                checkpoint_path, _ = self.save_checkpoint(CheckpointType.sharded)
+                checkpoint_path = self.save_checkpoint(CheckpointType.sharded)
+                log.info(f"Checkpoint saved to {checkpoint_path}")
+            if self.cfg.save_final_unsharded_checkpoint:
+                log.info("Saving final unsharded checkpoint...")
+                checkpoint_path = join(normalize_path(self.cfg.save_folder), f"step{self.global_step}-unsharded")
+                self.checkpointer.save_unsharded(checkpoint_path, self.fsdp_model, None, self.cfg)
                 log.info(f"Checkpoint saved to {checkpoint_path}")
 
     def close(self, exit_code: int = 0) -> None:

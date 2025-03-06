@@ -225,7 +225,7 @@ def get_task(preprocessor, name, is_training, for_inference,
 
     if preprocessor is not None:
         style = style_override if style_override else task_spec.style
-        preprocessor = preprocessor.get_preprocessor(
+        preprocessor = preprocessor.build_preprocessor(
             is_training, for_inference, style, include_metadata)
         preprocessor = [preprocessor]
     else:

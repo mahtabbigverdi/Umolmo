@@ -9,6 +9,8 @@ from typing import Optional, Dict, Tuple
 
 import numpy as np
 
+from olmo.config import BaseConfig
+
 GENERAL_PROMPTS_V1 = {
     "short_answer": [
         "Answer this question very briefly\n{question}",
@@ -295,7 +297,7 @@ DEMO_STYLES = [
 
 
 @dataclasses.dataclass
-class DataFormatter:
+class DataFormatter(BaseConfig):
     """Applies prompt templates and adds system prompts to construct text inputs/output"""
     prompt_templates: str = "none"  # How to template prompts for examples
     message_format: str = "none"  # How to format messages

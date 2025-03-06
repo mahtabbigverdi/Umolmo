@@ -10,7 +10,7 @@ import seqio
 import gin
 
 from .data_utils import flatten_parts, stateless_permutation, stateless_shuffle
-from .. import config
+from .. import train_config
 
 
 def get_from_dict(data, keys):

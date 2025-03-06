@@ -12,7 +12,8 @@ from olmo.checkpoint import (
     OlmoCoreCheckpointer,
     TorchLegacyShardedCheckpointer,
 )
-from olmo.config import ShardedCheckpointerType, TrainConfig, ModelConfig
+from olmo.train_config import ShardedCheckpointerType, TrainConfig
+from olmo.model_config import ModelConfig
 from olmo.safetensors_util import state_dict_to_safetensors_file
 
 logger = logging.getLogger(__name__)

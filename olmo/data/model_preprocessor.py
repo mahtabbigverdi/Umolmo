@@ -1,6 +1,7 @@
 import dataclasses
 import math
 import warnings
+from io import BytesIO
 from typing import List, Optional, Union, Any, Tuple
 
 import PIL
@@ -8,7 +9,11 @@ from PIL import ImageFile
 from PIL import ImageOps
 
 from olmo import tokenizer
+from olmo.config import BaseConfig
+from olmo.data.dataset import DATA_HOME
+from olmo.io import get_bytes_range
 from olmo.tokenizer import get_special_token_ids
+from olmo.nn.vision_backbone import VisionBackboneConfig
 
 
 def setup_pil():
@@ -31,6 +36,9 @@ from transformers.image_utils import (
 from olmo.data.data_formatter import DataFormatter
 
 
+DEFAULT_IMAGE_PATH = "/weka/oe-training-default/mm-olmo/torch_datasets"
+
+
 def load_image(image_path):
     setup_pil()  # Call here so the setting is applied in multi-processing contexts
     if isinstance(image_path, PIL.Image.Image):
@@ -48,9 +56,20 @@ def load_image(image_path):
         assert image_path.dtype == np.uint8, "Image should have uint8 type"
         return image_path
     else:
-        with PIL.Image.open(image_path) as image:
-            return load_image(image)
+        # This a bit of hack to handle cases where the image path was hard-coded
+        # into the dataset to the weka path
+        if DATA_HOME != DEFAULT_IMAGE_PATH and DEFAULT_IMAGE_PATH in image_path:
+            image_path = image_path.replace(DEFAULT_IMAGE_PATH, DATA_HOME)
 
+        # Ignore image loading warning
+        with warnings.catch_warnings(record=True) as w:
+            if image_path.startswith("gs://"):
+                image_bytes = get_bytes_range(image_path, 0, None)
+                with PIL.Image.open(BytesIO(image_bytes)) as image:
+                    return load_image(image)
+            else:
+                with PIL.Image.open(image_path) as image:
+                    return load_image(image)
 
 def resize_and_pad(
     image,
@@ -270,6 +289,58 @@ def batch_pixels_to_patches(array, patch_size):
         array = np.transpose(array, [0, 1, 3, 2, 4, 5])
         array = np.reshape(array, [n_crops, h_patches*w_patches, patch_size*patch_size*c])
         return array
+
+
+@dataclasses.dataclass
+class MultiModalPreprocessorConfig(BaseConfig):
+    crop_mode: str = "resize"
+    """How to divide the images into crops"""
+
+    max_crops: int = 6
+    """Max number of crops to produce per an image"""
+
+    overlap_margins: Tuple[int, int] = (4, 4)
+    """Overlap margins for overlapping crops modes"""
+
+    use_col_tokens: bool = True
+    """Use column tokens in the image tokens"""
+
+    loss_token_weighting: Optional[str] = None
+    """Automatically weight multi-message per image input"""
+
+    def get_max_crops(self) -> int:
+        """Max numbers of that can be built for one image"""
+        if self.crop_mode == "resize":
+            return 1
+        elif "resize" in self.crop_mode:
+            # low_res crop + the high-res crops
+            return 1 + self.max_crops
+        else:
+            return self.max_crops
+
+    def build(self, tokenizer, vision_backbone_config: VisionBackboneConfig):
+        h, w = vision_backbone_config.llm_patches_per_crop()
+        vit = vision_backbone_config.vit
+        return MultiModalPreprocessor(
+            tokenizer,
+            loss_token_weighting=self.loss_token_weighting,
+
+            normalize=vit.normalize,
+            crop_mode=self.crop_mode,
+            max_crops=self.max_crops,
+            overlap_margins=self.overlap_margins,
+            resize=vit.resize_mode,
+            use_col_tokens=self.use_col_tokens,
+
+            base_image_input_size=vit.image_default_input_size,
+            image_pooling_w=vision_backbone_config.image_pooling_w,
+            image_pooling_h=vision_backbone_config.image_pooling_h,
+            image_token_length_w=w,
+            image_token_length_h=h,
+            image_patch_size=vit.image_patch_size,
+            image_padding_mask=vision_backbone_config.image_padding_embed is not None,
+            pad_value=vit.pad_value,
+        )
 
 
 @dataclasses.dataclass
@@ -820,7 +891,6 @@ class Preprocessor:
     mm_preprocessor: MultiModalPreprocessor
     for_inference: bool = False
     is_training: bool = False
-    shuffle_messages: bool = False
     include_image: bool = False
     require_image_features: bool = False
 
@@ -837,7 +907,7 @@ class Preprocessor:
             image = None
 
         messages, formatter_metadata = self.formater(example, self.is_training, self.for_inference, rng)
-        if self.shuffle_messages and isinstance(messages[0], list):
+        if isinstance(messages[0], list):
             # If there are multiple conversations for this example, shuffle their order
             # This might matter if we truncate the tokens to a max sequence length
             rng.shuffle(messages)
