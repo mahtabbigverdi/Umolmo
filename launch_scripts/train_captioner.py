@@ -116,6 +116,7 @@ if __name__ == "__main__":
         ),
         compile=CompilerConfig(mode="default", target="blocks", dynamic=False),
         fused_loss=False,
+        compile_loss=True,
         model=model_cfg,
         data=DataConfig(
             dataset=args.dataset,
@@ -160,11 +161,11 @@ if __name__ == "__main__":
             wrapping_strategy=FSDPWrapStrategy.by_block_and_size,
             precision=FSDPPrecision.float
         ),
-        compile_loss=False,
         load_path=None,
         initial_model_checkpoint=None,
         save_overwrite=debug,
         save_interval=4000,
+        allow_resume=True,
         save_num_checkpoints_to_keep=1,
         save_final_unsharded_checkpoint=True,
         global_train_batch_size=global_batch_size,
