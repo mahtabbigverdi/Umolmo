@@ -31,7 +31,7 @@ class HfTokenizerWrapper:
     """Tokenizer wrapper
 
     This exists mostly for legacy reasons since we used to support other kinds of tokenizers
-    with different API
+    with different APIs
     """
     def __init__(self, tokenizer, bos_token_id=None, adds_space=False):
         self.adds_space = adds_space
@@ -143,24 +143,6 @@ def get_special_token_ids(tokenizer):
 class TokenizerConfig(BaseConfig):
     identifier: str = "gpt2"
     tokenizer_dir: Optional[str] = None
-
-    @classmethod
-    def update_legacy_settings(cls, config: D) -> D:
-        config = config.copy()
-        # if tokenizer_cfg.identifier.startswith
-        if config.identifier[:3] == "mm:":
-            config.identifier = config.identifier[3:]
-        if config.identifier[:3] == "hf-":
-            config.identifier = config.identifier[3:]
-
-        if "tokenizer_adds_space" in config:
-            assert not config["tokenizer_adds_space"]
-            del config.tokenizer_adds_space
-
-        for k in ["olmo_eos_token_id", "olmo_bos_token_id", "truncate_direction"]:
-            if k in config:
-                del config[k]
-        return config
 
     def build(self, pad_tokenizer_to):
         return build_tokenizer(
