@@ -158,8 +158,8 @@ def main():
     if args.augusta:
         env.update(
             MOLMO_DATA_DIR="gs://mm-olmo",
-            # Helpful when downloading/uploading large files to remote folders
             OLMO_SHARED_FS="1",  # Assume we are writing to a remote FS
+            # Needed when downloading/uploading large files to remote folders
             NCCL_TIMEOUT_MINUTES="30",
             MOLMO_CACHE_DIR="/data/molmo-cache",
             MODEL_DIR="gs://oe-training-chrisc/molmo-models"

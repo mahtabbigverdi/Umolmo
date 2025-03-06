@@ -403,7 +403,7 @@ Runs for research on Molmo can use:
 ### Examples
 
 I have been using the script in `examples/run_gantry.py` to make launching jobs
-easier, but please don't launch directly since it will my personal beaker secrets.
+easier, but don't use it directly since it will use my personal beaker secrets.
 
 ## Citation
 

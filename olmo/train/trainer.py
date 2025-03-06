@@ -694,11 +694,12 @@ class Trainer:
         should_log_optim_metrics_this_step = self.should_log_optim_metrics_this_step()
         if should_log_optim_metrics_this_step:
             # No current implementation of per-parameter metrics because I am not sure the
-
             # old very complex one makes sense anymore
             raise NotImplementedError()
 
-        # Clip gradient norms
+        # Clip gradient norms, the optimizer groups will have per-group norms, but they should
+        # be shared between groups with and without weight decay so have to merge those groups
+        # first
         param_norm_groups = defaultdict(list)
         for group in self.optim.param_groups:
             group_name = group["group_name"]
