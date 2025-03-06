@@ -43,7 +43,7 @@ For running on beaker, `Dockerfile` can build an image to use. See [beaker](##Be
 
 ## Data Downloading and Setup
 If you are using Ai2 compute, you can probably skip this part as the data is already downloaded.
-See running with [beaker](## Beaker)
+See running with [beaker](##Beaker)
 
 Molmo uses huggingface datasets for most data, therefore most 
 data will be stored in the default huggingface cache. See [here](https://huggingface.co/docs/huggingface_hub/guides/manage-cache)
@@ -249,14 +249,14 @@ For example, you could use:
 
 ### GCP
 Augusta machines start with access to some google cloud buckets (including `gs://mm-olmo/`), so you
-you should not include your own GCP credentials, however if you want to write to new bucket you will have to
-give permission for the GCP service account used by the augusta to write to that bucket.
+you should not include your own GCP credentials, however if you want to write to a new bucket you will have to
+give permission for the GCP service account used by augusta to write to that bucket.
 
 On other machines credentials can be passed in through a ENV variable `GOOGLE_APPLICATION_CREDENTIALS_JSON`
 so it can be set with a beaker-secret. It should contain a raw JSON google 
 credential file.
 
-Sharded checkpoints will be much more efficient on weka since they can be loaded
+Sharded checkpoints will be much more efficient on weka since they can be downloaded/uploaded
 in parallel by different nodes.
 
 ### Weka
@@ -277,6 +277,7 @@ On Augusta, that will be slower and less reliable than using GFS.
 ## Preemption
 Train runs with `--allow_resume` (usually true by default) should auto-recover
 if restarted as long as a checkpoint has been saved. Restarted runs will create a new wandb run entry.
+Resumed runs are expected to nearly exactly match what would have happened without restarting.
 
 Evaluations on multiple datasets will skip evaluating already evaluated dataset
 as long as `--skip_if_metrics_cached` is set.
@@ -301,8 +302,8 @@ Generally beaker jobs should use these flags:
 is already download, I think to check the data is up-to-date.
 
 `OLMO_SHARED_FS` tell the codes to assume, for multi-nodes jobs, process still have a shared
-file system, meaning their either use weka or a remote FS. This could be turned off if writing 
-data locally, but generally there is no reason prefer doing that.
+file system, meaning they either use weka or a remote FS. This could be turned off if writing 
+data locally, but generally there is no reason to prefer doing that.
 
 `HF_ACCESS_TOKEN` might be used to download the tokenizer, and
 `OPENAI_API_KEY` might be used in some evaluations.
@@ -326,13 +327,14 @@ To run on Augusta, instead use:
  ```
 
 The `NCCL_TIMEOUT_MINUTES` can prevent `barrier()` from timing out while 
-loading/writing large files from remote storage. On Augusta it is best to use
-sharded checkpoints where possible to avoid having to wait to download large
-model files in the first place.
+loading/writing large files from remote storage, although a better solution is
+to use sharded checkpoints only.
 
 Be sure also set the environment variables from [here](https://beaker-docs.apps.allenai.org/compute/augusta.html)
 
-Augusta jobs should generally use GFS file location, see [remote files](###GCP).
+Augusta jobs should generally use GFS to save/load models, see [remote files](###GCP).
+
+Only some datasets are support on GFS, including all the Pixmo datasets.
 
 ### Wandb
 Setup wandb and access keys (first store your keys as beaker secrets):
@@ -350,7 +352,6 @@ Runs for research on Molmo can use:
 ```
 
 ### Examples
-
 I have been using the script `examples/run_gantry.py` to make launching jobs
 easier, feel free to use it for reference, but do not use it directly since 
 it will use my personal beaker secrets.
