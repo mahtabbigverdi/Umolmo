@@ -140,24 +140,35 @@ class OptimizerConfig(BaseConfig):
                 "eps": self.vit_eps,
             },
         )
+
         non_weight_decay_name = set(model.get_non_weight_decay_params())
         param_groups = []
         for group_name, params in param_groups_dict.items():
             params.sort(key=lambda x: _clean_param_name(param_names[x]))
-            no_wd_params = [p for p in params if p in non_weight_decay_name]
-            wd_params = [p for p in params if p not in non_weight_decay_name]
-            param_groups.append(dict(
-                group_name=group_name + "_decay",
-                params=wd_params,
-                param_names=[param_names[x] for x in wd_params],
-                **group_configs[group_name],
-            ))
-            param_groups.append(dict(
-                group_name=group_name + "_no_decay",
-                params=no_wd_params,
-                param_names=[param_names[x] for x in no_wd_params],
-                **dict(group_configs[group_name], weight_decay=0)
-            ))
+            if group_configs[group_name]["weight_decay"] == 0:
+                param_groups.append(dict(
+                    group_name=group_name,
+                    params=params,
+                    param_names=[param_names[x] for x in params],
+                    **group_configs[group_name],
+                ))
+            else:
+                no_wd_params = [p for p in params if p in non_weight_decay_name]
+                wd_params = [p for p in params if p not in non_weight_decay_name]
+                if len(wd_params) > 0:
+                    param_groups.append(dict(
+                        group_name=group_name,
+                        params=wd_params,
+                        param_names=[param_names[x] for x in wd_params],
+                        **group_configs[group_name],
+                    ))
+                if len(no_wd_params) > 0:
+                    param_groups.append(dict(
+                        group_name=group_name,
+                        params=no_wd_params,
+                        param_names=[param_names[x] for x in no_wd_params],
+                        **dict(group_configs[group_name], weight_decay=0)
+                    ))
         return param_groups
 
     def build_optimizer(self, max_grad_norm, max_grad_norm_ratio, model: nn.Module) -> Optimizer :

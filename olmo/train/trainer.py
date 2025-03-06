@@ -180,8 +180,13 @@ class LRMonitor:
     optim: torch.optim.Optimizer
 
     def check(self) -> Dict[str, float]:
-        lrs = [group["lr"] for group in self.optim.param_groups]
-        return {f"optim/learning_rate_group{idx}": lr for idx, lr in enumerate(lrs)}
+        group_lrs = {}
+        for group in self.optim.param_groups:
+            if group['group_name'] in group_lrs:
+                assert group_lrs[group['group_name']] == group['lr']
+            else:
+                group_lrs[group['group_name']] = group['lr']
+        return {f"optim/{name}_lr": lr for name, lr in group_lrs.items()}
 
 
 def cross_entropy_loss(
@@ -661,20 +666,11 @@ class Trainer:
             # old very complex one makes sense anymore
             raise NotImplementedError()
 
-        # Clip gradient norms, the optimizer groups will have per-group norms, but they should
-        # be shared between groups with and without weight decay so have to merge those groups
-        # first
+        # Clip gradient norms, norms are clipped per group name
+        # Note group name might have multiple optimizer param groups
         param_norm_groups = defaultdict(list)
         for group in self.optim.param_groups:
-            group_name = group["group_name"]
-            if group_name.endswith("_no_decay"):
-                norm_group_name = group_name[:-len("_no_decay")]
-            elif group_name.endswith("_decay"):
-                norm_group_name = group_name[:-len("_decay")]
-            else:
-                raise ValueError(f"Cannot parse group name {group_name}")
-            param_norm_groups[norm_group_name].append(group)
-
+            param_norm_groups[group["group_name"]].append(group)
         optim_metrics = {}
         grad_norms = []
         max_grad_norm = self.scheduler.get_max_grad_norm(
@@ -696,13 +692,11 @@ class Trainer:
                 "llm": self.cfg.optimizer.llm_learning_rate,
             }
             for group in self.optim.param_groups:
-                group_name = group["group_name"]
-                component_name = group_name.split("_")[0]
                 group["lr"] = self.scheduler.get_lr(
-                    initial_lr_dict[component_name],
+                    initial_lr_dict[group["group_name"]],
                     self.scheduler_current,
                     self.scheduler_max,
-                    group_name,
+                    group["group_name"],
                 )
         else:
             for group in self.optim.param_groups:
