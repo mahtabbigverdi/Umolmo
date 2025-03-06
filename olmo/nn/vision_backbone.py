@@ -212,7 +212,7 @@ class MolmoVisionBackbone(nn.Module):
                 # freeze them since unfrozen layers with no gradient confuses torch's distributed
                 # optimizer checkpointer
                 self.image_vit: VisionTransformer = vit_cfg.build(device)
-                for block in self.image_vit.blocks[last_layer_needed-1:]:
+                for block in self.image_vit.transformer.resblocks[last_layer_needed-1:]:
                     freeze_module(block)
 
         self.num_prefix_tokens = self.image_vit.num_prefix_tokens
