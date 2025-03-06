@@ -43,8 +43,8 @@ from torch.distributed.checkpoint.default_planner import DefaultSavePlanner
 from torch.distributed.checkpoint.metadata import Metadata, TensorStorageMetadata
 
 from olmo.config import StrEnum
-from olmo.io import PathOrStr, normalize_path, clear_directory, dir_is_empty, is_url, resource_path
-from olmo.torch_util import barrier, get_fs_local_rank, is_distributed, gc_cuda, get_global_rank
+from olmo.io import PathOrStr, normalize_path, clear_directory, dir_is_empty, is_url
+from olmo.torch_util import barrier, get_fs_local_rank, is_distributed, gc_cuda
 
 from olmo.train.remote_filesystem import RemoteFileSystemWriter, RemoteFileSystemReader
 from olmo.util import wait_for
@@ -174,20 +174,6 @@ def async_save_model_and_optim_state(
         ),
         process_group=process_group,
         planner=planner,
-    )
-
-
-@torch.no_grad()
-def load_model_state_unsharded(dir: PathOrStr, model: nn.Module):
-    if get_global_rank() == 0:
-        state_dict = torch.load(resource_path(dir, "model.pt"),
-                                map_location="cpu", weights_only=True)
-    else:
-        state_dict = {}
-    dist_cp_sd.set_model_state_dict(
-        model=model,
-        model_state_dict=state_dict,
-        options=dist_cp_sd.StateDictOptions(full_state_dict=True, broadcast_from_rank0=True)
     )
 
 
