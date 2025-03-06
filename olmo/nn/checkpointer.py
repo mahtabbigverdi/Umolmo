@@ -119,21 +119,6 @@ class Checkpointer:
         if get_fs_local_rank() == 0 and config is not None:
             self.write_file(dir, self.CONFIG_FILENAME, OmegaConf.to_yaml(config, resolve=True))
 
-    @staticmethod
-    def load_unshared(
-        dir: PathOrStr,
-        model: nn.Module,
-    ):
-        if get_global_rank() == 0:
-            state_dict = torch.load(resource_path(dir, "model.pt"))
-        else:
-            state_dict = {}
-        dist_cp_sd.set_model_state_dict(
-            model=model,
-            model_state_dict=state_dict,
-            options=dist_cp_sd.StateDictOptions(full_state_dict=True, broadcast_from_rank0=True)
-        )
-
     def save_unsharded(self, dir: PathOrStr, model: nn.Module, optim: Optimizer, config: BaseConfig):
         """
         Save model, optim, and other training state to a local or remote directory unsharded
