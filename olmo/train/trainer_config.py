@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import logging
-import os
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import (
     Any,
     Dict,
@@ -14,7 +12,6 @@ from typing import (
 )
 
 import torch
-import torch.nn.functional as F
 from torch.distributed import init_device_mesh
 from torch.distributed.fsdp import MixedPrecision, ShardingStrategy, MixedPrecisionPolicy
 
@@ -23,10 +20,9 @@ from olmo.data.data_loader import DataConfig
 from olmo.eval.inf_evaluator import InfDatasetEvaluatorConfig
 from olmo.eval.loss_evaluator import LossDatasetEvaluatorConfig
 from olmo.exceptions import OLMoConfigurationError
-from olmo.nn.checkpointer import CheckpointerConfig
+from olmo.train.checkpointer import CheckpointerConfig
 from olmo.nn.model import ModelConfig, FSDPWrapStrategy, ActivationCheckpointConfig
-from olmo.torch_util import get_global_rank, barrier, freeze_parameters_by_name, get_default_device, \
-    get_local_rank, get_local_world_size, get_world_size
+from olmo.torch_util import get_local_world_size, get_world_size
 from olmo.train.optim import OptimizerConfig, SchedulerConfig
 
 __all__ = [
@@ -119,18 +115,17 @@ class CheckpointType(StrEnum):
 
 @dataclass
 class FSDPConfig(BaseConfig):
-    fsdp2: bool = False
+    fsdp2: bool = True
+
+    precision: FSDPPrecision = FSDPPrecision.pure
+
+    # These other factors only affect FSDP1
 
     use_orig_params: bool = True
-    """
-    This must be ``True`` if using ``compile`` or you want to track the parameter norm during training.
-    """
 
     wrapping_strategy: Optional[FSDPWrapStrategy] = None
 
     sharding_strategy: ShardingStrategy = ShardingStrategy.FULL_SHARD
-
-    precision: FSDPPrecision = FSDPPrecision.pure
 
     hybrid_sharding_num_model_replicas: Optional[int] = None
     """
