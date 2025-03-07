@@ -223,8 +223,6 @@ class ViTMLP(nn.Module):
             device=device,
         )
         # Activation function.
-        cfg = deepcopy(config)
-        cfg.activation_type = config.image_mlp_activations
         self.act = get_activation(config.image_mlp_activations)
         self.w2 = nn.Linear(
             config.image_mlp_dim,
