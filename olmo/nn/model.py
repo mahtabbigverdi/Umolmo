@@ -39,16 +39,16 @@ log = logging.getLogger(__name__)
 class ModelConfig(BaseConfig):
     """Molmo model configuration"""
 
-    llm: LlmConfig = field(default=LlmConfig)
+    llm: LlmConfig = field(default_factory=LlmConfig)
     """LLM to use for generation"""
 
-    vision_backbone: Optional[VisionBackboneConfig] = field(default=VisionBackboneConfig)
+    vision_backbone: Optional[VisionBackboneConfig] = field(default_factory=VisionBackboneConfig)
     """Vision embedding module to get image features"""
 
-    data_formatter: DataFormatter = field(default=DataFormatter)
+    data_formatter: DataFormatter = field(default_factory=DataFormatter)
     """How to prompt the model for different tasks"""
 
-    mm_preprocessor: MultiModalPreprocessorConfig = field(default=MultiModalPreprocessorConfig)
+    mm_preprocessor: MultiModalPreprocessorConfig = field(default_factory=MultiModalPreprocessorConfig)
     """How to crops and interleave vision/text data"""
 
     bi_directional_attn: Optional[str] = None
@@ -98,23 +98,6 @@ class ModelConfig(BaseConfig):
 
     def build_model(self, device=None):
         return Molmo(self, device)
-
-    @staticmethod
-    def from_checkpoint(checkpoint_dir):
-        config_path = resource_path(checkpoint_dir, "config.yaml")
-        model_config = ModelConfig.load(config_path, key="model")
-
-        is_sharded = file_exists(join(checkpoint_dir, "model.pt"))
-        if is_sharded:
-            with torch.device("meta"):
-                model = Molmo(model_config)
-            state_dict = torch.load(
-                resource_path(checkpoint_dir, "model.pt"),
-                weights_only=True, map_location="cpu")
-            model.load_state_dict(state_dict, assign=True)
-        else:
-            raise NotImplementedError()
-        return model
 
     @property
     def max_sequence_length(self):
