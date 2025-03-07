@@ -42,9 +42,3 @@ class OLMoCheckpointError(OLMoError):
     """
     An error occurred reading or writing from a checkpoint.
     """
-
-
-class OLMoThreadError(Exception):
-    """
-    Raised when a thread fails.
-    """

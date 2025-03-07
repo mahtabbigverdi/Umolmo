@@ -77,7 +77,7 @@ class IterableDatasetMixture(torch.utils.data.IterableDataset[Dict[str, Any]]):
 
         if self.start_index != 0:
             # Fast forward by re-computing what to sample (so the RNG state updates) but
-            # without actually requesting the data from the data loader's
+            # without actually requesting the data from the data loader
             assert self.start_index % self.global_batch_size == 0
             start_batch = self.start_index // self.global_batch_size
             if worker_info is None:
