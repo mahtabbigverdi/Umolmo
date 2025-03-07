@@ -237,6 +237,11 @@ def prepare_torchrun_environment():
     # which is used for logging filters/fields
     init_process_group()
 
+    if "TORCH_LOGS_RANK0" in os.environ:
+        if get_local_rank() == 0:
+            cur = os.environ.get("TORCH_LOGS")
+            os.environ["TORCH_LOGS"] = (cur+"," if cur else "") + os.environ["TORCH_LOGS_RANK0"]
+
     add_cached_path_clients()
     prepare_cli_environment()
     log.info(f"Set up torchrun environment")
@@ -591,6 +596,6 @@ def select_checkpoint(checkpoint, prefer_unsharded=False):
             candidates.append((file, int(match.group(1)), sharded_val))
     if len(candidates) == 0:
         raise FileNotFoundError(f"{checkpoint} is not a checkpoint, and does not contain any checkpoints")
-    checkpoint_dir = max(candidates, key=lambda x: x[1:])[0]
-    log.info(f"Selected {checkpoint_dir} as oldest checkpoint in {checkpoint_dir}")
-    return checkpoint_dir
+    oldest = max(candidates, key=lambda x: x[1:])[0]
+    log.info(f"Selected {oldest} as oldest checkpoint in {checkpoint}")
+    return oldest
