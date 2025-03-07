@@ -45,7 +45,7 @@ class ImageProjectType(StrEnum):
 class VisionBackboneConfig(BaseConfig):
     """Vision ViT and the Image/Language Connector"""
 
-    vit: VitConfig = field(default=VitConfig)
+    vit: VitConfig = field(default_factory=VitConfig)
     """The vision ViT"""
 
     image_pooling_2d: ImagePooling2DType = ImagePooling2DType.attention
@@ -56,7 +56,7 @@ class VisionBackboneConfig(BaseConfig):
 
     image_padding_embed: Optional[ImagePaddingEmbed] = None
     """
-    Image padding model, use in the September release but no long used in favour of modifying `pad_value`
+    Image padding mode to use to tell the model what parts of the image are padding
     """
 
     fix_image_padding: bool = True
@@ -278,11 +278,6 @@ class MolmoVisionBackbone(nn.Module):
         """
         cfg = self.config
         B, T, N, D = images.shape
-
-        mask = ~torch.all(images.view(B * T, N, D) == -1, dim=(1, 2), keepdim=True)
-
-        # Output all hidden states
-        # n_layers x (batch_num_crops, (1+)n_tokens, image_emb_dim)
         images = images.view(B * T, N, D)
         image_features = self.image_vit(images)
 
@@ -291,16 +286,9 @@ class MolmoVisionBackbone(nn.Module):
             features.append(image_features[layer])
         image_features = torch.cat(features, dim=-1)
 
-        cls_embed: torch.Tensor = None
         if self.num_prefix_tokens > 0:
-            cls_embed = image_features[:, 0]
             image_features = image_features[:, 1:]
-
-        image_features = image_features * mask
         image_features = image_features.view(B, T, N, -1)
-
-        cls_embed = cls_embed.view(B, T, -1) if cls_embed is not None else None
-
         return image_features
 
     def forward(self, images: torch.Tensor, image_masks: torch.Tensor) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
@@ -369,6 +357,5 @@ class MolmoVisionBackbone(nn.Module):
             image_features = self.image_projector(image_features)
 
         # image_features: (batch_size, num_image, num_patch, d_model)
-        # cls_embed: (batch_size, num_image, d_model)
         return image_features
 
