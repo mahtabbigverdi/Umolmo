@@ -7,7 +7,6 @@ import math
 import os
 import random
 import re
-import shutil
 import time
 from collections import deque, defaultdict
 from dataclasses import dataclass, field
@@ -15,7 +14,6 @@ from os.path import join
 from pathlib import Path
 from pstats import SortKey
 from typing import Any, Callable, Deque, Dict, List, Optional, Tuple, Union
-import torch.distributed.checkpoint.state_dict as dist_cp_sd
 
 import numpy as np
 import torch
@@ -23,7 +21,6 @@ import torch.distributed as dist
 import torch.nn.functional as F
 import wandb
 from beaker import Beaker, Experiment
-from omegaconf import OmegaConf
 from packaging import version
 from torch import nn
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
@@ -31,7 +28,6 @@ from torch.utils.data import DataLoader
 from torch.utils.data import IterableDataset
 from wandb.sdk.data_types.base_types.wb_value import WBValue
 
-from .distributed_checkpointing import save_state_dict
 from .trainer_config import (
     SpeedMonitorConfig, CheckpointType,
     TrainConfig, BatchDivisor,
@@ -52,9 +48,8 @@ from olmo.torch_util import (
     peak_gpu_memory,
     synchronize_flag,
     synchronize_value, get_local_world_size, )
-from olmo.io import upload, PathOrStr, clear_directory, is_url, normalize_path
-from ..config import StrEnum
-from ..nn.checkpointer import Checkpointer
+from olmo.io import PathOrStr, clear_directory, is_url, normalize_path
+from olmo.train.checkpointer import Checkpointer, save_unsharded
 from ..util import flatten_lists
 
 try:
@@ -1157,7 +1152,7 @@ class Trainer:
             if self.cfg.save_final_unsharded_checkpoint:
                 log.info("Saving final unsharded checkpoint...")
                 checkpoint_path = join(normalize_path(self.cfg.save_folder), f"step{self.global_step}-unsharded")
-                self.checkpointer.save_unsharded(checkpoint_path, self.fsdp_model, None, self.cfg)
+                save_unsharded(checkpoint_path, self.fsdp_model, None, self.cfg, self.cfg.save_overwrite)
                 log.info(f"Checkpoint saved to {checkpoint_path}")
 
     def close(self, exit_code: int = 0) -> None:

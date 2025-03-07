@@ -61,11 +61,11 @@ def convert_vision_backbone(config) -> VisionBackboneConfig:
     return {k: v for k, v in vision_backbone.items() if v is not MISSING}
 
 
-def convert_legacay_config(config) -> ModelConfig:
+def convert_legacay_config(config):
     """Converts old monolithic models configs into the new format
 
     This also include some old backwards-compatibility fixes that are no longer
-    applicable for new configs
+    needed for new configs
     """
     config = dict(config)
 
@@ -108,6 +108,7 @@ def convert_legacay_config(config) -> ModelConfig:
         identifier = identifier[3:]
     tok["identifier"] = identifier
 
+    # Re-assign key to correct sub-config
     for key, val in config.items():
         if key in llm:
             llm[key] = val

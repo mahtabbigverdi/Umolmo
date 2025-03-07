@@ -2,17 +2,14 @@
 
 import logging
 import os
-import shutil
 import socket
 import sys
 import time
 from datetime import datetime
-from itertools import islice
 from os.path import join
 from pathlib import Path
 
 import torch
-import torch.distributed.checkpoint.state_dict as dist_cp_sd
 import wandb
 from beaker import Beaker
 from omegaconf import OmegaConf
@@ -20,7 +17,7 @@ from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 
 from olmo.exceptions import OLMoCliError, OLMoConfigurationError
 from olmo.io import file_exists, write_file
-from olmo.nn.checkpointer import Checkpointer, load_model_state_unsharded
+from olmo.train.checkpointer import Checkpointer, load_model_state_unsharded
 from olmo.torch_util import (
     barrier,
     get_global_rank,
@@ -30,14 +27,12 @@ from olmo.torch_util import (
     seed_all,
     freeze_module,
 )
-from olmo.train.distributed_checkpointing import load_model_and_optim_state
-from olmo.train.optim import BoltOnWarmupScheduler
 from olmo.train.trainer import Trainer, BeakerLogger
-from olmo.train.trainer_config import TrainConfig, RuntimeData, CheckpointType
+from olmo.train.trainer_config import TrainConfig, RuntimeData
 from olmo.util import (
     clean_opt,
     log_extra_field,
-    resource_path, prepare_torchrun_environment,
+    prepare_torchrun_environment,
 )
 
 log = logging.getLogger("train")
@@ -152,7 +147,7 @@ def run_trainer(cfg: TrainConfig) -> None:
         olmo_model.warmup_cache(device)
         olmo_model.apply_compile(cfg.compile.target, **cfg.compile.compile_args())
 
-    # Shard the model and initialize if we are not loading a checkpoiint
+    # Shard the model, and initialize if we are not loading a checkpoiint
     if cfg.fsdp and not cfg.fsdp.fsdp2:
         log.info("Wrapping model with FDSP...")
         if start_from is None:
@@ -324,7 +319,6 @@ def run_trainer(cfg: TrainConfig) -> None:
 
 
 if __name__ == "__main__":
-    # trainer.optim.state[trainer.optim.param_groups[0]["params"][11]]
     prepare_torchrun_environment()
 
     try:
