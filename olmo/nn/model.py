@@ -104,18 +104,6 @@ class ModelConfig(BaseConfig):
         return self.llm.max_sequence_length
 
 
-@dataclass
-class ActivationCheckpointConfig(BaseConfig):
-    llm: Optional[LlmActivationCheckpointMode] = LlmActivationCheckpointMode.whole_layer
-    """How to checkpoint the LLM"""
-
-    vit: bool = True
-    """enable layer-wise checkpointing on the ViT"""
-
-    connector: bool = True
-    """checkpoint the connector modules"""
-
-
 class FSDPWrapStrategy(StrEnum):
     by_block = "by_block"
     """Wrap each OLMo block with its own FSDP instance."""
@@ -195,29 +183,16 @@ class Molmo(nn.Module):
         if self.vision_backbone is not None:
             self.vision_backbone.reset_with_pretrained_weights()
 
-    def apply_activation_checkpointing(self, cfg: ActivationCheckpointConfig):
+    def apply_activation_checkpointing(self):
         """Enable activation checkpointing"""
-        self.transformer.apply_activation_checkpointing(cfg.llm)
+        self.transformer.apply_activation_checkpointing()
         if self.vision_backbone is not None:
-            self.vision_backbone.apply_activation_checkpointing(cfg.connector, cfg.vit)
+            self.vision_backbone.apply_activation_checkpointing()
 
-    def apply_compile(self, target: str, **compile_kwargs):
+    def apply_compile(self, **compile_kwargs):
         """Compile the model with `torch.compile`"""
-        log.info(f"Compiling {target}...")
-
-        if target == "blocks":
-            for block_idx, block in enumerate(self.transformer.blocks):
-                block.compile(**compile_kwargs)
-            for block_idx, block in enumerate(self.vision_backbone.image_vit.transformer.resblocks):
-                block.compile(**compile_kwargs)
-        elif target == "image_blocks":
-            for block_idx, block in enumerate(self.vision_backbone.image_vit.transformer.resblocks):
-                block.compile(**compile_kwargs)
-        elif target == "llm_blocks":
-            for block_idx, block in enumerate(self.transformer.blocks):
-                block.compile(**compile_kwargs)
-        else:
-            raise NotImplementedError(target)
+        self.transformer.apply_compile(**compile_kwargs)
+        self.vision_backbone.apply_compile(**compile_kwargs)
 
     def warmup_cache(self, device):
         """Pre-fill the buffer-cache"""

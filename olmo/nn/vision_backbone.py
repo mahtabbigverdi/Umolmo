@@ -80,6 +80,12 @@ class VisionBackboneConfig(BaseConfig):
     image_feature_dropout: float = 0.0
     """Dropout for image patch features"""
 
+    activation_checkpointing: bool = True
+    """Allow activation checkpoint to the connector components"""
+
+    compile_vit: Optional[str] = "blocks"
+    """How to compile the ViT"""
+
     def __post_init__(self):
         self.vit_layers = tuple(self.vit_layers)  # type: ignore[assignment]
 
@@ -261,12 +267,18 @@ class MolmoVisionBackbone(nn.Module):
         # For any remaining parameters in `self`, like the pad embed
         fully_shard(self, **kwargs)
 
-    def apply_activation_checkpointing(self, checkpoint_connector, checkpoint_vit):
-        if checkpoint_vit:
-            self.image_vit.apply_activation_checkpointing()
-        if checkpoint_connector:
+    def apply_activation_checkpointing(self):
+        self.image_vit.apply_activation_checkpointing()
+        if self.config.activation_checkpointing:
             self.image_projector = checkpoint_wrapper(self.image_projector)
             self.image_pooling_2d = checkpoint_wrapper(self.image_pooling_2d)
+
+    def apply_compile(self, **kwargs):
+        if self.config.compile_vit == "blocks":
+            for block in self.image_vit.transformer.resblocks:
+                block.compile(**kwargs)
+        elif self.config.compile_vit is not None:
+            raise NotImplementedError(self.config.compile_vit)
 
     def get_connector_parameters(self):
         vit_params = set(self.image_vit.parameters())

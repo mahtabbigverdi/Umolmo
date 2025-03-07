@@ -139,13 +139,13 @@ def run_trainer(cfg: TrainConfig) -> None:
 
     # Do some other model setup
     if cfg.activation_checkpointing:
-        olmo_model.apply_activation_checkpointing(cfg.activation_checkpointing)
+        olmo_model.apply_activation_checkpointing()
     if cfg.compile:
-        # Want the cache to be pre-filled with the correct device to stop the compiler getting
-        # confused due to cache modifications, otherwise compiling + FSPD + activation checkpoints
-        # leads to runtime errors
+        # We want the cache to be pre-filled to stop the compiler sometimes getting confused
+        # due to cache modifications, otherwise compiling + FSPD + activation checkpoints
+        # can lead to runtime errors
         olmo_model.warmup_cache(device)
-        olmo_model.apply_compile(cfg.compile.target, **cfg.compile.compile_args())
+        olmo_model.apply_compile(**cfg.compile.compile_args())
 
     # Shard the model, and initialize if we are not loading a checkpoiint
     if cfg.fsdp and not cfg.fsdp.fsdp2:

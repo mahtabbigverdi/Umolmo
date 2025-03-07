@@ -53,7 +53,7 @@ class VitConfig(BaseConfig):
     attention_type: AttentionType = AttentionType.sdpa
 
     activation_checkpointing: bool = True
-    """Use activation checkpointing for each layer"""
+    """Allow activation checkpointing for each layer"""
 
     init_path: Optional[str] = None
     """Path to initialize the ViT with"""
@@ -439,7 +439,8 @@ class VisionTransformer(nn.Module):
         fully_shard(self, *args, **kwargs)
 
     def apply_activation_checkpointing(self):
-        self.transformer._activation_checkpoint_fn = vit_activation_checkpoint_function(self.config)
+        if self.config.activation_checkpointing:
+            self.transformer._activation_checkpoint_fn = vit_activation_checkpoint_function(self.config)
 
     def add_pos_emb(self, x: torch.Tensor, patch_num: int) -> torch.Tensor:
         cls_emb = self.positional_embedding[0:1]

@@ -515,6 +515,14 @@ class LlmConfig(BaseConfig):
     """
 
     activation_checkpoint: Optional[LlmActivationCheckpointMode] = LlmActivationCheckpointMode.whole_layer
+    """
+    Where to use activation checkpoint if activation_checkpoint is enabled
+    """
+
+    compile: Optional[str] = "blocks"
+    """
+    How to compile the transformer if compilation is requested
+    """
 
     init_std: Optional[float] = 0.02
     init_fn: InitFnType = InitFnType.normal
@@ -606,15 +614,12 @@ class Llm(nn.Module):
                     state_dict["wte.embedding"] = state_dict.pop("wte.weight")
             else:
                 state_dict = {}
-            if is_sharded:
-                key_errors = dist_cp_sd.set_model_state_dict(
-                    model=self,
-                    model_state_dict=state_dict,
-                    options=dist_cp_sd.StateDictOptions(
-                        full_state_dict=True, broadcast_from_rank0=True, strict=False)
-                )
-            else:
-                key_errors = self.load_state_dict(state_dict, strict=False)
+            key_errors = dist_cp_sd.set_model_state_dict(
+                model=self,
+                model_state_dict=state_dict,
+                options=dist_cp_sd.StateDictOptions(
+                    full_state_dict=True, broadcast_from_rank0=True, strict=False)
+            )
             assert len(key_errors.unexpected_keys) == 0
             assert set(key_errors.missing_keys) <= {"wte.new_embedding"}
             if self.config.additional_vocab_size is not None:
@@ -629,9 +634,16 @@ class Llm(nn.Module):
         else:
             fully_shard([self.ff_out, self.ln_f], **kwargs)
 
-    def apply_activation_checkpointing(self, strategy: LlmActivationCheckpointMode):
+    def apply_activation_checkpointing(self):
         for block in self.blocks:
-            block.apply_activation_checkpointing(strategy)
+            block.apply_activation_checkpointing(self.config.activation_checkpoint)
+
+    def apply_compile(self, **kwargs):
+        if self.config.compile == "blocks":
+            for block in self.blocks:
+                block.compile(**kwargs)
+        elif self.config.compile is not None:
+            raise NotImplementedError(self.config.config)
 
     # No forward method since this is only used as part of a `Molmo` model
 

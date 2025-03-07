@@ -114,7 +114,7 @@ if __name__ == "__main__":
             entity="${oc.env:WANDB_ENTITY}",
             log_interval=log_interval
         ),
-        compile=CompilerConfig(mode="default", target="blocks", dynamic=False),
+        compile=CompilerConfig(mode="default", dynamic=False),
         fused_loss=False,
         compile_loss=True,
         model=model_cfg,

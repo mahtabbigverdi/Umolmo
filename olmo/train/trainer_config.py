@@ -21,7 +21,7 @@ from olmo.eval.inf_evaluator import InfDatasetEvaluatorConfig
 from olmo.eval.loss_evaluator import LossDatasetEvaluatorConfig
 from olmo.exceptions import OLMoConfigurationError
 from olmo.train.checkpointer import CheckpointerConfig
-from olmo.nn.model import ModelConfig, FSDPWrapStrategy, ActivationCheckpointConfig
+from olmo.nn.model import ModelConfig, FSDPWrapStrategy
 from olmo.torch_util import get_local_world_size, get_world_size
 from olmo.train.optim import OptimizerConfig, SchedulerConfig
 
@@ -62,11 +62,6 @@ class SpeedMonitorConfig(BaseConfig):
 
 @dataclass
 class CompilerConfig(BaseConfig):
-    target: Optional[str] = "blocks"
-    """
-    What to compile
-    """
-
     mode: Optional[str] = "default"
     """
     The mode to compile the model in. At the moment this can be "default",
@@ -88,7 +83,7 @@ class CompilerConfig(BaseConfig):
     """
 
     def compile_args(self):
-        return {k: v for k, v in self.asdict().items() if k != "target"}
+        return self.asdict()
 
 
 class FSDPPrecision(StrEnum):
@@ -474,7 +469,7 @@ class TrainConfig(BaseConfig):
     Settings for compiling the model with ``torch.compile()``.
     """
 
-    activation_checkpointing: Optional[ActivationCheckpointConfig] = field(default_factory=ActivationCheckpointConfig)
+    activation_checkpointing: bool = True
     """
     Enable activation checkpointing
     """

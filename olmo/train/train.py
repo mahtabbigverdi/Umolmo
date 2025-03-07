@@ -195,18 +195,18 @@ def run(cfg: TrainConfig) -> None:
             torch.compile(olmo_model, **cfg.compile.compile_args())
         elif cfg.compile.target == "blocks":
             for block_idx, block in enumerate(olmo_model.transformer.blocks):
-                block.compile(**cfg.compile.compile_args())
+                block.compile_vit(**cfg.compile.compile_args())
             for block_idx, block in enumerate(olmo_model.vision_backbone.image_vit.transformer.resblocks):
-                block.compile(**cfg.compile.compile_args())
+                block.compile_vit(**cfg.compile.compile_args())
         elif cfg.compile.target == "image_blocks":
             for block_idx, block in enumerate(olmo_model.vision_backbone.image_vit.transformer.resblocks):
-                block.compile(**cfg.compile.compile_args())
+                block.compile_vit(**cfg.compile.compile_args())
         elif cfg.compile.target == "llm_blocks":
             for block_idx, block in enumerate(olmo_model.transformer.blocks):
-                block.compile(**cfg.compile.compile_args())
+                block.compile_vit(**cfg.compile.compile_args())
         elif cfg.compile.target == "transformers":
             olmo_model.transformer.compile(**cfg.compile.compile_args())
-            olmo_model.vision_backbone.image_vit.transformer.compile(**cfg.compile.compile_args())
+            olmo_model.vision_backbone.image_vit.transformer.compile_vit(**cfg.compile.compile_args())
         else:
             raise NotImplementedError(cfg.compile.target)
 
