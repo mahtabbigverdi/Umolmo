@@ -4,27 +4,22 @@ import json
 import logging
 import os
 import re
+import sys
 from datetime import datetime
-from os import makedirs
-from os.path import dirname, join, exists
+from os.path import dirname, join
 from typing import Optional, List
 
 import omegaconf
 import torch
 import wandb
-from packaging import version
-from torch.distributed.fsdp import FullyShardedDataParallel as FSDP, MixedPrecision
-from torch.distributed.fsdp import ShardingStrategy
-import torch.distributed.checkpoint.state_dict as dist_cp_sd
-
 
 from olmo.config import BaseConfig
-from olmo.data.data_formatter import DataFormatter
 from olmo.data.data_loader import DataConfig
 from olmo.data.model_preprocessor import MultiModalPreprocessorConfig
 from olmo.eval.inf_evaluator import InfDatasetEvaluator, EvaluatorConfig, \
     InfDatasetEvaluatorConfig
 from olmo.eval.loss_evaluator import LossDatasetEvaluatorConfig, LossDatasetEvaluator
+from olmo.exceptions import OLMoCliError
 from olmo.io import file_exists, write_file, get_bytes_range
 from olmo.nn.image_vit import VitConfig
 from olmo.nn.llm import LlmConfig
@@ -33,17 +28,14 @@ from olmo.nn.vision_backbone import VisionBackboneConfig
 from olmo.tokenizer import TokenizerConfig
 from olmo.torch_util import (
     barrier,
-    get_default_device,
     get_global_rank,
     get_local_rank,
     peak_gpu_memory,
-    seed_all, get_world_size,
-)
-from olmo.train.distributed_checkpointing import load_model_and_optim_state
-from olmo.nn.checkpointer import load_model_state_unsharded, Checkpointer, load_model_state
+    seed_all, )
+from olmo.train.checkpointer import load_model_state
 from olmo.train.trainer_config import FSDPConfig
 from olmo.util import (
-    resource_path, log_metrics_to_console,
+    resource_path, log_metrics_to_console, prepare_torchrun_environment, clean_opt,
 )
 
 log = logging.getLogger(__name__)
@@ -246,11 +238,18 @@ class ModelEvaluator:
                     )
                 ),
                 vision_backbone=VisionBackboneConfig(
-                    vit=VitConfig(image_num_layers=1, image_emb_dim=128)),
+                    vit=VitConfig(
+                        image_num_layers=1, image_emb_dim=128,
+                        image_num_heads=2, image_head_dim=64,
+                        image_num_key_value_heads=2
+                    )
+                ),
                 mm_preprocessor=MultiModalPreprocessorConfig(crop_mode="resize")
             )
-            olmo_model = Molmo(model_cfg).to(device)
-            olmo_model.reset_parameters()
+            with torch.device("meta"):
+                model = model_cfg.build_model()
+            model.to_empty(device=device)
+            model.reset_parameters()
         else:
             model_cfg_path = resource_path(cfg.load_path, "config.yaml")
             model_cfg = ModelConfig.load(model_cfg_path, key="model", validate_paths=False)
@@ -376,3 +375,15 @@ class ModelEvaluator:
             to_print = {k: v for k, v in all_metrics.items() if isinstance(v, (int, float, str))}
             log_metrics_to_console("all-metrics", to_print)
         return all_metrics
+
+
+if __name__ == "__main__":
+    prepare_torchrun_environment()
+
+    try:
+        yaml_path, args_list = sys.argv[1], sys.argv[2:]
+    except IndexError:
+        raise OLMoCliError(f"Usage: {sys.argv[0]} [CONFIG_PATH] [OPTIONS]")
+
+    cfg = EvalConfig.load(yaml_path, [clean_opt(s) for s in args_list])
+    cfg.build().run()
