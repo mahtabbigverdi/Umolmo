@@ -61,8 +61,8 @@ def convert_vision_backbone(config) -> VisionBackboneConfig:
     return {k: v for k, v in vision_backbone.items() if v is not MISSING}
 
 
-def convert_legacay_config(config):
-    """Converts old monolithic models configs into the new format
+def convert_legacy_config(config):
+    """Converts old monolithic model configs into the new format
 
     This also include some old backwards-compatibility fixes that are no longer
     needed for new configs

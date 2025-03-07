@@ -26,6 +26,7 @@ from olmo.data.data_formatter import DataFormatter
 from olmo.data.model_preprocessor import MultiModalPreprocessorConfig, Preprocessor
 from olmo.nn.beam_search import BeamSearch, Constraint, FinalSequenceScorer, Sampler
 from olmo.nn.image_vit import ResidualAttentionBlock, VisionTransformer
+from olmo.nn.legacy_config import convert_legacy_config
 from olmo.nn.llm import LlmConfig, OLMoBlock, LlmActivationCheckpointMode, Llm
 from olmo.nn.vision_backbone import MolmoVisionBackbone, VisionBackboneConfig
 from olmo.torch_util import BufferCache, get_global_rank, get_default_device
@@ -49,7 +50,7 @@ class ModelConfig(BaseConfig):
     """How to prompt the model for different tasks"""
 
     mm_preprocessor: MultiModalPreprocessorConfig = field(default_factory=MultiModalPreprocessorConfig)
-    """How to crops and interleave vision/text data"""
+    """How to crop images and encoding jointly with text"""
 
     bi_directional_attn: Optional[str] = None
     """Allow bidirectional attention for some tokens"""
@@ -58,8 +59,7 @@ class ModelConfig(BaseConfig):
     def update_legacy_settings(cls, config: D) -> D:
         if "llm" not in config:
             # Old v1 style config
-            from olmo.nn.legacy_config import convert_legacay_config
-            config = convert_legacay_config(config)
+            config = convert_legacy_config(config)
         config.llm = LlmConfig.update_legacy_settings(config.llm)
         if config.vision_backbone is not None:
             config.vision_backbone = VisionBackboneConfig.update_legacy_settings(config.vision_backbone)

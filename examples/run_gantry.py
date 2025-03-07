@@ -61,9 +61,9 @@ def main():
 
     # This will rsync code to separate folder and commit it to an "experiments" branch in github
     # for gantry to use
-    # I do it thsi way so gantry can run without filling out our working branch with small commits,
+    # We do this so gantry can run without filling out our working branch with small commits,
     # and since commiting our code to a separate "experiment" branch ended up being tricky
-    # to implement with git since it seems to require editing our working files in-place
+    # to implement with git and made me nervous since it can mess with our working files
     print("Syncing code")
     rsync_command = f"rsync -rzv --delete --exclude .git --exclude .gitmodules --exclude .idea --exclude '*.html' --exclude '*.pyc' --exclude __pycache__ --exclude .cache --exclude .pytest_cache --exclude '*.ipynb' /Users/chrisc/Programming/mm_olmo_dev/ {GANTRY_HOME}"
     subprocess.call(rsync_command, shell=True)
@@ -104,6 +104,7 @@ def main():
         OMP_NUM_THREADS=8,
         WANDB_ENTITY="prior-ai2",
         WANDB_PROJECT="cockatoo",
+        LOG_FILTER_TYPE="rank0_only",
         TORCH_LOGS_RANK0="recompiles,graph_breaks",
 
         # Allows remote access to weka
@@ -157,8 +158,8 @@ def main():
     if args.augusta:
         env.update(
             MOLMO_DATA_DIR="gs://mm-olmo",
+            # Helpful when downloading/uploading large files to remote folders
             OLMO_SHARED_FS="1",  # Assume we are writing to a remote FS
-            # In case we end up downloading/uploading large files to remote folders
             NCCL_TIMEOUT_MINUTES="30",
             MOLMO_CACHE_DIR="/data/molmo-cache",
             MODEL_DIR="gs://oe-training-chrisc/molmo-models"

@@ -505,9 +505,9 @@ class SiglipVisionTransformer(nn.Module):
 
         self.transformer = BlockCollection(config, device)
 
-    @torch.jit.ignore
-    def set_grad_checkpointing(self, enable=True):
-        self.transformer.grad_checkpointing = enable
+    def apply_activation_checkpointing(self):
+        if self.config.activation_checkpointing:
+            self.transformer._activation_checkpoint_fn = vit_activation_checkpoint_function(self.config)
 
     def reset_parameters(self):
         nn.init.normal_(self.positional_embedding, std=self.scale)
@@ -584,9 +584,9 @@ class DinoVisionTransformer(nn.Module):
 
         self.transformer = DinoBlockCollection(config)
 
-    @torch.jit.ignore
-    def set_grad_checkpointing(self, enable=True):
-        self.transformer.grad_checkpointing = enable
+    def apply_activation_checkpointing(self):
+        if self.config.activation_checkpointing:
+            self.transformer._activation_checkpoint_fn = vit_activation_checkpoint_function(self.config)
 
     def reset_parameters(self):
         nn.init.normal_(self.class_embedding, std=self.scale)
