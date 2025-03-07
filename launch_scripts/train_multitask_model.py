@@ -17,7 +17,7 @@ from olmo.nn.model import ModelConfig
 from olmo.data.data_loader import DataConfig, RootSizeMixture
 from olmo.torch_util import get_world_size
 from olmo.util import clean_opt, prepare_torchrun_environment, select_checkpoint
-from scripts.train import run_trainer as train
+from scripts.train import run_trainer
 
 log = logging.getLogger("train")
 
@@ -91,6 +91,17 @@ if __name__ == "__main__":
     elif args.mixture in ["small1", "debug"]:
         eval_tasks = ["chart_qa", "doc_qa"]
         tasks = [["aux", ["chart_qa", "doc_qa"], 1.0]]
+    elif args.mixture in ["pointing"]:
+        eval_tasks = ["pointing_eval:test"]
+        tasks = [["pointing", [
+            "pixmo_points",
+            "pixmo_count",
+            "pixmo_points_high_freq",
+            "pixmo_points_counting",
+            "pixmo_points_high_freq_counting",
+            "pixmo_count_counting",
+        ], 1.0]]
+
     elif args.mixture == "small2":
         eval_tasks = ["chart_qa", "doc_qa", "info_qa"]
         tasks = [["aux", [("chart_qa", 4*4),
@@ -106,7 +117,6 @@ if __name__ == "__main__":
             "pixmo_clocks",
             "android_control_ll",
             "pointing_eval:test",
-            "countbench_qa:huggingface"
         ]
         tasks = [
             ["demo", [
@@ -253,7 +263,7 @@ if __name__ == "__main__":
         ),
         load_path=None,
         initial_model_checkpoint=checkpoint,
-        save_interval=4000,
+        save_interval=2000,
         save_num_checkpoints_to_keep=1,
         global_train_batch_size=global_batch_size,
         device_train_microbatch_size=args.device_train_batch_size,
@@ -271,11 +281,11 @@ if __name__ == "__main__":
         eval_interval=eval_interval,
         inf_eval_interval=inf_eval_interval,
         inf_evaluators=evaluations,
-        save_final_unsharded_checkpoint=True,
+        save_final_unsharded_checkpoint=False,
         evaluators=[]
     )
 
     conf = OmegaConf.create(cfg)
     conf.merge_with_dotlist([clean_opt(arg) for arg in other_args])
     cfg = cast(TrainConfig, OmegaConf.to_object(conf))
-    train(cfg)
+    run_trainer(cfg)

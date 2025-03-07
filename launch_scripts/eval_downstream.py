@@ -7,11 +7,10 @@ from typing import cast
 from omegaconf import OmegaConf
 
 from launch_scripts.utils import get_evaluation
-from utils import select_checkpoint
 from olmo.train.trainer_config import FSDPConfig, FSDPWrapStrategy, FSDPPrecision
 from olmo.util import (
     clean_opt,
-    prepare_torchrun_environment, )
+    prepare_torchrun_environment, select_checkpoint, )
 from scripts.mm_eval import ModelEvaluator, DatasetEvaluatorConfig, EvalConfig
 
 log = logging.getLogger(__name__)
@@ -130,7 +129,6 @@ def main():
         max_crops_override=args.max_crops,
         evaluations=inf_evaluators,
         load_path=checkpoint_dir,
-        save_to_checkpoint_dir=args.save_to_checkpoint_dir,
         console_log_interval=10,
         precision="amp_bf16",
         eval_name="36crop" if args.high_res else None,

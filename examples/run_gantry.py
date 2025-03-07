@@ -104,7 +104,7 @@ def main():
         OMP_NUM_THREADS=8,
         WANDB_ENTITY="prior-ai2",
         WANDB_PROJECT="cockatoo",
-        TORCH_LOGS="recompiles,graph_breaks",
+        TORCH_LOGS_RANK0="recompiles,graph_breaks",
 
         # Allows remote access to weka
         WEKA_ENDPOINT_URL="https://weka-aus.beaker.org:9000",

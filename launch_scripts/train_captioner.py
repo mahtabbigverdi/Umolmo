@@ -167,7 +167,7 @@ if __name__ == "__main__":
         save_interval=4000,
         allow_resume=True,
         save_num_checkpoints_to_keep=1,
-        save_final_unsharded_checkpoint=True,
+        save_final_unsharded_checkpoint=False,
         global_train_batch_size=global_batch_size,
         device_train_microbatch_size=4,
         time_limit=None,
