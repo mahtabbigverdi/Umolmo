@@ -80,9 +80,6 @@ class VisionBackboneConfig(BaseConfig):
     image_feature_dropout: float = 0.0
     """Dropout for image patch features"""
 
-    checkpoint_connector: bool = False
-    """Should we use activation checkpointing for the connector"""
-
     def __post_init__(self):
         self.vit_layers = tuple(self.vit_layers)  # type: ignore[assignment]
 
@@ -214,6 +211,8 @@ class MolmoVisionBackbone(nn.Module):
                 self.image_vit: VisionTransformer = vit_cfg.build(device)
                 for block in self.image_vit.transformer.resblocks[last_layer_needed-1:]:
                     freeze_module(block)
+        else:
+            self.image_vit: VisionTransformer = vit_cfg.build(device)
 
         self.num_prefix_tokens = self.image_vit.num_prefix_tokens
         assert self.num_prefix_tokens in {0, 1}, "Only 0 or 1 prefix tokens are supported"
@@ -287,13 +286,10 @@ class MolmoVisionBackbone(nn.Module):
         images = images.view(B * T, N, D)
         image_features = self.image_vit(images)
 
-        if self.vit_layers is not None:
-            features = []
-            for layer in self.vit_layers:
-                features.append(image_features[layer])
-            image_features = torch.cat(features, dim=-1)
-        else:
-            image_features = image_features[-1]
+        features = []
+        for layer in self.vit_layers:
+            features.append(image_features[layer])
+        image_features = torch.cat(features, dim=-1)
 
         cls_embed: torch.Tensor = None
         if self.num_prefix_tokens > 0:

@@ -377,26 +377,24 @@ class TrainConfig(BaseConfig):
     If ``True``, overwrite existing files
     """
 
-    initial_model_checkpoint: Optional[str] = None
-    """
-    Path to a model to use to initialize the model at the step 0
-    
-    Unlike `load_path` this will be used only at step0 and only loads the parameters    
-    """
-
     load_path: Optional[str] = None
     """
     The path to a sharded or unshared checkpoint to start from.
     """
 
-    reset_optimizer_state: bool = True
+    reset_optimizer_state: bool = False
     """
-    Don't load the optimizer from `load_path`
+    Don't load try and load optimizer state from `load_path`
     """
 
-    reset_trainer_state: bool = True
+    reset_trainer_state: bool = False
     """
-    Don't load the train state from `load_path`
+    Don't load and load train state from `load_path`
+    """
+
+    initial_model_checkpoint: Optional[str] = None
+    """
+    Path to a checkpoint to use to initialize the model from, overriden by `load_path`
     """
 
     allow_resume: bool = False

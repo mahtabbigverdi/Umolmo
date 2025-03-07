@@ -37,7 +37,7 @@ log = logging.getLogger(__name__)
 
 
 @torch.no_grad()
-def load_model_state_unsharded(dir: PathOrStr, model: nn.Module, cfg):
+def load_model_state_unsharded(dir: PathOrStr, model: nn.Module):
     """
     Load model state in-place for unsharded chechpoint saved in `dir`,
     works for sharded and unsharded models

@@ -103,72 +103,59 @@ class OptimizerConfig(BaseConfig):
         """
         Separate parameters into connector/vit/llm weight decay and non weight decay groups.
         """
-        param_groups_dict = dict(
-            connector=[p for p in model.get_connector_parameters() if p.requires_grad],
-            llm=[p for p in model.get_llm_parameters() if p.requires_grad],
-            vit=[p for p in model.get_vit_parameters() if p.requires_grad],
-        )
-        param_names = {p: np for np, p in model.named_parameters() if p.requires_grad}
-
-        # Sanity check to make sure the `get_parameters` functions are doing the right thing
-        params_found = set()
-        for params in param_groups_dict.values():
-            if any(x in params_found for x in params):
-                raise RuntimeError("A parameter appeared in multiple groups!")
-            params_found.update(x for x in params)
-        for model_param, name in param_names.items():
-            if model_param not in params_found:
-                raise RuntimeError(f"model param {name} was not in any group")
-
-        group_configs = dict(
-            llm={
+        group_configs = [
+            {
+                "group_name": "llm",
+                "params": [p for p in model.get_llm_parameters() if p.requires_grad],
                 "lr": self.llm_learning_rate,
                 "weight_decay": self.llm_weight_decay,
                 "betas": self.llm_betas,
                 "eps": self.llm_eps,
             },
-            connector={
+            {
+                "group_name": "connector",
+                "params": [p for p in model.get_connector_parameters() if p.requires_grad],
                 "lr": self.connector_learning_rate,
                 "weight_decay": self.connector_weight_decay,
                 "betas": self.connector_betas,
                 "eps": self.connector_eps,
             },
-            vit={
+            {
+                "group_name": "vit",
+                "params": [p for p in model.get_vit_parameters() if p.requires_grad],
                 "lr": self.vit_learning_rate,
                 "weight_decay": self.vit_weight_decay,
                 "betas": self.vit_betas,
                 "eps": self.vit_eps,
             },
-        )
+        ]
 
-        non_weight_decay_name = set(model.get_non_weight_decay_params())
+        # Sanity check to make sure the `get_parameters` functions are doing the right thing
+        param_names = {p: np for np, p in model.named_parameters() if p.requires_grad}
+        params_found = set()
+        for group_cfg in group_configs:
+            if any(x in params_found for x in group_cfg["params"]):
+                raise RuntimeError("A parameter appeared in multiple groups!")
+            params_found.update(group_cfg["params"])
+        for model_param, name in param_names.items():
+            if model_param not in params_found:
+                raise RuntimeError(f"model param {name} was not in any group")
+
+        # Maybe split up groups if we are using weight decay on some of its params
+        non_weight_decay_params = set(model.get_non_weight_decay_params())
         param_groups = []
-        for group_name, params in param_groups_dict.items():
+        for param_group in group_configs:
+            params = param_group["params"]
             params.sort(key=lambda x: _clean_param_name(param_names[x]))
-            if group_configs[group_name]["weight_decay"] == 0:
-                param_groups.append(dict(
-                    group_name=group_name,
-                    params=params,
-                    param_names=[param_names[x] for x in params],
-                    **group_configs[group_name],
-                ))
+            if param_group["weight_decay"] == 0:
+                param_groups.append(param_group)
             else:
-                no_wd_params = [p for p in params if p in non_weight_decay_name]
-                wd_params = [p for p in params if p not in non_weight_decay_name]
+                no_wd_params = [p for p in params if p in non_weight_decay_params]
+                wd_params = [p for p in params if p not in non_weight_decay_params]
                 if len(wd_params) > 0:
-                    param_groups.append(dict(
-                        group_name=group_name,
-                        params=wd_params,
-                        param_names=[param_names[x] for x in wd_params],
-                        **group_configs[group_name],
-                    ))
+                    param_groups.append(dict(param_group, params=wd_params))
                 if len(no_wd_params) > 0:
-                    param_groups.append(dict(
-                        group_name=group_name,
-                        params=no_wd_params,
-                        param_names=[param_names[x] for x in no_wd_params],
-                        **dict(group_configs[group_name], weight_decay=0)
-                    ))
+                    param_groups.append(dict(param_group, params=no_wd_params, weight_decay=0))
         return param_groups
 
     def build_optimizer(self, max_grad_norm, max_grad_norm_ratio, model: nn.Module) -> Optimizer :

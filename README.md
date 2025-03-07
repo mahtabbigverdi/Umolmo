@@ -219,7 +219,7 @@ torchrun --nproc-per-node=1 launch_scripts/train_multitask_model.py debug debug
 --save_folder=dbg --save_overwrite
 `
 
-## Performance
+## Throughput Optimization
 Be default full activation checkpointing is used, you can
 experiment with `--activation_checkpointing=one_in_two` to get more performance,
 but I have generally found increasing the batch size is better than using less activation
@@ -274,7 +274,7 @@ export AWS_CREDENTIALS=YOUR_CREDENTIAL_DATA
 In this case paths like `weka://oe-training-default/chrisc/models` will work.
 On Augusta, that will be slower and less reliable than using GFS.
 
-## Preemption
+## Preemption/Restarting
 Train runs with `--allow_resume` (usually true by default) should auto-recover
 if restarted as long as a checkpoint has been saved. Restarted runs will create a new wandb run entry.
 Resumed runs are expected to nearly exactly match what would have happened without restarting.
@@ -301,8 +301,8 @@ Generally beaker jobs should use these flags:
 `HF_DATASETS_OFFLINE` stops HF issues tons of requests to the HF dataset hub even though the data
 is already download, I think to check the data is up-to-date.
 
-`OLMO_SHARED_FS` tell the codes to assume, for multi-nodes jobs, process still have a shared
-file system, meaning they either use weka or a remote FS. This could be turned off if writing 
+`OLMO_SHARED_FS` tell the codes to assume, for multi-nodes jobs, are saving to a shared
+file system, meaning they either save to weka or a remote FS. This could be turned off if writing 
 data locally, but generally there is no reason to prefer doing that.
 
 `HF_ACCESS_TOKEN` might be used to download the tokenizer, and

@@ -5,6 +5,7 @@ import os
 import shutil
 import socket
 import sys
+import time
 from datetime import datetime
 from itertools import islice
 from os.path import join
@@ -64,7 +65,6 @@ def run_trainer(cfg: TrainConfig) -> None:
     if cfg.allow_resume:
         # Check if there is a checkpoint for us to resume from in our save folder, in which
         # case we ignore `cfg.load_from` and use it
-        config_path = join(cfg.save_folder, "config.yaml")
         try:
             lastest_checkpoint = Checkpointer.latest_checkpoint(cfg.save_folder)
         except FileNotFoundError:
@@ -72,7 +72,7 @@ def run_trainer(cfg: TrainConfig) -> None:
         if lastest_checkpoint:
             log.info(f"Resuming from {lastest_checkpoint}")
             if get_global_rank() == 0:
-                saved_config = TrainConfig.load(config_path)
+                saved_config = TrainConfig.load(join(cfg.save_folder, "config.yaml"))
                 if saved_config.model != cfg.model:
                     log.warning("Model config does not match the one resuming from")
                 if saved_config.optimizer != cfg.optimizer:
@@ -85,9 +85,12 @@ def run_trainer(cfg: TrainConfig) -> None:
         else:
             logging.info("Not resuming since no latest checkpoint found")
 
-    if start_from is None:
+    if start_from is None and cfg.load_path:
         start_from = cfg.load_path
         reset_train, reset_opt = cfg.reset_trainer_state, cfg.reset_optimizer_state
+    elif cfg.initial_model_checkpoint is not None:
+        start_from = cfg.initial_model_checkpoint
+        reset_train, reset_opt = True, True
 
     start_from_unsharded = start_from and file_exists(join(start_from, "model.pt"))
     if start_from_unsharded:
@@ -149,7 +152,7 @@ def run_trainer(cfg: TrainConfig) -> None:
         olmo_model.warmup_cache(device)
         olmo_model.apply_compile(cfg.compile.target, **cfg.compile.compile_args())
 
-    # Shard the model
+    # Shard the model and initialize if we are not loading a checkpoiint
     if cfg.fsdp and not cfg.fsdp.fsdp2:
         log.info("Wrapping model with FDSP...")
         if start_from is None:
@@ -186,7 +189,6 @@ def run_trainer(cfg: TrainConfig) -> None:
     else:
         raise NotImplementedError()
 
-    # This can help prevent OOMs for large models with FSPD1
     torch.cuda.empty_cache()
 
     log.info(f"Total number of parameters: {olmo_model.num_params():,d}")
@@ -292,9 +294,10 @@ def run_trainer(cfg: TrainConfig) -> None:
 
         if start_from:
             # Load the starting checkpoint if there is one
+            t0 = time.perf_counter()
             if start_from_unsharded:
                 log.info(f"Loading unshared model from {start_from}")
-                load_model_state_unsharded(fsdp_model, start_from)
+                load_model_state_unsharded(start_from, fsdp_model)
             else:
                 if reset_train and reset_opt:
                     log.info(f"Loading model from {start_from}")
@@ -308,15 +311,7 @@ def run_trainer(cfg: TrainConfig) -> None:
                     load_optimizer_state=not reset_opt,
                     load_trainer_state=not reset_train,
                 )
-            log.info("Checkpoint successfully loaded")
-
-            # If we have to, set a new scheduler:
-            if reset_opt and not reset_train:
-                trainer.scheduler = BoltOnWarmupScheduler.wrap(
-                    trainer.scheduler,
-                    trainer.global_step,
-                    int(trainer.global_step + cfg.scheduler.t_warmup),
-                )
+            log.info(f"Checkpoint successfully loaded in {time.perf_counter()-t0:0.1f} seconds")
             barrier()
 
         # Ready to start training
