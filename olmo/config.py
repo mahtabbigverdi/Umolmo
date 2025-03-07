@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import asdict
 from enum import Enum
 from typing import List, Type, cast, Optional, Iterable, Dict, Any, TypeVar
@@ -14,7 +15,9 @@ C = TypeVar("C", bound="BaseConfig")
 D = TypeVar("D", bound="DictConfig|ListConfig")
 
 
+@dataclasses.dataclass
 class BaseConfig:
+
     @classmethod
     def update_legacy_settings(cls, config: D) -> D:
         """
@@ -67,6 +70,13 @@ class BaseConfig:
                 if name in out:
                     del out[name]
         return out
+
+    def __setattr__(self, key, value):
+        # Make it impossible to add new attributes on accident, such as by mistyping a field name
+        if any(key == f.name for f in dataclasses.fields(self)):
+            super().__setattr__(key, value)
+        else:
+            raise AttributeError(f"Cannot add new attribute '{key}'")
 
 
 class StrEnum(str, Enum):

@@ -6,6 +6,7 @@ Adapted from
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import math
 from dataclasses import dataclass, field
@@ -23,7 +24,6 @@ from olmo.config import BaseConfig, D, StrEnum
 from olmo.data.collator import MMCollator
 from olmo.data.data_formatter import DataFormatter
 from olmo.data.model_preprocessor import MultiModalPreprocessorConfig, Preprocessor
-from olmo.io import resource_path, file_exists
 from olmo.nn.beam_search import BeamSearch, Constraint, FinalSequenceScorer, Sampler
 from olmo.nn.image_vit import ResidualAttentionBlock, VisionTransformer
 from olmo.nn.llm import LlmConfig, OLMoBlock, LlmActivationCheckpointMode, Llm
@@ -35,7 +35,7 @@ from torch.distributed.fsdp import fully_shard
 log = logging.getLogger(__name__)
 
 
-@dataclass
+@dataclasses.dataclass
 class ModelConfig(BaseConfig):
     """Molmo model configuration"""
 
