@@ -177,12 +177,13 @@ if __name__ == "__main__":
         assert eval_subset_batches > 0
 
     # Fine-tuning settings
-    model_cfg.residual_dropout = 0.1
-    model_cfg.response_residual_dropout = 0.0
-    model_cfg.prompt_type = "uber_model"
-    model_cfg.message_formatting = "role"
-    model_cfg.system_prompt_kind = "demo_or_style"
-    model_cfg.multi_annotation_weighting = "root_subsegments"
+    model_cfg.llm.residual_dropout = 0.1
+    model_cfg.llm.residual_dropout = 0.1
+    model_cfg.llm.response_residual_dropout = 0.0
+    model_cfg.data_formatter.prompt_templates = "uber_model"
+    model_cfg.data_formatter.message_format = "role"
+    model_cfg.data_formatter.system_prompt = "demo_or_style"
+    model_cfg.mm_preprocessor.loss_token_weighting = "root_subsegments"
 
     root_size_mixture: List[RootSizeMixture] = []
     for name, submixture, rate in tasks:
