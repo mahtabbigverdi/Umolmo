@@ -34,6 +34,8 @@ from olmo.util import wait_for
 
 
 log = logging.getLogger(__name__)
+MODEL_FILENAME = "model.pt"
+OPT_FILENAME = "optim.pt"
 
 
 @torch.no_grad()
@@ -43,7 +45,7 @@ def load_model_state_unsharded(dir: PathOrStr, model: nn.Module):
     works for sharded and unsharded models
     """
     if get_global_rank() == 0:
-        state_dict = torch.load(resource_path(dir, Checkpointer.MODEL_FILENAME),
+        state_dict = torch.load(resource_path(dir, MODEL_FILENAME),
                                 map_location="cpu", weights_only=True)
     else:
         state_dict = {}
@@ -54,13 +56,38 @@ def load_model_state_unsharded(dir: PathOrStr, model: nn.Module):
     )
 
 
+def save_unsharded(self, dir: PathOrStr, model: nn.Module, optim: Optimizer,
+                   config: BaseConfig, overwrite: bool = False):
+    """
+    Save model, optim, and other training state to a local or remote directory unsharded
+    :warning This can be very slow if saving to a remote directory
+    """
+    sd_options = dist_cp_sd.StateDictOptions(full_state_dict=True, cpu_offload=True)
+    state_dict = dist_cp_sd.get_model_state_dict(model, options=sd_options)
+    if get_fs_local_rank() == 0:
+        write_file(dir, MODEL_FILENAME, lambda f: torch.save(state_dict, f), overwrite)
+        del state_dict
+    barrier()
+    if optim is not None:
+        optim_dict = dist_cp_sd.get_optimizer_state_dict(model, optim, options=sd_options)
+        if get_fs_local_rank() == 0:
+            write_file(dir, OPT_FILENAME, lambda f: torch.save(optim_dict, f), overwrite)
+            del optim_dict
+        barrier()
+    if get_fs_local_rank() == 0:
+        write_file(dir, Checkpointer.CONFIG_FILENAME, OmegaConf.to_yaml(config, resolve=True), overwrite)
+    return dir
+
+
 def is_unsharded_checkoint(dir: PathOrStr) -> bool:
-    return file_exists(join(dir, "model.pt"))
+    return file_exists(join(dir, MODEL_FILENAME))
 
 
 def load_model_state(dir: PathOrStr, model: nn.Module, cfg: CheckpointerConfig = None):
     """
-    Load model state in-place for sharded or unsharded chechpoint saved in `dir`,
+    Load model state in-place from `dir`
+
+    Works for any combination of sharded/unshared checkpoints and sharded/unshared model
     """
     t0 = time.perf_counter()
     if is_unsharded_checkoint(dir):
@@ -79,6 +106,8 @@ def load_model_state(dir: PathOrStr, model: nn.Module, cfg: CheckpointerConfig =
 
 @dataclasses.dataclass
 class CheckpointerConfig(BaseConfig):
+    """Config for loading/saving sharded checkpoints"""
+
     save_thread_count: Optional[int] = None
     load_thread_count: Optional[int] = None
     pre_download: bool = False
@@ -93,8 +122,6 @@ class CheckpointerConfig(BaseConfig):
 class Checkpointer:
     CONFIG_FILENAME: ClassVar[str] = "config.yaml"
     CHECKPOINT_DIR: ClassVar[str] = "step{step}"
-    MODEL_FILENAME: ClassVar[str] = "model.pt"
-    OPT_FILENAME: ClassVar[str] = "optim.pt"
 
     save_overwrite: bool = False
     save_thread_count: Optional[int] = None
@@ -170,27 +197,6 @@ class Checkpointer:
             )
         if get_fs_local_rank() == 0 and config is not None:
             self.write_file(dir, self.CONFIG_FILENAME, OmegaConf.to_yaml(config, resolve=True))
-
-    def save_unsharded(self, dir: PathOrStr, model: nn.Module, optim: Optimizer, config: BaseConfig):
-        """
-        Save model, optim, and other training state to a local or remote directory unsharded
-        :warning This can be very slow if saving to a remote directory
-        """
-        sd_options = dist_cp_sd.StateDictOptions(full_state_dict=True, cpu_offload=True)
-        state_dict = dist_cp_sd.get_model_state_dict(model, options=sd_options)
-        if get_fs_local_rank() == 0:
-            self.write_file(dir, self.MODEL_FILENAME, lambda f: torch.save(state_dict, f))
-            del state_dict
-        barrier()
-        if optim is not None:
-            optim_dict = dist_cp_sd.get_optimizer_state_dict(model, optim, options=sd_options)
-            if get_fs_local_rank() == 0:
-                self.write_file(dir, self.OPT_FILENAME, lambda f: torch.save(optim_dict, f))
-                del optim_dict
-            barrier()
-        if get_fs_local_rank() == 0:
-            self.write_file(dir, self.CONFIG_FILENAME, OmegaConf.to_yaml(config, resolve=True))
-        return dir
 
     def write_file(self, dir: PathOrStr, fname: str, contents: Union[str, bytes, Callable]) -> PathOrStr:
         return write_file(dir, fname, contents, self.save_overwrite)
