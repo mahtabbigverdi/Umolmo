@@ -489,18 +489,10 @@ class Molmo(nn.Module):
                 all_hidden_states.append(x)
 
             layer_past = None if past_key_values is None else past_key_values[block_idx]
-            if block.block_checkpoint_fn:
-                # shape: (batch_size, seq_len, d_model)
-                x, cache = block.block_checkpoint_fn(
-                    block, x, attention_bias=attention_bias, position_ids=position_ids,
-                    drop_mask=response_mask, layer_past=layer_past, use_cache=use_cache
-                )
-            else:
-                # shape: (batch_size, seq_len, d_model)
-                x, cache = block(
-                    x, attention_bias=attention_bias, position_ids=position_ids,
-                    drop_mask=response_mask, layer_past=layer_past, use_cache=use_cache
-                )
+            x, cache = block(
+                x, attention_bias=attention_bias, position_ids=position_ids,
+                drop_mask=response_mask, layer_past=layer_past, use_cache=use_cache
+            )
             if attn_key_values is not None:
                 assert cache is not None
                 attn_key_values.append(cache)

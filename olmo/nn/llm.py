@@ -635,15 +635,15 @@ class Llm(nn.Module):
             fully_shard([self.ff_out, self.ln_f], **kwargs)
 
     def apply_activation_checkpointing(self):
-        for block in self.blocks:
-            block.apply_activation_checkpointing(self.config.activation_checkpoint)
+        fn = llm_activation_checkpoint_function(self.config)
+        self.blocks = nn.ModuleList([checkpoint_wrapper(block, checkpoint_fn=fn) for block in self.blocks])
 
     def apply_compile(self, **kwargs):
         if self.config.compile == "blocks":
             for block in self.blocks:
                 block.compile(**kwargs)
         elif self.config.compile is not None:
-            raise NotImplementedError(self.config.config)
+            raise NotImplementedError(self.config.compile)
 
     # No forward method since this is only used as part of a `Molmo` model
 
