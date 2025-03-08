@@ -10,6 +10,7 @@ from olmo.data.model_preprocessor import MultiModalPreprocessorConfig
 from olmo.data.pixmo_datasets import PixMoCap
 from launch_scripts.utils import DEBUG_MODEL, VISION_BACKBONES, LLMS, DEFAULT_LOAD_PATHS
 from olmo.eval.loss_evaluator import LossDatasetEvaluatorConfig
+from olmo.he_molmo.he_molmo_trainer import HeMolmoTrainerConfig
 from olmo.nn.model import ModelConfig, FSDPWrapStrategy
 from olmo.train.optim import OptimizerConfig, OptimizerType, SchedulerConfig, SchedulerType
 from olmo.nn.vision_backbone import MolmoVisionBackbone, VisionBackboneConfig, ImagePaddingEmbed
@@ -189,7 +190,7 @@ if __name__ == "__main__":
 
     conf = OmegaConf.create(cfg)
     conf.merge_with_dotlist([clean_opt(arg) for arg in other_args])
-    cfg = cast(TrainConfig, OmegaConf.to_object(conf))
+    cfg = cast(HeMolmoTrainerConfig, OmegaConf.to_object(conf))
     run_trainer(cfg)
 
 

@@ -38,7 +38,7 @@ from olmo.util import (
 log = logging.getLogger("train")
 
 
-def run_trainer(cfg: TrainConfig) -> None:
+def run_trainer(cfg) -> None:
     if cfg.run_name is None:
         log_extra_field("run_name", cfg.run_name)
 

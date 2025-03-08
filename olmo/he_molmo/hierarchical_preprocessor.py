@@ -96,11 +96,6 @@ class HeMultiModalPreprocessor(MultiModalPreprocessor):
     indicate_k: Optional[str] = None
     vector_query: bool = False
 
-    def __post_init__(self):
-        if self.mask_invalid_values or self.use_high_res_col_tokens:
-            assert self.fully_offset_position_ids
-        super().__post_init__()
-
     def image_to_patches_and_tokens(
         self,
         image: ImageInput,

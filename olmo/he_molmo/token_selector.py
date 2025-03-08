@@ -9,7 +9,7 @@ from torch.nn import functional as F
 @dataclasses.dataclass
 class TokenSelectionConfig:
     hard: bool = False
-    noise: float = 0.0,
+    noise: float = 0.0
     loss_weight: float = 0.01
     target_scale: float = 0.7 
     loss_pow: float = 1
@@ -20,7 +20,7 @@ class TokenSelectionConfig:
     offset: float = 0.0
     attention_scaling: Optional[float]=None
 
-    def bulid(self) -> 'TokenSelector':
+    def build(self) -> 'TokenSelector':
         return TokenSelector(self)
 
 

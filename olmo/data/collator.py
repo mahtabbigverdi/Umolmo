@@ -18,14 +18,18 @@ numpy_to_torch_dtype_dict = {
 }
 
 
-def _collate(tensors, max_sequence_length=None, dtype=None, pad=None, pad_value=-1):
+def _collate(tensors, max_sequence_length=None, dtype=None, pad=None, pad_value=-1, allow_truncate=True):
     tensor = [x for x in tensors if x is not None][0]
     if pad == "to_max":
         max_len = max_sequence_length
     else:
         max_len = max((0 if x is None else x.shape[0]) for x in tensors)
         if max_sequence_length:
-            max_len = min(max_len, max_sequence_length)
+            if allow_truncate:
+                max_len = min(max_len, max_sequence_length)
+            elif max_sequence_length < max_len:
+                raise ValueError(f"{max_sequence_length} would truncate a non-truncatable tensor with length of {max_len}")
+
         if pad == "to_128":
             if len(tensor.shape) == 1 and max_len > 32:
                 max_len = 128 * ((max_len + 127) // 128)
@@ -82,7 +86,7 @@ class MMCollator:
 
         for key in self.IMAGE_KEYS:
             if any(key in ex for ex in batch):
-                out[key] = _collate([ex.get(key) for ex in batch], self.max_crops, pad=self.pad)
+                out[key] = _collate([ex.get(key) for ex in batch], self.max_crops, pad=self.pad, allow_truncate=False)
         out["input_ids"] = out.pop("input_tokens")
         if "target_tokens" in out:
             out["labels"] = out.pop("target_tokens")

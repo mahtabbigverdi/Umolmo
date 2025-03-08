@@ -12,8 +12,10 @@ from olmo.data.data_formatter import DataFormatter
 from olmo.data.data_loader import DataConfig
 from olmo.data.model_preprocessor import MultiModalPreprocessorConfig
 from olmo.data.pixmo_datasets import PixMoCap
+from olmo.eval.loss_evaluator import LossDatasetEvaluatorConfig
 from olmo.he_molmo.data_formater import HeDataFormatter
-from olmo.he_molmo.he_molmo import HeMolmolConfig, TokenScorerConfig
+from olmo.he_molmo.he_molmo import TokenScorerConfig, HeMolmoConfig
+from olmo.he_molmo.he_molmo_trainer import HeMolmoTrainerConfig
 from olmo.he_molmo.hierarchical_preprocessor import HePreprocessorConfig
 from olmo.he_molmo.token_selector import TokenSelectionConfig
 from olmo.nn.image_vit import VitConfig
@@ -24,7 +26,7 @@ from olmo.tokenizer import TokenizerConfig
 from olmo.torch_util import get_world_size
 from olmo.train.optim import OptimizerType, OptimizerConfig, SchedulerConfig, SchedulerType
 from olmo.train.trainer_config import SpeedMonitorConfig, WandbConfig, FSDPConfig, FSDPPrecision, \
-    CompilerConfig, BatchDivisor, TrainConfig
+    CompilerConfig, BatchDivisor
 
 from olmo.util import clean_opt, prepare_torchrun_environment
 from olmo.io import add_cached_path_clients
@@ -52,7 +54,7 @@ if __name__ == "__main__":
 
     debug = args.llm in ["debug", "debug-12crop"]
     if debug:
-        model_cfg = HeMolmolConfig(
+        model_cfg = HeMolmoConfig(
             llm=LlmConfig(
                 d_model=128,
                 n_heads=2,
@@ -68,7 +70,7 @@ if __name__ == "__main__":
                 )
             ),
             vision_backbone=VisionBackboneConfig(
-                vit=VitConfig(image_num_layers=1)
+                vit=VitConfig(image_num_layers=1, resize_mode="metaclip"),
             ),
             token_scorer=TokenScorerConfig(
               n_features=512,
@@ -76,12 +78,8 @@ if __name__ == "__main__":
             ),
             token_selection=TokenSelectionConfig(),
             data_formatter=HeDataFormatter(),
-            mm_preprocessor=HePreprocessorConfig(crop_mode="resize", max_crops=1)
+            mm_preprocessor=HePreprocessorConfig(crop_mode="overlap-and-resize-c2", max_crops=6)
         )
-        model_cfg.vision_backbone.resize_mode = "metaclip"
-        model_cfg.max_crops = 12
-        model_cfg.crop_mode = "overlap-and-resize-c2"
-        model_cfg.system_prompt_kind = 'style_and_length'
 
         global_batch_size = max(8, get_world_size())
         model_init = None
@@ -112,20 +110,19 @@ if __name__ == "__main__":
         #     additional_vocab_size=128,
         # )
 
-    assert model_cfg.vision_backbone.resize_mode == "metaclip"
-    model_cfg.image_padding_embed = None
-    model_cfg.bi_directional_image_attn = "within_image"
+    model_cfg.vision_backbone.image_padding_embed = None
+    model_cfg.bi_directional_attn = "within_image"
 
     model_cfg.token_selection.n_features = 512
     seq_len = 768 + 512
 
-    evaluator = DatasetEvaluatorConfig(
+    evaluator = LossDatasetEvaluatorConfig(
         label="val",
         max_examples=eval_examples,
         device_batch_size=args.device_eval_batch_size,
         data=DataConfig(
             seed="${seed}",
-            dataset=args.dataset,
+            dataset="pixmo_cap_transcript",
             shuffle=False,
             split="validation",
             drop_last=True,
@@ -137,7 +134,7 @@ if __name__ == "__main__":
     )
 
     warmup_scale = 2 if args.two_epochs else 1
-    cfg = TrainConfig(
+    cfg = HeMolmoTrainerConfig(
         run_name="multitask_train",
         save_folder="debug_run" if debug else omegaconf.MISSING,
         seed=6198,
@@ -232,5 +229,5 @@ if __name__ == "__main__":
 
     conf = OmegaConf.create(cfg)
     conf.merge_with_dotlist([clean_opt(arg) for arg in other_args])
-    cfg = cast(TrainConfig, OmegaConf.to_object(conf))
+    cfg = cast(HeMolmoTrainerConfig, OmegaConf.to_object(conf))
     run_trainer(cfg)

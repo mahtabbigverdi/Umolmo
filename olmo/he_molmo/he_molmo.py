@@ -23,7 +23,7 @@ from olmo.nn.legacy_config import convert_legacy_config
 from olmo.nn.llm import LlmConfig, Llm
 from olmo.nn.model import ModelConfig, OLMoOutput, OLMoGenerateOutput
 from olmo.nn.vision_backbone import VisionBackboneConfig, MolmoVisionBackbone
-from olmo.torch_util import BufferCache
+from olmo.torch_util import BufferCache, get_default_device
 from olmo.util import flatten_list
 
 
@@ -51,7 +51,7 @@ class TokenScorerConfig(BaseConfig):
 
 
 @dataclasses.dataclass
-class HeMolmolConfig(BaseConfig):
+class HeMolmoConfig(BaseConfig):
     """Molmo model configuration"""
 
     llm: LlmConfig = field(default_factory=LlmConfig)
@@ -153,7 +153,7 @@ class MLP(nn.Module):
 
 class HeMolmo(nn.Module):
 
-    def __init__(self, config: HeMolmolConfig, device=None):
+    def __init__(self, config: HeMolmoConfig, device=None):
         super().__init__()
         self.config = config
         self.__cache = BufferCache()
@@ -161,15 +161,16 @@ class HeMolmo(nn.Module):
         self.vision_backbone: Optional[MolmoVisionBackbone] = None
         self.vision_backbone = self.config.vision_backbone.build(self.config.llm, device)
         self.token_selector = config.token_selection.build()
-        if self.config.bi_directional_attn == "image_tokens":
-            special_ids = tokenizer.get_special_token_ids(self.config.build_tokenizer())
-            self.__cache["image_tokens"] = torch.as_tensor([special_ids[x] for x in [
+        if self.config.bi_directional_attn:
+            self.special_ids = tokenizer.get_special_token_ids(self.config.build_tokenizer())
+            self.__cache["image_tokens"] = torch.as_tensor([self.special_ids[x] for x in [
                 tokenizer.DEFAULT_IMAGE_PATCH_TOKEN,
                 tokenizer.DEFAULT_IM_COL_TOKEN,
                 tokenizer.DEFAULT_IM_START_TOKEN,
                 tokenizer.DEFAULT_IM_END_TOKEN,
-            ]], dtype=torch.long)
+            ]], dtype=torch.long, device=get_default_device())
             ts_config = config.token_selection
+        self._image_end_token_id = self.special_ids[tokenizer.DEFAULT_IM_END_TOKEN]
 
         ts_config = self.config.token_scorer
         llm_cfg = self.config.llm
@@ -246,6 +247,8 @@ class HeMolmo(nn.Module):
 
     def warmup_cache(self, device):
         """Pre-fill the buffer-cache"""
+        for val in self.__cache.values():
+            val.to(device)
         if self.transformer.blocks[0].rotary_emb is not None:
             self.transformer.blocks[0].rotary_emb.warmup_cache(device)
 
@@ -254,7 +257,7 @@ class HeMolmo(nn.Module):
         if self.vision_backbone is not None:
             self.vision_backbone.apply_fsdp2(**fully_shard_kwargs)
         self.transformer.apply_fsdp2(**fully_shard_kwargs)
-        fully_shard(list(self.get_token_scoring_modules), **fully_shard_kwargs)
+        fully_shard(list(self.get_token_scoring_modules()), **fully_shard_kwargs)
         fully_shard(self, **fully_shard_kwargs)
 
     def get_fsdp_wrap_policy(self, wrap_strategy):
@@ -264,7 +267,7 @@ class HeMolmo(nn.Module):
         parameters = list(self.vision_backbone.get_connector_parameters())
         if self.config.llm.additional_vocab_size:
             parameters.append(self.transformer.wte.new_embedding)
-        return parameters + flatten_list(x.get_parameters() for x in self.get_token_scoring_modules())
+        return parameters + flatten_list(x.parameters() for x in self.get_token_scoring_modules())
 
     def get_vit_parameters(self) -> Iterator[torch.Tensor]:
         if self.vision_backbone is None:
@@ -381,22 +384,10 @@ class HeMolmo(nn.Module):
             # shape: (batch_size, num_image, num_patch, d_model)
             # cls_embed: (batch_size, num_image, d_model)
             num_image, num_patch = images.shape[1:3]
-            if self.config.token_selection.interpolate_low_res_features:
-                all_image_features, _ = self.vision_backbone(images, image_masks)
-                low_image_features = all_image_features[:, 0]
-                high_image_features = all_image_features[:, 1:]
-                high_image_features = high_image_features.view(batch_size, (num_image-1) * 144, -1)
-                low_res_to_high_res = high_res_patch_data[:, :, :, :576]
-                low_res_to_high_res = torch.where(low_res_to_high_res < 0, 0, low_res_to_high_res)
-                low_res_inter = torch.einsum("bhd,bhl->bld", high_image_features, low_res_to_high_res.reshape([batch_size, -1, 576]))
-                low_res_inter = einops.rearrange(low_res_inter, 'b (h dh w dw) c -> b (h w) (dh dw c)',w=12, h=12, dh=2, dw=2)
-                low_res_inter = torch.concatenate([low_res_inter.detach(), low_image_features], dim=-1)
-                low_image_features = self.low_res_features_ln(low_res_inter)
-            else:
-                image_features_, aux_features = self.vision_backbone(images, image_masks)
-                low_image_features = image_features_[:, 0]
-                high_image_features = image_features_[:, 1:]
-                high_image_features = high_image_features.view(batch_size, (num_image-1) * 144, -1)
+            image_features_ = self.vision_backbone(images, image_masks)
+            low_image_features = image_features_[:, 0]
+            high_image_features = image_features_[:, 1:]
+            high_image_features = high_image_features.view(batch_size, (num_image-1) * 144, -1)
         else:
             low_image_features, high_image_features = None, None
 
@@ -495,14 +486,9 @@ class HeMolmo(nn.Module):
                     for block_idx, block in enumerate(self.transformer.blocks[:ts_cfg.n_low_res_layers]):
                         enable_grad = ts_cfg.bp_low_res_start <= block_idx < ts_cfg.bp_low_res_end and self.training
                         with torch.set_grad_enabled(enable_grad):
-                            if block.block_checkpoint_fn:
-                                low_res_x, cache = block.block_checkpoint_fn(
-                                    block, low_res_x, drop_mask=low_res_response_mask, attention_bias=low_res_bias, position_ids=low_res_pos_ids,
-                                    use_cache=use_low_res_cache)
-                            else:
-                                low_res_x, cache = block(
-                                    low_res_x, drop_mask=low_res_response_mask, attention_bias=low_res_bias, position_ids=low_res_pos_ids,
-                                    use_cache=use_low_res_cache)
+                            low_res_x, cache = block(
+                                low_res_x, drop_mask=low_res_response_mask, attention_bias=low_res_bias, position_ids=low_res_pos_ids,
+                                use_cache=use_low_res_cache)
                         if use_low_res_cache:
                             low_res_cache.append(cache)
                         if ts_cfg.source and "all_layers" in ts_cfg.source:
@@ -695,18 +681,10 @@ class HeMolmo(nn.Module):
         all_hidden_states = []
         for block_idx, block in enumerate(self.transformer.blocks):
             layer_past = None if past_key_values is None else past_key_values[block_idx]
-            if block.block_checkpoint_fn:
-                #     shape: (batch_size, seq_len, d_model)
-                x, cache = block.block_checkpoint_fn(
-                    block, x, attention_bias=attention_bias, position_ids=position_ids, drop_mask=response_mask,
-                    layer_past=layer_past, use_cache=use_cache, token_scores=token_scores
-                )
-            else:
-                # shape: (batch_size, seq_len, d_model)
-                x, cache = block(
-                    x, attention_bias=attention_bias, position_ids=position_ids, drop_mask=response_mask,
-                    layer_past=layer_past, use_cache=use_cache, token_scores=token_scores,
-                )
+            x, cache = block(
+                x, attention_bias=attention_bias, position_ids=position_ids, drop_mask=response_mask,
+                layer_past=layer_past, use_cache=use_cache, token_scores=token_scores,
+            )
 
             if attn_key_values is not None:
                 assert cache is not None

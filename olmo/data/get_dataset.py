@@ -54,8 +54,12 @@ def get_dataset_by_name(dataset_name, split) -> Dataset:
         return PixMoCap(split, mode="transcript_and_caption")
     if dataset_name in ["cockatoo_712k_sept6", "pixmo_cap"]:
         return PixMoCap(split, mode="captions")
-    if dataset_name in ["pixmo_cap_transcript"]:
+    if dataset_name in ["pixmo_cap_transcript", "pixmo_transcript"]:
         return PixMoCap(split, mode="transcript")
+    # if dataset_name in ["cockatoo_712k_sept6", "pixmo_cap"]:
+    #     return PixMoCap(split, mode="captions")
+    # if dataset_name in ["pixmo_transcript"]:
+    #     return PixMoCap(split, mode="transcript")
 
     elif dataset_name in ["pixmo_clocks"]:
         return PixMoClocks(split=split)

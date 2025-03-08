@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import dataclasses
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from typing import (
     Any,
     Dict,
@@ -219,7 +220,7 @@ class RuntimeData(BaseConfig):
 
 
 @dataclass
-class TrainConfig(BaseConfig):
+class _TrainerConfig(BaseConfig):
     """
     OLMo training configuration.
     """
@@ -242,11 +243,6 @@ class TrainConfig(BaseConfig):
     dry_run: bool = False
     """
     If ``True``, don't actually train.
-    """
-
-    model: ModelConfig = field(default_factory=ModelConfig)
-    """
-    OLMo Model configuration.
     """
 
     ft_llm: bool = True
@@ -547,4 +543,9 @@ class TrainConfig(BaseConfig):
             return torch.float32
         else:
             raise ValueError(f"Unexpected precision type '{self.precision}'")
+
+
+@dataclass
+class TrainConfig(_TrainerConfig):
+    model: ModelConfig = field(default_factory=ModelConfig)
 

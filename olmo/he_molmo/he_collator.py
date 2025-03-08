@@ -15,7 +15,6 @@ from olmo.data.model_preprocessor import select_tiling, batch_pixels_to_patches,
 from olmo.nn.vision_backbone import VisionBackboneConfig
 
 
-
 class HeMMCollator:
     """Converts list of examples from our datasets into a tensor batch"""
 
@@ -68,8 +67,9 @@ class HeMMCollator:
             if any(key in ex for ex in batch):
                 out[key] = _collate([ex.get(key) for ex in batch], self.max_crops, pad=self.pad, allow_truncate=False)
 
-        out["high_res_patch_data"] = _collate([ex["high_res_patch_data"] for ex in batch], self.max_crops-1, pad=self.pad,
-                                              allow_truncate=False)
+        out["high_res_patch_data"] = _collate(
+            [ex["high_res_patch_data"] for ex in batch], self.max_crops-1, pad=self.pad,
+            allow_truncate=False)
 
         # Note these are NOT padded to a max length
         out["high_res_features_weights"] = _collate([ex["high_res_features_weights"] for ex in batch], None, pad_value=0)
