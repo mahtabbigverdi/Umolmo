@@ -43,9 +43,9 @@ if __name__ == "__main__":
     if debug:
         model_cfg = DEBUG_MODEL
         if args.llm == "debug-12crop":
-            model_cfg.max_crops = 12
-            model_cfg.crop_mode = "overlap-and-resize-c2"
-        model_cfg.system_prompt_kind = 'style_and_length'
+            model_cfg.mm_preprocessor.max_crops = 12
+            model_cfg.mm_preprocessor.crop_mode = "overlap-and-resize-c2"
+        model_cfg.data_formatter.system_prompt = 'style_and_length'
 
         global_batch_size = 8
         model_init = None

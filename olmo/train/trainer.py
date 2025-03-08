@@ -566,14 +566,15 @@ class Trainer:
     ) -> Tuple:
         # shape: (batch_size, seq_len, vocab_size)
         loss_masks = batch["loss_masks"]
+        labels = batch["labels"]
         response_mask = (loss_masks > 0)
-        with torch.autocast("cuda", enabled=True, dtype=self.cfg.autocast_precision):
+        with torch.autocast("cuda", dtype=self.cfg.autocast_precision):
             model_out = self.fsdp_model(
                 **{k: v for k, v in batch.items() if k not in ["labels", "loss_masks"]},
                 response_mask=response_mask)
         logits = model_out.logits
-        loss_masks = batch["loss_masks"] * (batch["loss_masks"] > 0)
-        labels = batch["labels"].long()
+        loss_masks = loss_masks * (loss_masks > 0)
+        labels = labels.long()
         labels.masked_fill_(~(loss_masks > 0), -100)
         labels = labels.view(-1)
         logits_for_loss = logits.to(torch.float32).view(-1, logits.size(-1)) # for numerical stability
