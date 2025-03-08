@@ -108,7 +108,8 @@ class DataConfig(BaseConfig):
         return DataLoader(
             dataset,
             batch_size=batch_size,
-            collate_fn=model_config.build_collator(self.sequence_length, self.pad),
+            collate_fn=model_config.build_collator(
+                self.sequence_length, self.pad, include_metadata=include_metadata),
             num_workers=self.num_workers,
             sampler=sampler,
             pin_memory=self.pin_memory,
@@ -175,7 +176,8 @@ class DataConfig(BaseConfig):
             dataset,
             batch_size=dataset.device_batch_size,
             drop_last=self.drop_last,
-            collate_fn=model_config.build_collator(self.sequence_length, self.pad),
+            collate_fn=model_config.build_collator(
+                self.sequence_length, self.pad, include_metadata=False),
             num_workers=self.num_workers,
             pin_memory=self.pin_memory,
             prefetch_factor=None if self.num_workers == 0 else self.prefetch_factor,

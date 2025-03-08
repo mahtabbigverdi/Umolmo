@@ -87,12 +87,12 @@ class ModelConfig(BaseConfig):
             is_training=is_training,
         )
 
-    def build_collator(self, sequence_length, pad_mode: str) -> MMCollator:
+    def build_collator(self, sequence_length, pad_mode: str, include_metadata=True) -> MMCollator:
         """Collators for tensors from the preprocessor produces"""
         return MMCollator(
             sequence_length,
             max_crops=self.mm_preprocessor.get_max_crops(),
-            include_metadata=True,
+            include_metadata=include_metadata,
             pad=pad_mode,
         )
 
