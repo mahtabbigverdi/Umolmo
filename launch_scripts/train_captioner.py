@@ -13,7 +13,7 @@ from olmo.eval.loss_evaluator import LossDatasetEvaluatorConfig
 from olmo.nn.model import ModelConfig, FSDPWrapStrategy
 from olmo.train.optim import OptimizerConfig, OptimizerType, SchedulerConfig, SchedulerType
 from olmo.nn.vision_backbone import MolmoVisionBackbone, VisionBackboneConfig, ImagePaddingEmbed
-from scripts.train import run_trainer as train
+from scripts.train import run_trainer as train, run_trainer
 
 from olmo.data.data_loader import DataConfig
 from olmo.train.trainer_config import BatchDivisor, SpeedMonitorConfig, \
@@ -190,5 +190,7 @@ if __name__ == "__main__":
     conf = OmegaConf.create(cfg)
     conf.merge_with_dotlist([clean_opt(arg) for arg in other_args])
     cfg = cast(TrainConfig, OmegaConf.to_object(conf))
-    train(cfg)
+    run_trainer(cfg)
+
+
 
