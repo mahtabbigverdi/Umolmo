@@ -149,7 +149,7 @@ def run_trainer(cfg: TrainConfig) -> None:
 
     # Shard the model, and initialize if we are not loading a checkpoiint
     if cfg.fsdp and not cfg.fsdp.fsdp2:
-        log.info("Wrapping model with FDSP...")
+        log.info("Wrapping model with FSDP...")
         if start_from is None:
             # Just run our `reset_with_pretrained_weights` on rank0 and broadcast so we
             # don't have to port all the init logic to a FSDP param_init_fn function
@@ -175,7 +175,7 @@ def run_trainer(cfg: TrainConfig) -> None:
         )
 
     elif cfg.fsdp.fsdp2:
-        log.info("Wrapping model with FDSP2...")
+        log.info("Wrapping model with FSDP2...")
         olmo_model.apply_fsdp2(**cfg.fsdp.get_fsd2_args(cfg.autocast_precision))
         olmo_model.to_empty(device=device)
         if start_from is None:
@@ -221,8 +221,9 @@ def run_trainer(cfg: TrainConfig) -> None:
         else:
             beaker_logger = None
     else:
-        if cfg.beaker_log_interval > 0:
-            logging.info(f"Beaker log interval set to {cfg.beaker_log_interval}, but beaker env variables are missing")
+        if cfg.beaker_log_interval > 0 and "BEAKER_EXPERIMENT_ID" in os.environ:
+            logging.info(f"Beaker log interval set to {cfg.beaker_log_interval}, but beaker "
+                         f"token is missing, so beaker logging will turned off")
         beaker_logger = None
 
     # Maybe start W&B run.

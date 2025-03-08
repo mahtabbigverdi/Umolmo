@@ -1,8 +1,9 @@
 from olmo.data.academic_datasets import (
-    ChartQa, ScienceQAImageOnly, TextVqa, OkVqa, DocQa,
-    InfoQa, AOkVqa, Vqa2, PlotQa, FigureQa, DvQa, SceneTextQa, TabWMPDirectAnswer,
+    ScienceQAImageOnly, TextVqa, OkVqa, DocQa,
+    AOkVqa, Vqa2, PlotQa, FigureQa, DvQa, TabWMPDirectAnswer,
     AndroidControl, TallyQa, AI2D, CountBenchQa, RealWorldQa, MathVista, MMMU, ClockBench
 )
+from olmo.data.academic_datasets_manual import ChartQa, InfoQa, SceneTextQa
 from olmo.data.dataset import Dataset
 from olmo.data.pixmo_datasets import (
     PixMoDocs, PixMoCount, PixMoPoints, PixMoCapQa, PixMoCap, PixMoPointExplanations,
@@ -62,7 +63,6 @@ def get_dataset_by_name(dataset_name, split) -> Dataset:
     if dataset_name == "pointing_eval":
         assert split == "test"
         return PixMoPointsEval()
-
 
     # Academic datasets
     if dataset_name == "android_control":

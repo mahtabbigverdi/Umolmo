@@ -6,7 +6,6 @@ from olmo.data.data_formatter import DataFormatter
 from olmo.data.model_preprocessor import MultiModalPreprocessorConfig
 from olmo.nn.image_vit import VitConfig
 from olmo.nn.llm import LlmConfig
-from olmo.nn.model import ModelConfig
 from olmo.nn.vision_backbone import VisionBackboneConfig
 
 

@@ -340,7 +340,7 @@ Only some datasets are support on GFS, including all the Pixmo datasets.
 Setup wandb and access keys (first store your keys as beaker secrets):
 ```
 --env WANDB_ENTITY=prior-ai2 
---env WANDB_PROJECT=cockatoo
+--env WANDB_PROJECT=molmo
 --env-secret WANDB_API_KEY=YOUR_WANDB_KEY_SECRET_NAME
 ```
 
