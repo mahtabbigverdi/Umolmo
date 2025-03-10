@@ -17,7 +17,7 @@ class TokenSelectionConfig:
     loss: str = "batch-mean"
     scale_at_test: bool = False
     rescale: float = 1  
-    offset: float = 0.0
+    offset: float = 0.2
     attention_scaling: Optional[float]=None
 
     def build(self) -> 'TokenSelector':
@@ -61,10 +61,7 @@ class TokenSelector(nn.Module):
         # scores = scores - (scores * mask).sum(-1, keepdim=True) / mask.sum(-1, keepdim=True)
         if input_mask is not None:
             scores = torch.where(input_mask, scores, self.MIN)
-        if topk_mask is None:
-            k = cfg.n_features
-        else:
-            k = topk_mask.shape[-1]
+        k = topk_mask.shape[-1]
 
         metrics = {}
         if not self.training:
@@ -104,8 +101,7 @@ class TokenSelector(nn.Module):
             importance_score_mean = (importance_scores*loss_mask).sum() / n_valid
 
             if cfg.loss == "batch-mean":
-                loss = torch.pow(torch.abs(
-                    importance_score_mean - cfg.target_scale), cfg.loss_pow) * cfg.loss_weight
+                loss = torch.pow(torch.abs(importance_score_mean - cfg.target_scale), cfg.loss_pow) * cfg.loss_weight
             elif cfg.loss == "example-mean":
                 importance_score_mean = ((importance_scores*loss_mask).sum(-1) / loss_mask.sum(-1))
                 loss = torch.pow(torch.abs(
@@ -117,7 +113,6 @@ class TokenSelector(nn.Module):
             else:
                 raise NotImplementedError(cfg.loss)
 
-            importance_score_mean = (importance_scores*loss_mask).sum() / n_valid
             metrics["TokenScaleMean"] = importance_score_mean
             metrics["TokenScaleVar"] = (importance_scores - importance_score_mean).square().sum() / n_valid
             metrics["TokenScale80"] = ((importance_scores > 0.80).float()*loss_mask).sum() / n_valid

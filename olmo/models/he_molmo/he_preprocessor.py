@@ -43,6 +43,9 @@ class HePreprocessorConfig(BaseConfig):
     max_query_len: Optional[int] = None
     """Max query length"""
 
+    num_high_res_features: Optional[int] = 512
+    """How many high-res features to use"""
+
     def get_max_crops(self) -> int:
         """Max numbers of that can be built for one image"""
         if self.crop_mode == "resize":
@@ -60,8 +63,8 @@ class HePreprocessorConfig(BaseConfig):
 
         return HeMultiModalPreprocessor(
             tokenizer,
+            num_high_res_features=self.num_high_res_features,
             loss_token_weighting=self.loss_token_weighting,
-
             normalize=vit.normalize,
             crop_mode=self.crop_mode,
             max_crops=self.max_crops,
@@ -84,11 +87,11 @@ class HePreprocessorConfig(BaseConfig):
 class HeMultiModalPreprocessor(MultiModalPreprocessor):
     num_high_res_features: int=512
     max_query_len: Optional[int] = None
-    fully_offset_position_ids: Optional[bool] = False
+    fully_offset_position_ids: Optional[bool] = True
     multi_res_selection: Optional[int] = None
     multi_res_min: Optional[int] = None
     use_high_res_col_tokens: bool = True
-    mask_invalid_values: bool = False
+    mask_invalid_values: bool = True
     debug: Optional[str] = None
     indicate_k: Optional[str] = None
     vector_query: bool = False

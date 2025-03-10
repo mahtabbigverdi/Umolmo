@@ -5,7 +5,7 @@ from olmo.models.molmo.data_formatter import DataFormatter
 
 
 class HeDataFormatter(DataFormatter):
-    """The HE models puts the query BEFORE the image, so we have a custom preprocess to do that"""
+    """The HE model needs the query BEFORE the image"""
 
     def _format_example(self, message, example, is_training, for_inference, rng):
         metadata = {}

@@ -1,20 +1,20 @@
 import logging
 from typing import Dict
 
-from olmo.data.data_formatter import DataFormatter
+from olmo.models.molmo.data_formatter import DataFormatter
 from olmo.data.data_loader import DataConfig
-from olmo.data.model_preprocessor import MultiModalPreprocessorConfig
+from olmo.models.molmo.model_preprocessor import MultiModalPreprocessorConfig
 from olmo.eval.inf_evaluator import InfDatasetEvaluatorConfig, EvaluatorConfig
 from olmo.nn.image_vit import VitConfig
 from olmo.nn.llm import LlmConfig, AttentionType, LayerNormType
-from olmo.nn.model import ModelConfig
+from olmo.models.molmo.molmo import MolmoConfig
 from olmo.tokenizer import TokenizerConfig
 from olmo.nn.vision_backbone import VisionBackboneConfig
 
 log = logging.getLogger(__name__)
 
 
-DEBUG_MODEL = ModelConfig(
+DEBUG_MODEL = MolmoConfig(
     llm=LlmConfig(
         d_model=128,
         n_heads=2,

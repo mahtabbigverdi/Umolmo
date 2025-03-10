@@ -5,16 +5,16 @@ from typing import cast
 
 from omegaconf import omegaconf, OmegaConf
 
-from olmo.data.data_formatter import DataFormatter
-from olmo.data.model_preprocessor import MultiModalPreprocessorConfig
+from olmo.models.molmo.data_formatter import DataFormatter
+from olmo.models.molmo.model_preprocessor import MultiModalPreprocessorConfig
 from olmo.data.pixmo_datasets import PixMoCap
 from launch_scripts.utils import DEBUG_MODEL, VISION_BACKBONES, LLMS, DEFAULT_LOAD_PATHS
 from olmo.eval.loss_evaluator import LossDatasetEvaluatorConfig
-from olmo.he_molmo.he_molmo_trainer import HeMolmoTrainerConfig
-from olmo.nn.model import ModelConfig, FSDPWrapStrategy
+from olmo.models.molmo.molmo import MolmoConfig
+from olmo.models.model import FSDPWrapStrategy
 from olmo.train.optim import OptimizerConfig, OptimizerType, SchedulerConfig, SchedulerType
-from olmo.nn.vision_backbone import MolmoVisionBackbone, VisionBackboneConfig, ImagePaddingEmbed
-from scripts.train import run_trainer as train, run_trainer
+from olmo.nn.vision_backbone import VisionBackboneConfig, ImagePaddingEmbed
+from scripts.train import run_trainer
 
 from olmo.data.data_loader import DataConfig
 from olmo.train.trainer_config import BatchDivisor, SpeedMonitorConfig, \
@@ -63,7 +63,7 @@ if __name__ == "__main__":
         vit_layers = [-2, -9] if args.vision_backbone == "openai" else [-3, -9]
 
         image_vit = VISION_BACKBONES[args.vision_backbone]
-        model_cfg = ModelConfig(
+        model_cfg = MolmoConfig(
             llm=replace(
                 LLMS[args.llm],
                 init_path=DEFAULT_LOAD_PATHS[args.llm],
@@ -190,7 +190,7 @@ if __name__ == "__main__":
 
     conf = OmegaConf.create(cfg)
     conf.merge_with_dotlist([clean_opt(arg) for arg in other_args])
-    cfg = cast(HeMolmoTrainerConfig, OmegaConf.to_object(conf))
+    cfg = cast(TrainConfig, OmegaConf.to_object(conf))
     run_trainer(cfg)
 
 

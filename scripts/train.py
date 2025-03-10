@@ -17,7 +17,7 @@ from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 
 from olmo.exceptions import OLMoCliError, OLMoConfigurationError
 from olmo.io import file_exists, write_file
-from olmo.train.checkpointer import Checkpointer, load_model_state_unsharded
+from olmo.train.checkpointer import Checkpointer, load_model_state_unsharded, is_unsharded_checkoint
 from olmo.torch_util import (
     barrier,
     get_global_rank,
@@ -38,7 +38,7 @@ from olmo.util import (
 log = logging.getLogger("train")
 
 
-def run_trainer(cfg) -> None:
+def run_trainer(cfg: TrainConfig) -> None:
     if cfg.run_name is None:
         log_extra_field("run_name", cfg.run_name)
 
@@ -78,7 +78,7 @@ def run_trainer(cfg) -> None:
             reset_opt, reset_train = False, False
             is_resuming = True
         else:
-            logging.info("Not resuming since no latest checkpoint found")
+            log.info("Not resuming since no latest checkpoint found")
 
     if start_from is None and cfg.load_path:
         start_from = cfg.load_path
@@ -87,7 +87,7 @@ def run_trainer(cfg) -> None:
         start_from = cfg.initial_model_checkpoint
         reset_train, reset_opt = True, True
 
-    start_from_unsharded = start_from and file_exists(join(start_from, "model.pt"))
+    start_from_unsharded = start_from and is_unsharded_checkoint(start_from)
     if start_from_unsharded:
         assert reset_opt and reset_train, "Unshared checkpoints do not support optim/train state loading"
 
@@ -100,15 +100,16 @@ def run_trainer(cfg) -> None:
     barrier()
 
     # Init the model
+    model_cfg = cfg.model
     with torch.device("meta"):
-        olmo_model = cfg.model.build_model()
+        olmo_model = model_cfg.build_model()
 
     # Freeze parameters depending on what we are tuning
-    if cfg.model.vision_backbone is not None and not cfg.ft_connector:
+    if not cfg.ft_connector:
         log.info(f"Freezing connector")
         for param in olmo_model.get_connector_parameters():
             param.requires_grad = False
-    if cfg.model.vision_backbone is not None and not cfg.ft_vit:
+    if not cfg.ft_vit:
         log.info(f"Freezing vision backbone")
         for param in olmo_model.get_vit_parameters():
             param.requires_grad = False
@@ -140,20 +141,19 @@ def run_trainer(cfg) -> None:
     # Do some other model setup
     if cfg.activation_checkpointing:
         olmo_model.apply_activation_checkpointing()
+    # Stops the compiler get confused due to cache modifications
+    olmo_model.warmup_cache(device)
     if cfg.compile:
-        # We want the cache to be pre-filled to stop the compiler sometimes getting confused
-        # due to cache modifications, otherwise compiling + FSPD + activation checkpoints
-        # can lead to runtime errors
-        olmo_model.warmup_cache(device)
         olmo_model.apply_compile(**cfg.compile.compile_args())
 
-    # Shard the model, and initialize if we are not loading a checkpoiint
+    # Shard the model, and initialize if we are not loading a checkpoint
     if cfg.fsdp and not cfg.fsdp.fsdp2:
         log.info("Wrapping model with FSDP...")
         if start_from is None:
             # Just run our `reset_with_pretrained_weights` on rank0 and broadcast so we
             # don't have to port all the init logic to a FSDP param_init_fn function
             if get_global_rank() == 0:
+                # Load on CPU in case model doesn't fit on a single GPU
                 olmo_model = olmo_model.to_empty(device="cpu")
                 olmo_model.reset_with_pretrained_weights()
             sync_module_states = True

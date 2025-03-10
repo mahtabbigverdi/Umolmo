@@ -2,8 +2,8 @@ from typing import Dict
 
 from omegaconf import omegaconf as om
 
-from olmo.data.data_formatter import DataFormatter
-from olmo.data.model_preprocessor import MultiModalPreprocessorConfig
+from olmo.models.molmo.data_formatter import DataFormatter
+from olmo.models.molmo.model_preprocessor import MultiModalPreprocessorConfig
 from olmo.nn.image_vit import VitConfig
 from olmo.nn.llm import LlmConfig
 from olmo.nn.vision_backbone import VisionBackboneConfig

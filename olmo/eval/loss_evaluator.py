@@ -2,16 +2,19 @@
 import logging
 from dataclasses import dataclass, field
 from itertools import islice
-from typing import Any, Dict, Optional, Union, List
+from typing import Dict, Optional, Union
 
 import torch
+import torchmetrics
+import wandb
 from torch.utils.data import DataLoader
 from torchmetrics import Metric, MeanMetric
 from tqdm import tqdm
+from wandb.sdk.data_types.base_types.wb_value import WBValue
 
 from olmo.config import BaseConfig, D
 from olmo.data.data_loader import DataConfig
-from olmo.nn.model import ModelConfig
+from olmo.models.molmo.molmo import MolmoConfig
 from olmo.torch_util import move_to_device, get_world_size
 
 __all__ = ["LossMetrics", "LossDatasetEvaluator", "LossDatasetEvaluatorConfig"]
@@ -36,9 +39,14 @@ class LossMetrics:
             for metric in self.eval_metrics.values():
                 metric.reset()
 
-    def compute(self) -> Dict[str, float]:
-        return {k: v.compute().item()
-                for k, v in self.eval_metrics.items() if v.weight > 0}
+    def compute(self) -> Dict[str, Union[float, WBValue]]:
+        metrics = {}
+        for k, v in self.eval_metrics.items():
+            if k == "HighResSelection":
+                metrics[k] = wandb.Histogram(v.compute().detach().cpu().numpy(), num_bins=100)
+            elif v.weight > 0:
+                metrics[k] = v.compute().item()
+        return metrics
 
     def update(
         self,
@@ -58,12 +66,17 @@ class LossMetrics:
         self.eval_metrics["Accuracy"].update(accuracy/total_weight, total_weight)
         if model_out.metrics is not None:
             for name, val in model_out.metrics.items():
-                if name not in self.eval_metrics:
-                    self.eval_metrics[name] = MeanMetric("error").to(cross_entropy_loss.device)
-                if isinstance(val, tuple):
-                    self.eval_metrics[name].update(val[0]/val[1], val[1])
+                if name == "HighResSelection":
+                    if name not in self.eval_metrics:
+                        self.eval_metrics[name] = torchmetrics.CatMetric("error")
+                    self.eval_metrics[name].update(val)
                 else:
-                    self.eval_metrics[name].update(val, 1)
+                    if name not in self.eval_metrics:
+                        self.eval_metrics[name] = MeanMetric("error").to(cross_entropy_loss.device)
+                    if isinstance(val, tuple):
+                        self.eval_metrics[name].update(val[0]/val[1], val[1])
+                    else:
+                        self.eval_metrics[name].update(val, 1)
 
 
 @dataclass
@@ -155,7 +168,7 @@ class LossDatasetEvaluatorConfig(BaseConfig):
             config.data = DataConfig.update_legacy_settings(config.data)
         return config
 
-    def build_dataset_evaluator(self, model_config: ModelConfig, device) -> LossDatasetEvaluator:
+    def build_dataset_evaluator(self, model_config: MolmoConfig, device) -> LossDatasetEvaluator:
         eval_loader = self.data.build_eval_dataloader(
             model_config, self.device_batch_size, for_inference=False)
         if self.max_examples is not None:

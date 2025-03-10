@@ -237,22 +237,6 @@ def init_normal(
         nn.init.zeros_(module.bias)
 
 
-def should_checkpoint_block(strategy, block_idx: int) -> bool:
-    if strategy is None:
-        return False
-    elif (
-        (strategy == LlmActivationCheckpointMode.whole_layer)
-        or (strategy == LlmActivationCheckpointMode.one_in_two and block_idx % 2 == 0)
-        or (strategy == LlmActivationCheckpointMode.one_in_three and block_idx % 3 == 0)
-        or (strategy == LlmActivationCheckpointMode.one_in_four and block_idx % 4 == 0)
-        or (strategy == LlmActivationCheckpointMode.two_in_three and block_idx % 3 != 0)
-        or (strategy == LlmActivationCheckpointMode.three_in_four and block_idx % 4 != 0)
-    ):
-        return True
-    else:
-        return False
-
-
 @dataclasses.dataclass
 class LlmConfig(BaseConfig):
     """Configuration for a multi-layer transformer"""
@@ -541,6 +525,23 @@ class LlmConfig(BaseConfig):
         else:
             return self.n_kv_heads
 
+    def should_checkpoint_block(self, block_idx: int) -> bool:
+        strategy = self.activation_checkpoint
+        if strategy is None:
+            return False
+        elif (
+            (strategy == LlmActivationCheckpointMode.whole_layer)
+            or (strategy == LlmActivationCheckpointMode.one_in_two and block_idx % 2 == 0)
+            or (strategy == LlmActivationCheckpointMode.one_in_three and block_idx % 3 == 0)
+            or (strategy == LlmActivationCheckpointMode.one_in_four and block_idx % 4 == 0)
+            or (strategy == LlmActivationCheckpointMode.two_in_three and block_idx % 3 != 0)
+            or (strategy == LlmActivationCheckpointMode.three_in_four and block_idx % 4 != 0)
+        ):
+            return True
+        else:
+            return False
+
+
 
 class Llm(nn.Module):
     def __init__(self, config: LlmConfig, cache, device):
@@ -599,8 +600,7 @@ class Llm(nn.Module):
             self.reset_parameters()
         else:
             is_sharded = hasattr(self.blocks[0], "unshard")
-            assert is_sharded or get_global_rank() == 0
-            if get_global_rank() == 0:
+            if not is_sharded or get_global_rank() == 0:
                 parent, name = self.config.init_path.rstrip("/").rsplit("/", 1)
                 state_dict_path = resource_path(parent, name, cache_dir=os.environ.get("MOLMO_CACHE_DIR"))
                 assert state_dict_path.is_file(), f"Model file {str(state_dict_path)} not found"
@@ -614,12 +614,17 @@ class Llm(nn.Module):
                     state_dict["wte.embedding"] = state_dict.pop("wte.weight")
             else:
                 state_dict = {}
-            key_errors = dist_cp_sd.set_model_state_dict(
-                model=self,
-                model_state_dict=state_dict,
-                options=dist_cp_sd.StateDictOptions(
-                    full_state_dict=True, broadcast_from_rank0=True, strict=False)
-            )
+
+            if is_sharded:
+                key_errors = dist_cp_sd.set_model_state_dict(
+                    model=self,
+                    model_state_dict=state_dict,
+                    options=dist_cp_sd.StateDictOptions(
+                        full_state_dict=True, broadcast_from_rank0=True, strict=False)
+                )
+            else:
+                key_errors = self.load_state_dict(state_dict, strict=False)
+
             assert len(key_errors.unexpected_keys) == 0
             assert set(key_errors.missing_keys) <= {"wte.new_embedding"}
             if self.config.additional_vocab_size is not None:
@@ -1145,7 +1150,7 @@ class OLMoBlock(nn.Module):
     def apply_activation_checkpointing(self, strategy: LlmActivationCheckpointMode):
         if strategy == LlmActivationCheckpointMode.fine_grained:
             self.fine_grained_checkpoint_fn = llm_activation_checkpoint_function(self.config)
-        if should_checkpoint_block(strategy, self.layer_id):
+        if self.config.should_checkpoint_block(self.layer_id):
             self.block_checkpoint_fn = llm_activation_checkpoint_function(self.config)
             # Using `checkpoint_wrapper` would be easier, but seems to interact poorly with compiling
             # return `checkpoint_wrapper`(self, checkpoint_fn=llm_activation_checkpoint_function(self.config))
@@ -1218,6 +1223,7 @@ class OLMoBlock(nn.Module):
         drop_mask: Optional[torch.Tensor] = None,
         layer_past: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         use_cache: bool = False,
+        value_scaling=None
     ) -> Tuple[torch.Tensor, Optional[Tuple[torch.Tensor, torch.Tensor]]]:
         B, T, C = q.size()  # batch size, sequence length, d_model
         dtype = k.dtype
@@ -1238,6 +1244,9 @@ class OLMoBlock(nn.Module):
         if self.config.rope:
             # Apply rotary embeddings
             q, k = self.rotary_emb(q, k, position_ids=position_ids)
+
+        if value_scaling is not None:
+            v = v * value_scaling[:, None, :, None]
 
         if layer_past is not None:
             past_key, past_value = layer_past
@@ -1505,6 +1514,7 @@ class OLMoSequentialBlock(OLMoBlock):
         position_ids: Optional[torch.Tensor] = None,
         drop_mask: Optional[torch.Tensor] = None,
         layer_past: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+        value_scaling: Optional[torch.Tensor] = None,
         use_cache: bool = False
     ) -> Tuple[torch.Tensor, Optional[Tuple[torch.Tensor, torch.Tensor]]]:
         # Get query, key, value projections.
@@ -1532,10 +1542,14 @@ class OLMoSequentialBlock(OLMoBlock):
         # Get attention scores.
         if self.fine_grained_checkpoint_fn is not None:
             att, cache = self.fine_grained_checkpoint_fn(  # type: ignore
-                self.attention, q, k, v, attention_bias, position_ids=position_ids, drop_mask=drop_mask, layer_past=layer_past, use_cache=use_cache,
+                self.attention, q, k, v, attention_bias, position_ids=position_ids,
+                drop_mask=drop_mask, layer_past=layer_past, use_cache=use_cache,
+                value_scaling=value_scaling
             )
         else:
-            att, cache = self.attention(q, k, v, attention_bias, position_ids=position_ids, drop_mask=drop_mask, layer_past=layer_past, use_cache=use_cache)
+            att, cache = self.attention(
+                q, k, v, attention_bias, position_ids=position_ids, drop_mask=drop_mask,
+                layer_past=layer_past, use_cache=use_cache, value_scaling=value_scaling)
 
         if self.config.norm_after:
             if self.fine_grained_checkpoint_fn is not None:

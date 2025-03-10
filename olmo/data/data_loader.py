@@ -12,7 +12,7 @@ from olmo.config import BaseConfig
 from olmo.data.dataset import DeterministicDataset
 from olmo.data.get_dataset import get_dataset_by_name
 from olmo.data.iterable_dataset_mixture import IterableDatasetMixture
-from olmo.nn.model import ModelConfig
+from olmo.models.molmo.molmo import MolmoConfig
 from olmo.torch_util import get_global_rank, get_world_size
 
 log = logging.getLogger(__name__)
@@ -62,7 +62,7 @@ class DataConfig(BaseConfig):
 
     def build_eval_dataloader(
         self,
-        model_config: ModelConfig,
+        model_config: MolmoConfig,
         batch_size: int,
         for_inference: bool,
         include_metadata: bool = None,
@@ -120,7 +120,7 @@ class DataConfig(BaseConfig):
 
     def build_train_dataloader(
         self, 
-        model_config: ModelConfig, 
+        model_config: MolmoConfig,
         global_batch_size: int, 
         device=None
     ) -> DataLoader:

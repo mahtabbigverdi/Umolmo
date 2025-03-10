@@ -405,8 +405,7 @@ class VisionTransformer(nn.Module):
     def reset_with_pretrained_weights(self):
         if self.config.init_path:
             is_sharded = hasattr(self.transformer.resblocks[0], "unshard")
-            assert is_sharded or get_global_rank() == 0
-            if get_global_rank() == 0:
+            if not is_sharded or get_global_rank() == 0:
                 parent, name = self.config.init_path.rsplit("/", 1)
                 state_dict_path = resource_path(parent, name, cache_dir=os.environ.get("MOLMO_CACHE_DIR"))
                 assert state_dict_path.is_file(), f"Model file {str(state_dict_path)} not found"
@@ -423,6 +422,7 @@ class VisionTransformer(nn.Module):
                 )
             else:
                 key_errors = self.load_state_dict(state_dict, strict=False)
+
             assert len(key_errors.missing_keys) == 0
             # Missing keys are okay since we might have loaded fewer layers then in the checkpoint,
             # But sanity check the missing keys just in case

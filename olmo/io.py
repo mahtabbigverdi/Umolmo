@@ -932,7 +932,7 @@ def _s3_list_directory(
 
 def add_cached_path_clients():
     """
-    Add additional cached-path clients.
+    Add additional cached-path clients, the enables files with the `weka://` prefix
     """
     add_scheme_client(_WekaClient)
 

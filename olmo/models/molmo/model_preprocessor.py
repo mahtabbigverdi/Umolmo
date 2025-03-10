@@ -33,7 +33,7 @@ from transformers.image_utils import (
     ImageInput,
 )
 
-from olmo.data.data_formatter import DataFormatter
+from olmo.models.molmo.data_formatter import DataFormatter
 
 
 DEFAULT_IMAGE_PATH = "/weka/oe-training-default/mm-olmo/torch_datasets"

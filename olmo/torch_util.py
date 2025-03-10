@@ -183,22 +183,6 @@ def freeze_module(module: torch.nn.Module, exclude_params: Optional[List[str]] =
         param.requires_grad = False
 
 
-def freeze_parameters_by_name(model: torch.nn.Module, freeze_names: Tuple[str], warn=True):
-    for name in freeze_names:
-        try:
-            module_or_param = model.get_submodule(name)
-        except:
-            try:
-                module_or_param = model.get_parameter(name)
-            except:
-                if warn:
-                    log.warning(f"Could not find module or parameter with name {name}")
-        if isinstance(module_or_param, torch.nn.Module):
-            freeze_module(module_or_param)
-        else:
-            module_or_param.requires_grad = False
-
-
 class BufferCache(dict, MutableMapping[str, torch.Tensor]):
     """
     Cache for attention biases and other things that would normally be stored as buffers.

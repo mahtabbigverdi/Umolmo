@@ -7,7 +7,8 @@ from typing import cast
 from omegaconf import OmegaConf
 
 from launch_scripts.utils import get_evaluation
-from olmo.train.trainer_config import FSDPConfig, FSDPWrapStrategy, FSDPPrecision
+from olmo.train.trainer_config import FSDPConfig, FSDPPrecision
+from olmo.models.model import FSDPWrapStrategy
 from olmo.util import (
     clean_opt,
     prepare_torchrun_environment, select_checkpoint, )

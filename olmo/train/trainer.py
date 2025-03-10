@@ -36,7 +36,7 @@ from olmo.data.iterable_dataset_mixture import IterableDatasetMixture
 from olmo.eval.inf_evaluator import InfDatasetEvaluator
 from olmo.eval.loss_evaluator import LossMetrics, LossDatasetEvaluator
 from olmo.exceptions import OLMoConfigurationError
-from olmo.nn.model import Molmo
+from olmo.models.molmo.molmo import Molmo
 from olmo.train.optim import Optimizer, Scheduler, SchedulerUnits
 from olmo.torch_util import (
     barrier,
@@ -619,10 +619,8 @@ class Trainer:
             else:
                 loss = ce_loss
             if model_out.metrics is not None:
-                if "ImportanceLoss" in model_out.metrics:
-                    loss += model_out.metrics["ImportanceLoss"] * self
                 if "AuxLoss" in model_out.metrics:
-                    loss += model_out.metrics["AuxLoss"]
+                    loss += model_out.metrics["AuxLoss"] / len(micro_batches)
 
             del model_out
 
@@ -966,11 +964,6 @@ class Trainer:
                 for batch in self.train_loader:
                     # Bookkeeping.
                     batch_size, seq_len = batch["input_ids"].shape
-                    assert seq_len <= self.cfg.model.llm.max_sequence_length
-                    assert (
-                        batch_size == (self.cfg.global_train_batch_size // get_world_size()),
-                        f"batch size is {batch_size}, but bs={self.cfg.global_train_batch_size} among {get_local_world_size()} world size"
-                    )
                     global_batch_size = batch_size * get_world_size()  # assumes batch size equal across ranks
                     self.global_step += 1
                     self.global_train_examples_seen_this_epoch += global_batch_size

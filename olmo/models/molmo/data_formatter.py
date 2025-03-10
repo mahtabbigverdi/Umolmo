@@ -429,22 +429,32 @@ class DataFormatter(BaseConfig):
             else:
                 prefix = style + ":"
 
-        elif for_inference and self.system_prompt == "style_and_length":
+        elif for_inference and self.system_prompt in ["style_and_length", "style_and_length_v2"]:
             v2 = self.system_prompt == "style_and_length_v2"
             inference_len = self.default_inference_len
             n = None if inference_len is None else str(inference_len)
             if n is not None and len(n) > 0:  # allow empty string to signal unconditioned
                 prefix = style + " " + n + ":"
             else:
-                prefix = style + " :"  # FIXME remove the space
-        elif self.system_prompt == "style_and_length":
+                if self.system_prompt in ["style_and_length_v2"]:
+                    prefix = style + ":"
+                else:
+                    prefix = style + " :"
+        elif self.system_prompt in ["style_and_length", "style_and_length_v2"]:
             std = 25
             if rng.random() > 0.10:
                 n = len(messages[-1])
                 n += int(rng.normal(scale=std))
+                n = n // 15
+            else:
+                n = None
+            if n is not None:
                 prefix = style + " " + str(n//15) + ":"
             else:
-                prefix = style + " :"  # FIXME remove the space
+                if self.system_prompt in ["style_and_length_v2"]:
+                    prefix = style + ":"
+                else:
+                    prefix = style + " :"
         else:
             raise NotImplementedError(self.system_prompt)
 

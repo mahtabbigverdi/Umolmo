@@ -1,18 +1,7 @@
-import dataclasses
-import logging
-from typing import Dict, Tuple, Union, List, Any, Optional
+from typing import Dict, List, Any
 import numpy as np
-import torch
-import torchvision
-from torchvision.transforms import InterpolationMode
-from transformers.image_utils import ImageInput
 
-from olmo import tokenizer
-from olmo.config import BaseConfig
-from olmo.data.collator import _collate
-from olmo.data.model_preprocessor import select_tiling, batch_pixels_to_patches, pixels_to_patches, \
-    MultiModalPreprocessor
-from olmo.nn.vision_backbone import VisionBackboneConfig
+from olmo.models.molmo.collator import _collate
 
 
 class HeMMCollator:

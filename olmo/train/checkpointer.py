@@ -56,7 +56,7 @@ def load_model_state_unsharded(dir: PathOrStr, model: nn.Module):
     )
 
 
-def save_unsharded(self, dir: PathOrStr, model: nn.Module, optim: Optimizer,
+def save_unsharded(dir: PathOrStr, model: nn.Module, optim: Optimizer,
                    config: BaseConfig, overwrite: bool = False):
     """
     Save model, optim, and other training state to a local or remote directory unsharded

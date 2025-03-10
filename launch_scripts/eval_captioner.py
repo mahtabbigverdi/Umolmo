@@ -5,7 +5,8 @@ from typing import cast
 from omegaconf import OmegaConf
 
 from olmo.eval.inf_evaluator import EvaluatorConfig
-from olmo.train.trainer_config import FSDPConfig, FSDPWrapStrategy, FSDPPrecision
+from olmo.train.trainer_config import FSDPConfig, FSDPPrecision
+from olmo.models.model import FSDPWrapStrategy
 from olmo.data.data_loader import DataConfig
 from olmo.torch_util import get_world_size
 from olmo.util import clean_opt, prepare_torchrun_environment, select_checkpoint

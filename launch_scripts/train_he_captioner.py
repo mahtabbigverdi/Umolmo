@@ -1,39 +1,30 @@
 import argparse
 import logging
-import warnings
 from dataclasses import replace
 from typing import cast
 
 from omegaconf import omegaconf, OmegaConf
-from transformers import CompileConfig
 
-from launch_scripts.utils import DEBUG_MODEL, VISION_BACKBONES, LLMS, DEFAULT_LOAD_PATHS
-from olmo.data.data_formatter import DataFormatter
+from launch_scripts.utils import VISION_BACKBONES, LLMS, DEFAULT_LOAD_PATHS
 from olmo.data.data_loader import DataConfig
-from olmo.data.model_preprocessor import MultiModalPreprocessorConfig
 from olmo.data.pixmo_datasets import PixMoCap
 from olmo.eval.loss_evaluator import LossDatasetEvaluatorConfig
-from olmo.he_molmo.data_formater import HeDataFormatter
-from olmo.he_molmo.he_molmo import TokenScorerConfig, HeMolmoConfig
-from olmo.he_molmo.he_molmo_trainer import HeMolmoTrainerConfig
-from olmo.he_molmo.hierarchical_preprocessor import HePreprocessorConfig
-from olmo.he_molmo.token_selector import TokenSelectionConfig
+from olmo.models.he_molmo.he_data_formater import HeDataFormatter
+from olmo.models.he_molmo.he_molmo import TokenScorerConfig, HeMolmoConfig
+from olmo.models.he_molmo.he_preprocessor import HePreprocessorConfig
+from olmo.models.he_molmo.token_selector import TokenSelectionConfig
 from olmo.nn.image_vit import VitConfig
 from olmo.nn.llm import LlmConfig
-from olmo.nn.model import FSDPWrapStrategy, ModelConfig
+from olmo.models.model import FSDPWrapStrategy
 from olmo.nn.vision_backbone import VisionBackboneConfig
 from olmo.tokenizer import TokenizerConfig
 from olmo.torch_util import get_world_size
 from olmo.train.optim import OptimizerType, OptimizerConfig, SchedulerConfig, SchedulerType
 from olmo.train.trainer_config import SpeedMonitorConfig, WandbConfig, FSDPConfig, FSDPPrecision, \
-    CompilerConfig, BatchDivisor
+    CompilerConfig, BatchDivisor, TrainConfig
 
 from olmo.util import clean_opt, prepare_torchrun_environment
-from olmo.io import add_cached_path_clients
-import torch.multiprocessing as mp
-import torch.distributed as dist
 
-from scripts.mm_eval import DatasetEvaluatorConfig
 from scripts.train import run_trainer
 
 log = logging.getLogger("train")
@@ -73,10 +64,9 @@ if __name__ == "__main__":
                 vit=VitConfig(image_num_layers=1, resize_mode="metaclip"),
             ),
             token_scorer=TokenScorerConfig(
-              n_features=512,
               source="all-layers"
             ),
-            token_selection=TokenSelectionConfig(),
+            token_selection=TokenSelectionConfig(loss="batch-mean"),
             data_formatter=HeDataFormatter(),
             mm_preprocessor=HePreprocessorConfig(crop_mode="overlap-and-resize-c2", max_crops=6)
         )
@@ -95,25 +85,39 @@ if __name__ == "__main__":
         duration = 2 * (2 if args.two_epochs else 4) * (n + global_batch_size - 1) // global_batch_size
         eval_interval = 1000
         vit_layers = [-2, -9] if args.vision_backbone == "openai" else [-3, -9]
-        raise ValueError()
-        # model_cfg = replace(
-        #     LLMS[args.llm],
-        #     vision_backbone=VISION_BACKBONES[args.vision_backbone],
-        #     llm_load_path=DEFAULT_LOAD_PATHS.get(args.llm, omegaconf.MISSING),
-        #     vit_load_path=DEFAULT_LOAD_PATHS.get(args.vision_backbone, omegaconf.MISSING),
-        #     crop_mode="overlap-and-resize-c2",
-        #     system_prompt_kind='style_and_length_v2',
-        #     residual_dropout=0.0,
-        #     response_residual_dropout=0.1,
-        #     max_crops=12,
-        #     vit_layers=vit_layers,
-        #     additional_vocab_size=128,
-        # )
-
-    model_cfg.vision_backbone.image_padding_embed = None
-    model_cfg.bi_directional_attn = "within_image"
-
-    model_cfg.token_selection.n_features = 512
+        model_cfg = HeMolmoConfig(
+            llm=replace(
+                LLMS[args.llm],
+                init_path=DEFAULT_LOAD_PATHS[args.llm],
+                residual_dropout=0.0,
+                response_residual_dropout=0.1,
+                additional_vocab_size=128
+            ),
+            token_scorer=TokenScorerConfig(
+                source="all_layers"
+            ),
+            token_selection=TokenSelectionConfig(
+                loss="batch-mean"
+            ),
+            # FIXME remove always_start_with_space
+            data_formatter=HeDataFormatter(
+                system_prompt="style_and_length_v2"
+            ),
+            mm_preprocessor=HePreprocessorConfig(
+                crop_mode="overlap-and-resize-c2",
+                max_crops=12
+            ),
+            vision_backbone=VisionBackboneConfig(
+                vit_layers=vit_layers,
+                image_padding_embed=None,
+                vit=replace(
+                    VISION_BACKBONES[args.vision_backbone],
+                    init_path=DEFAULT_LOAD_PATHS.get(args.vision_backbone, omegaconf.MISSING)
+                )
+            ),
+            bi_directional_attn="within_image"
+        )
+    model_cfg.mm_preprocessor.num_high_res_features = 512
     seq_len = 768 + 512
 
     evaluator = LossDatasetEvaluatorConfig(
@@ -121,7 +125,7 @@ if __name__ == "__main__":
         max_examples=eval_examples,
         device_batch_size=args.device_eval_batch_size,
         data=DataConfig(
-            seed="${seed}",
+            seed=95818,
             dataset="pixmo_cap_transcript",
             shuffle=False,
             split="validation",
@@ -134,7 +138,7 @@ if __name__ == "__main__":
     )
 
     warmup_scale = 2 if args.two_epochs else 1
-    cfg = HeMolmoTrainerConfig(
+    cfg = TrainConfig(
         run_name="multitask_train",
         save_folder="debug_run" if debug else omegaconf.MISSING,
         seed=6198,
@@ -180,7 +184,6 @@ if __name__ == "__main__":
             connector_eps=1e-6,
             vit_eps=1e-6,
             llm_eps=1e-6,
-            metrics_log_interval=20
         ),
         scheduler=SchedulerConfig(
             name=SchedulerType.multimodal,
@@ -191,6 +194,7 @@ if __name__ == "__main__":
             warmup_min_lr=0.0
         ),
         fsdp=FSDPConfig(
+            fsdp2=True,
             use_orig_params=True,
             wrapping_strategy=FSDPWrapStrategy.by_block_and_size,
             precision=FSDPPrecision.float
@@ -229,5 +233,7 @@ if __name__ == "__main__":
 
     conf = OmegaConf.create(cfg)
     conf.merge_with_dotlist([clean_opt(arg) for arg in other_args])
-    cfg = cast(HeMolmoTrainerConfig, OmegaConf.to_object(conf))
-    run_trainer(cfg)
+    cfg = cast(TrainConfig, OmegaConf.to_object(conf))
+    with open("tmp.yaml", "w") as f:
+        f.write(OmegaConf.to_yaml(cfg, resolve=True))
+    # run_trainer(cfg)

@@ -301,8 +301,8 @@ Generally beaker jobs should use these flags:
 `HF_DATASETS_OFFLINE` stops HF issues tons of requests to the HF dataset hub even though the data
 is already download, I think to check the data is up-to-date.
 
-`OLMO_SHARED_FS` tell the codes to assume, for multi-nodes jobs, are saving to a shared
-file system, meaning they either save to weka or a remote FS. This could be turned off if writing 
+`OLMO_SHARED_FS` tell the codes to assume, for multi-nodes jobs, you are saving to a shared
+file system, meaning they either saving to weka or a remote FS. This could be turned off if writing 
 data locally, but generally there is no reason to prefer doing that.
 
 `HF_ACCESS_TOKEN` might be used to download the tokenizer, and
@@ -334,7 +334,7 @@ Be sure also set the environment variables from [here](https://beaker-docs.apps.
 
 Augusta jobs should generally use GFS to save/load models, see [remote files](###GCP).
 
-Only some datasets are support on GFS, including all the Pixmo datasets.
+Only some datasets are support on GFS, but that includes all the Pixmo datasets.
 
 ### Wandb
 Setup wandb and access keys (first store your keys as beaker secrets):

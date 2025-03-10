@@ -1,8 +1,8 @@
 import dataclasses
+import logging
 import math
-from copy import copy
 from dataclasses import field
-from typing import Optional, Iterator, Sequence, Tuple, List, Dict, Literal
+from typing import Optional, Iterator, Sequence, Tuple, List, Dict, ClassVar
 import numpy as np
 
 import torch
@@ -13,18 +13,18 @@ from torch.distributed.fsdp import fully_shard
 from torch.nn import functional as F
 from olmo import tokenizer
 from olmo.config import BaseConfig, D
-from olmo.data.data_formatter import DataFormatter
-from olmo.data.model_preprocessor import Preprocessor
-from olmo.he_molmo.data_formater import HeDataFormatter
-from olmo.he_molmo.he_collator import HeMMCollator
-from olmo.he_molmo.hierarchical_preprocessor import HePreprocessorConfig
-from olmo.he_molmo.token_selector import TokenSelectionConfig, SelectionOutput
+from olmo.models.molmo.data_formatter import DataFormatter
+from olmo.models.molmo.model_preprocessor import Preprocessor
+from olmo.models.he_molmo.he_data_formater import HeDataFormatter
+from olmo.models.he_molmo.he_collator import HeMMCollator
+from olmo.models.he_molmo.he_preprocessor import HePreprocessorConfig
+from olmo.models.he_molmo.token_selector import TokenSelectionConfig, SelectionOutput
 from olmo.nn.beam_search import FinalSequenceScorer, Constraint, Sampler, BeamSearch
 from olmo.nn.image_vit import ResidualAttentionBlock, VisionTransformer
 from olmo.nn.legacy_config import convert_legacy_config
-from olmo.nn.llm import LlmConfig, Llm, llm_activation_checkpoint_function, OLMoBlock
-from olmo.nn.model import ModelConfig, OLMoOutput, OLMoGenerateOutput, FSDPWrapStrategy
-from olmo.nn.model_config import ModelConfigBase
+from olmo.nn.llm import LlmConfig, Llm, OLMoBlock, llm_activation_checkpoint_function
+from olmo.models.model import FSDPWrapStrategy, OLMoOutput, OLMoGenerateOutput, ModelBase
+from olmo.models.model_config import BaseModelConfig
 from olmo.nn.vision_backbone import VisionBackboneConfig, MolmoVisionBackbone
 from olmo.torch_util import BufferCache, get_default_device
 from olmo.util import flatten_list
@@ -32,32 +32,31 @@ from olmo.util import flatten_list
 
 @dataclasses.dataclass
 class TokenScorerConfig(BaseConfig):
-    n_features: int = 512
     selection_model: str = "linear"
-    normalize_importance_scores: bool = True
+    normalize_importance_scores: bool = False
     four_scores_per_low_res_patch: bool = True
     source: Optional[str] = "low_res_embeddings"
+    low_res_features_drop: float = 0.1
     bp_low_res_end: int = -1
     bp_low_res_start: int = 0
     bp_patch_prior: bool = False
-    bp_low_res_embed: bool = True
-    high_res_patch_prior: bool = False
-    high_res_patch_prior_drop: Optional[float] = None
-    high_res_col_tokens: bool = False
+    bp_low_res_embed: bool = False
+    high_res_patch_prior: bool = True
+    high_res_patch_prior_drop: Optional[float] = 0.1
+    high_res_col_tokens: bool = True
     unconditioned: bool = False
     n_low_res_layers: Optional[int] = None
     learned_rescaling: Optional[str] = None
     attention_scaling: Optional[float] = None
     vector_query: Optional[str] = None
     vector_query_scaling: Optional[str] = None
-    interpolate_low_res_features: bool = False
 
 
 @dataclasses.dataclass
-class HeMolmoConfig(ModelConfigBase):
+class HeMolmoConfig(BaseModelConfig):
     """Molmo model configuration"""
 
-    model_name: str = "he_molmo"
+    _model_name: ClassVar[str] = "he_molmo"
 
     llm: LlmConfig = field(default_factory=LlmConfig)
     """LLM to use for generation"""
@@ -69,7 +68,7 @@ class HeMolmoConfig(ModelConfigBase):
     """How to prompt the model for different tasks"""
 
     token_scorer: TokenScorerConfig = field(default_factory=TokenScorerConfig)
-    """"How to score tokens"""
+    """"How to get token scores"""
 
     token_selection: TokenSelectionConfig = field(default_factory=TokenSelectionConfig)
     """"How to select tokens using the scores"""
@@ -111,7 +110,7 @@ class HeMolmoConfig(ModelConfigBase):
             is_training=is_training,
         )
 
-    def build_collator(self, sequence_length, pad_mode: str, include_metadata) -> HeMMCollator:
+    def build_collator(self, sequence_length, pad_mode: str, include_metadata=True) -> HeMMCollator:
         """Collators for tensors from the preprocessor produces"""
         return HeMMCollator(
             sequence_length,
@@ -156,7 +155,7 @@ class MLP(nn.Module):
         return x
 
 
-class HeMolmo(nn.Module):
+class HeMolmo(ModelBase):
 
     def __init__(self, config: HeMolmoConfig, device=None):
         super().__init__()
@@ -169,13 +168,14 @@ class HeMolmo(nn.Module):
         if self.config.bi_directional_attn:
             self.special_ids = tokenizer.get_special_token_ids(self.config.build_tokenizer())
             self.__cache["image_tokens"] = torch.as_tensor([self.special_ids[x] for x in [
+                tokenizer.DEFAULT_IM_START_TOKEN,
                 tokenizer.DEFAULT_IMAGE_PATCH_TOKEN,
                 tokenizer.DEFAULT_IM_COL_TOKEN,
-                tokenizer.DEFAULT_IM_START_TOKEN,
                 tokenizer.DEFAULT_IM_END_TOKEN,
             ]], dtype=torch.long, device=get_default_device())
             ts_config = config.token_selection
         self._image_end_token_id = self.special_ids[tokenizer.DEFAULT_IM_END_TOKEN]
+        self._image_start_token_id = self.special_ids[tokenizer.DEFAULT_IM_START_TOKEN]
         self._block_checkpoint_fn = None
 
         ts_config = self.config.token_scorer
@@ -187,6 +187,7 @@ class HeMolmo(nn.Module):
         elif ts_config.learned_rescaling is not None:
             raise NotImplementedError(ts_config.learned_rescaling)
 
+        assert ts_config.source is None or (ts_config.source in ["all_layers", "prior-only"])
         if ts_config.source in ["all_layers"]:
             n_layers = ts_config.n_low_res_layers or llm_cfg.n_layers
             n_low_features = llm_cfg.d_model*n_layers
@@ -198,9 +199,6 @@ class HeMolmo(nn.Module):
             if ts_config.vector_query_scaling:
                 out_dim += 2
             self.image_query_ln = nn.Linear(n_low_features, out_dim, bias=True)
-
-        if ts_config.interpolate_low_res_features:
-            self.low_res_features_ln = nn.Linear(llm_cfg.d_model*5, llm_cfg.d_model, bias=False)
 
         if ts_config.selection_model == "linear":
             self.importance_ln = nn.Linear(n_low_features, 4, bias=False)
@@ -470,7 +468,7 @@ class HeMolmo(nn.Module):
             can_attend_bk = (is_image_token[:, :, None] & is_image_token[:, None, :])
             if self.config.bi_directional_attn == "within_image":
                 # images cannot attend to one another
-                image_starts = input_ids == image_tokens[0]
+                image_starts = input_ids == self._image_start_token_id
                 image_segment_ids = torch.cumsum(image_starts, -1)
                 can_attend_bk &= image_segment_ids[:, None, :] == image_segment_ids[:, :, None]
             else:
@@ -515,7 +513,7 @@ class HeMolmo(nn.Module):
                 low_res_end = torch.max(low_res_end_ixs)
 
                 low_res_x = x[:, :low_res_end]
-                if ts_cfg.bp_low_res_embed:
+                if not ts_cfg.bp_low_res_embed:
                     low_res_x = low_res_x.detach()
 
                 low_res_bias = attention_bias[:, :, :low_res_end, :low_res_end].contiguous()
@@ -540,11 +538,18 @@ class HeMolmo(nn.Module):
 
                 low_res_x_in = low_res_x
                 if ts_cfg.source != "prior-only":
-                    low_res_layer_outputs = [low_res_x]
+                    low_res_layer_outputs = []
                     for block_idx, block in enumerate(self.transformer.blocks[:ts_cfg.n_low_res_layers]):
                         enable_grad = ts_cfg.bp_low_res_start <= block_idx < ts_cfg.bp_low_res_end and self.training
-                        # with torch.set_grad_enabled(enable_grad), torch.compiler.set_stance("force_eager"):
-                        with torch.set_grad_enabled(enable_grad):
+                        with torch.set_grad_enabled(enable_grad), torch.compiler.set_stance("force_eager"):
+                        # logging.info(f"{block_idx} {enable_grad}")
+                        # with torch.set_grad_enabled(enable_grad):
+                            # if enable_grad and self.config.llm.should_checkpoint_block(block_idx):
+                            #     low_res_x, cache = self._block_checkpoint_fn(
+                            #         block, low_res_x, drop_mask=low_res_response_mask,
+                            #         attention_bias=low_res_bias, position_ids=low_res_pos_ids,
+                            #         use_cache=use_low_res_cache)
+                            # else:
                             low_res_x, cache = block(
                                 low_res_x, drop_mask=low_res_response_mask, attention_bias=low_res_bias, position_ids=low_res_pos_ids,
                                 use_cache=use_low_res_cache)
@@ -606,9 +611,9 @@ class HeMolmo(nn.Module):
                     else:
                         low_res_x_features = low_res_x
 
-                    low_res_x_features = F.dropout(low_res_x_features, 0.1, self.training)
+                    if ts_cfg.low_res_features_drop:
+                        low_res_x_features = F.dropout(low_res_x_features, ts_cfg.low_res_features_drop, self.training)
                     low_res_image_features = low_res_x_features[low_res_batch_idx, low_res_idx].reshape(batch_size, 144, -1)
-
                     low_res_importance_flat = self.importance_ln(low_res_image_features)
 
                     if low_res_importance_flat.shape[1] == 144:
@@ -631,7 +636,7 @@ class HeMolmo(nn.Module):
                     if not ts_cfg.bp_patch_prior:
                         features = features.detach()
                     if ts_cfg.high_res_patch_prior_drop:
-                        features = F.dropout(features, 0.1, training=self.training)
+                        features = F.dropout(features, ts_cfg.high_res_patch_prior_drop, training=self.training)
 
                     if ts_cfg.vector_query == "from_image_end_token":
                         first_image_end_idx = torch.argmax((input_ids == self._image_end_token_id).float(), -1) - 1
@@ -708,7 +713,6 @@ class HeMolmo(nn.Module):
             else:
                 token_scores = None
             # Sanity checkpoint, the selection matrix should map to patch tokens
-            # import pdb; pdb.set_trace()
             # image_patch_id = get_special_token_ids(self.config.get_tokenizer())[tokenizer.DEFAULT_IMAGE_PATCH_TOKEN]
             # assert torch.all(input_ids[batch_idx, high_res_idx] == image_patch_id, selection.sum(1) > 0)
         else:
@@ -737,16 +741,22 @@ class HeMolmo(nn.Module):
             ascale = self.config.token_scorer.attention_scaling
             self_atten = (1 - torch.eye(x.shape[1], device=attention_bias.device, dtype=attention_bias.dtype))[None, None, :, :]
             attention_bias = attention_bias + torch.log(token_scores*ascale+(1-ascale))[:, None, None, :] * self_atten
-            token_scaling = None
+            value_scaling = None
         else:
-            token_scaling = token_scores
+            value_scaling = token_scores
 
         all_hidden_states = []
         for block_idx, block in enumerate(self.transformer.blocks):
             layer_past = None if past_key_values is None else past_key_values[block_idx]
+            # if self.config.llm.should_checkpoint_block(block_idx):
+            #     x, cache = self._block_checkpoint_fn(block,
+            #         x, attention_bias=attention_bias, position_ids=position_ids, drop_mask=response_mask,
+            #         layer_past=layer_past, use_cache=use_cache, value_scaling=value_scaling,
+            #     )
+            # else:
             x, cache = block(
                 x, attention_bias=attention_bias, position_ids=position_ids, drop_mask=response_mask,
-                layer_past=layer_past, use_cache=use_cache, token_scores=token_scaling,
+                layer_past=layer_past, use_cache=use_cache, value_scaling=value_scaling,
             )
 
             if attn_key_values is not None:
@@ -820,7 +830,7 @@ class HeMolmo(nn.Module):
     ) -> OLMoGenerateOutput:
         llm_cfg = self.config.llm
         beam_search = BeamSearch(
-            llm_cfg.get_tokenizer().eos_token_id,
+            llm_cfg.build_tokenizer().eos_token_id,
             max_steps=max_steps,
             beam_size=beam_size,
             per_node_beam_size=per_node_beam_size,

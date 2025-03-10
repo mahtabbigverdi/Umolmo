@@ -3,8 +3,7 @@ from collections import Counter
 import numpy as np
 import pytest
 
-from olmo.data.model_preprocessor import select_tiling, batch_pixels_to_patches, pixels_to_patches
-from olmo.hierarchical_preprocessor import HeMultiModalPreprocessor
+from olmo.models.he_molmo.he_preprocessor import HeMultiModalPreprocessor
 from olmo.tokenizer import build_tokenizer, get_special_token_ids, DEFAULT_IM_START_TOKEN, \
     IMAGE_PROMPT, DEFAULT_IM_END_TOKEN, DEFAULT_IM_COL_TOKEN, DEFAULT_IMAGE_PATCH_TOKEN
 

@@ -1,18 +1,20 @@
 from __future__ import annotations
 
-import dataclasses
 import logging
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field
 from typing import (
     Any,
     Dict,
     List,
     Optional,
     TypeVar,
-    Union,
+    Union, cast,
 )
 
+import omegaconf
+from omegaconf import OmegaConf as om
 import torch
+from omegaconf.errors import OmegaConfBaseException
 from torch.distributed import init_device_mesh
 from torch.distributed.fsdp import MixedPrecision, ShardingStrategy, MixedPrecisionPolicy
 
@@ -21,13 +23,16 @@ from olmo.data.data_loader import DataConfig
 from olmo.eval.inf_evaluator import InfDatasetEvaluatorConfig
 from olmo.eval.loss_evaluator import LossDatasetEvaluatorConfig
 from olmo.exceptions import OLMoConfigurationError
+from olmo.models.he_molmo.he_molmo import HeMolmo
+from olmo.io import PathOrStr, read_file
+from olmo.models.model_config import BaseModelConfig, get_model_types
 from olmo.train.checkpointer import CheckpointerConfig
-from olmo.nn.model import ModelConfig, FSDPWrapStrategy
+from olmo.models.molmo.molmo import Molmo
+from olmo.models.model import FSDPWrapStrategy
 from olmo.torch_util import get_local_world_size, get_world_size
 from olmo.train.optim import OptimizerConfig, SchedulerConfig
 
 __all__ = [
-    "TrainConfig",
     "SpeedMonitorConfig",
     "WandbConfig",
     "CompilerConfig",
@@ -220,7 +225,7 @@ class RuntimeData(BaseConfig):
 
 
 @dataclass
-class _TrainerConfig(BaseConfig):
+class TrainConfig(BaseConfig):
     """
     OLMo training configuration.
     """
@@ -228,6 +233,11 @@ class _TrainerConfig(BaseConfig):
     run_name: Optional[str] = None
     """
     Run name, used when logging 
+    """
+
+    model: BaseModelConfig = omegaconf.MISSING
+    """
+    Model to train
     """
 
     seed: int = 6198
@@ -544,8 +554,30 @@ class _TrainerConfig(BaseConfig):
         else:
             raise ValueError(f"Unexpected precision type '{self.precision}'")
 
+    @classmethod
+    def load(
+        cls,
+        path: PathOrStr,
+        overrides: Optional[List[str]] = None,
+        key: Optional[str] = None,
+        validate_paths: bool = True,
+    ) -> C:
+        """Load from a YAML file."""
+        schema = om.structured(cls)
+        try:
+            raw = om.create(read_file(path))
+            if key is not None:
+                raw = raw[key]  # type: ignore
 
-@dataclass
-class TrainConfig(_TrainerConfig):
-    model: ModelConfig = field(default_factory=ModelConfig)
+            # Make sure the schema has the correct model class
+            model_name = raw.model.get("model_name", "molmo")
+            model_cls = get_model_types()[model_name]
+            schema.model = om.structured(model_cls)
 
+            raw = cls.update_legacy_settings(raw)
+            conf = om.merge(schema, raw)
+            if overrides:
+                conf = om.merge(conf, om.from_dotlist(overrides))
+            return cast(TrainConfig, om.to_object(conf))
+        except OmegaConfBaseException as e:
+            raise OLMoConfigurationError(e)

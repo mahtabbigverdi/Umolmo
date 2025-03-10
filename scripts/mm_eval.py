@@ -15,7 +15,7 @@ import wandb
 
 from olmo.config import BaseConfig
 from olmo.data.data_loader import DataConfig
-from olmo.data.model_preprocessor import MultiModalPreprocessorConfig
+from olmo.models.molmo.model_preprocessor import MultiModalPreprocessorConfig
 from olmo.eval.inf_evaluator import InfDatasetEvaluator, EvaluatorConfig, \
     InfDatasetEvaluatorConfig
 from olmo.eval.loss_evaluator import LossDatasetEvaluatorConfig, LossDatasetEvaluator
@@ -23,7 +23,7 @@ from olmo.exceptions import OLMoCliError
 from olmo.io import file_exists, write_file, get_bytes_range
 from olmo.nn.image_vit import VitConfig
 from olmo.nn.llm import LlmConfig
-from olmo.nn.model import Molmo, ModelConfig
+from olmo.models.molmo.molmo import Molmo, MolmoConfig
 from olmo.nn.vision_backbone import VisionBackboneConfig
 from olmo.tokenizer import TokenizerConfig
 from olmo.torch_util import (
@@ -222,7 +222,7 @@ class ModelEvaluator:
         if cfg.load_path == "debug":
             assert not self.config.fsdp
             logging.warning("Loading debugging model")
-            model_cfg = ModelConfig(
+            model_cfg = MolmoConfig(
                 LlmConfig(
                     d_model=128,
                     n_heads=2,
@@ -252,7 +252,7 @@ class ModelEvaluator:
             model.reset_parameters()
         else:
             model_cfg_path = resource_path(cfg.load_path, "config.yaml")
-            model_cfg = ModelConfig.load(model_cfg_path, key="model", validate_paths=False)
+            model_cfg = MolmoConfig.load(model_cfg_path, key="model", validate_paths=False)
             with torch.device("meta"):
                 model: Molmo = model_cfg.build_model()
 
@@ -260,6 +260,7 @@ class ModelEvaluator:
                 assert self.config.fsdp.fsdp2
                 model.apply_fsdp2(**self.config.fsdp.get_fsd2_args(self.config.autocast_precision))
 
+            model.to_empty(device=device)
             load_model_state(cfg.load_path, model)
             model.eval()
             torch.cuda.empty_cache()

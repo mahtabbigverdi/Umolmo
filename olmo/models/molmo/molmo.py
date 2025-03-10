@@ -9,28 +9,26 @@ from __future__ import annotations
 import dataclasses
 import logging
 import math
-from dataclasses import dataclass, field
-from os.path import join
-from typing import Dict, List, NamedTuple, Optional, Sequence, Tuple, Union, Iterator
+from dataclasses import field
+from typing import Dict, List, Optional, Sequence, Tuple, Iterator, ClassVar
 
 import torch
 import torch.backends.cuda
-import torch.nn as nn
 import torch.nn.functional as F
-import torchmetrics
 
 from olmo import tokenizer
-from olmo.config import BaseConfig, D, StrEnum
-from olmo.data.collator import MMCollator
-from olmo.data.data_formatter import DataFormatter
-from olmo.data.model_preprocessor import MultiModalPreprocessorConfig, Preprocessor
+from olmo.config import D
+from olmo.models.molmo.collator import MMCollator
+from olmo.models.molmo.data_formatter import DataFormatter
+from olmo.models.molmo.model_preprocessor import MultiModalPreprocessorConfig, Preprocessor
+from olmo.models.model import FSDPWrapStrategy, OLMoOutput, OLMoGenerateOutput, ModelBase
 from olmo.nn.beam_search import BeamSearch, Constraint, FinalSequenceScorer, Sampler
 from olmo.nn.image_vit import ResidualAttentionBlock, VisionTransformer
 from olmo.nn.legacy_config import convert_legacy_config
-from olmo.nn.llm import LlmConfig, OLMoBlock, LlmActivationCheckpointMode, Llm
-from olmo.nn.model_config import ModelConfigBase
+from olmo.nn.llm import LlmConfig, OLMoBlock, Llm
+from olmo.models.model_config import BaseModelConfig
 from olmo.nn.vision_backbone import MolmoVisionBackbone, VisionBackboneConfig
-from olmo.torch_util import BufferCache, get_global_rank, get_default_device
+from olmo.torch_util import BufferCache
 from torch.distributed.fsdp import fully_shard
 
 
@@ -38,10 +36,11 @@ log = logging.getLogger(__name__)
 
 
 @dataclasses.dataclass
-class ModelConfig(ModelConfigBase):
+class MolmoConfig(BaseModelConfig):
     """Molmo model configuration"""
+    # _model_name: ClassVar[str]
 
-    model_name: str = "molmo"
+    _model_name: ClassVar[str] = "molmo"
 
     llm: LlmConfig = field(default_factory=LlmConfig)
     """LLM to use for generation"""
@@ -107,57 +106,10 @@ class ModelConfig(ModelConfigBase):
         return self.llm.max_sequence_length
 
 
-class FSDPWrapStrategy(StrEnum):
-    by_block = "by_block"
-    """Wrap each OLMo block with its own FSDP instance."""
-
-    by_block_and_size = "by_block_and_size"
-    """Like 'by_block' but `wte` and `ff_out` will be wrapped separately as well."""
-
-    size_based = "size_based"
-    """Used PyTorch's default size-based auto wrap policy."""
-
-
-class OLMoOutput(NamedTuple):
-    logits: torch.FloatTensor
-    """
-    A tensor of shape `(batch_size, seq_len, vocab_size)` representing the log probabilities
-    for the next token *before* normalization via (log) softmax.
-    """
-
-    attn_key_values: Optional[List[Tuple[torch.Tensor, torch.Tensor]]]
-    """
-    Attention keys and values from each block.
-    """
-
-    hidden_states: Optional[Tuple[torch.Tensor]]
-    """
-    Hidden states from each block.
-    """
-
-    metrics: Optional[Dict[str, Union[torch.Tensor, torchmetrics.Metric]]] = None
-    """
-    Model-specific metrics and losses
-    """
-
-
-class OLMoGenerateOutput(NamedTuple):
-    token_ids: torch.LongTensor
-    """
-    The generated token IDs, a tensor of shape `(batch_size, beam_size, max_steps)`.
-    These do *not* include the original input IDs.
-    """
-
-    scores: torch.FloatTensor
-    """
-    The scores of the generated sequences, a tensor of shape `(batch_size, beam_size)`.
-    """
-
-
-class Molmo(nn.Module):
+class Molmo(ModelBase):
     """Molmo model"""
 
-    def __init__(self, config: ModelConfig, device=None):
+    def __init__(self, config: MolmoConfig, device=None):
         super().__init__()
         self.config = config
         self.__cache = BufferCache()

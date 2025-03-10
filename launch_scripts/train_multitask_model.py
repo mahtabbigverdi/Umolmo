@@ -10,10 +10,10 @@ from launch_scripts.utils import get_evaluation, DEBUG_MODEL
 from olmo.train.optim import OptimizerType, OptimizerConfig, SchedulerConfig, SchedulerType
 from olmo.train.trainer_config import (
     WandbConfig, BatchDivisor, SpeedMonitorConfig,
-    FSDPConfig, FSDPWrapStrategy,
-    FSDPPrecision, CompilerConfig, TrainConfig
+    FSDPConfig, FSDPPrecision, CompilerConfig, TrainConfig
 )
-from olmo.nn.model import ModelConfig
+from olmo.models.model import FSDPWrapStrategy
+from olmo.models.molmo.molmo import MolmoConfig
 from olmo.data.data_loader import DataConfig, RootSizeMixture
 from olmo.torch_util import get_world_size
 from olmo.util import clean_opt, prepare_torchrun_environment, select_checkpoint
@@ -168,9 +168,9 @@ if __name__ == "__main__":
         duration = 30000
         checkpoint = select_checkpoint(args.checkpoint)
         if exists(join(checkpoint, "model.yaml")):
-            model_cfg = ModelConfig.load(join(checkpoint, "model.yaml"))
+            model_cfg = MolmoConfig.load(join(checkpoint, "model.yaml"))
         else:
-            model_cfg = ModelConfig.load(join(checkpoint, "config.yaml"), key="model")
+            model_cfg = MolmoConfig.load(join(checkpoint, "config.yaml"), key="model")
 
         eval_subset_batches = eval_examples//(args.device_eval_batch_size*get_world_size())
         logging.info(f"Setting eval subset batches to {eval_subset_batches}")
