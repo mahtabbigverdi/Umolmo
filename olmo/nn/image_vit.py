@@ -76,7 +76,14 @@ class VitConfig(BaseConfig):
         return h // self.image_patch_size, w // self.image_patch_size
 
     def build(self, device):
-        return VisionTransformer(self, device)
+        if self.image_model_type == VisionBackboneType.openai:
+            return VisionTransformer(self)
+        elif self.image_model_type == VisionBackboneType.siglip:
+            return SiglipVisionTransformer(self)
+        elif self.image_model_type == VisionBackboneType.dino:
+            return DinoVisionTransformer(self)
+        else:
+            raise NotImplementedError(f"Unknown image model type: {self.image_model_type}")
 
 
 def _expand_token(token, batch_size: int):
@@ -509,13 +516,43 @@ class SiglipVisionTransformer(nn.Module):
         if self.config.activation_checkpointing:
             self.transformer._activation_checkpoint_fn = vit_activation_checkpoint_function(self.config)
 
+    def reset_with_pretrained_weights(self):
+        # FIXME just repeating the code in `VisionTransformer`
+        if self.config.init_path:
+            is_sharded = hasattr(self.transformer.resblocks[0], "unshard")
+            if not is_sharded or get_global_rank() == 0:
+                parent, name = self.config.init_path.rsplit("/", 1)
+                state_dict_path = resource_path(parent, name, cache_dir=os.environ.get("MOLMO_CACHE_DIR"))
+                assert state_dict_path.is_file(), f"Model file {str(state_dict_path)} not found"
+                state_dict = torch.load(state_dict_path, map_location="cpu")
+            else:
+                state_dict = {}
+
+            if is_sharded:
+                key_errors = dist_cp_sd.set_model_state_dict(
+                    model=self,
+                    model_state_dict=state_dict,
+                    options=dist_cp_sd.StateDictOptions(
+                        full_state_dict=True, broadcast_from_rank0=True, strict=False)
+                )
+            else:
+                key_errors = self.load_state_dict(state_dict, strict=False)
+
+            assert len(key_errors.missing_keys) == 0
+            # Missing keys are okay since we might have loaded fewer layers then in the checkpoint,
+            # But sanity check the missing keys just in case
+            for key in key_errors.unexpected_keys:
+                assert key.startswith("transformer.resblocks.")
+        else:
+            self.reset_parameters()
+
     def reset_parameters(self):
         nn.init.normal_(self.positional_embedding, std=self.scale)
         nn.init.normal_(self.patch_embedding.weight, std=0.02)
         nn.init.zeros_(self.patch_embedding.bias)
         self.transformer.reset_parameters()
 
-    def full_shard(self, *args, **kwargs):
+    def apply_fsdp2(self, *args, **kwargs):
         for block in self.transformer.resblocks:
             fully_shard(block, *args, **kwargs)
         fully_shard(self, *args, **kwargs)
