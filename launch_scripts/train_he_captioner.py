@@ -106,7 +106,7 @@ if __name__ == "__main__":
             ),
             mm_preprocessor=HePreprocessorConfig(
                 crop_mode="overlap-and-resize-c2",
-                max_crops=12
+                max_crops=8 if args.vision_backbone == "siglip" else 12
             ),
             vision_backbone=VisionBackboneConfig(
                 vit_layers=vit_layers,
@@ -235,6 +235,4 @@ if __name__ == "__main__":
     conf = OmegaConf.create(cfg)
     conf.merge_with_dotlist([clean_opt(arg) for arg in other_args])
     cfg = cast(TrainConfig, OmegaConf.to_object(conf))
-    with open("tmp.yaml", "w") as f:
-        f.write(OmegaConf.to_yaml(cfg, resolve=True))
-    # run_trainer(cfg)
+    run_trainer(cfg)
