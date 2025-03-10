@@ -41,6 +41,7 @@ def main():
             sequence_length=args.seq_len,
             drop_last=False, seed=95818,
             shuffle=False,
+            pad="to_max" if args.fsdp else None,
             num_workers=2, pin_memory=True,
         ),
         device_batch_size=args.device_batch_size,
