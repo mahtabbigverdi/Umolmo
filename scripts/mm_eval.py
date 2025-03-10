@@ -20,7 +20,7 @@ from olmo.eval.inf_evaluator import InfDatasetEvaluator, EvaluatorConfig, \
     InfDatasetEvaluatorConfig
 from olmo.eval.loss_evaluator import LossDatasetEvaluatorConfig, LossDatasetEvaluator
 from olmo.exceptions import OLMoCliError
-from olmo.io import file_exists, write_file, get_bytes_range
+from olmo.io import file_exists, write_file, get_bytes_range, read_file
 from olmo.nn.image_vit import VitConfig
 from olmo.nn.llm import LlmConfig
 from olmo.models.molmo.molmo import Molmo, MolmoConfig
@@ -293,8 +293,7 @@ class ModelEvaluator:
                 if metric_file and file_exists(metric_file):
                     logging.info(f"Loading pre-computed metrics for {cfg.label} from {metric_file}")
                     if get_global_rank() == 0:
-                        data = get_bytes_range(metric_file, 0, None)
-                        cfg_to_metrics[cfg.label] = json.load(data.decode("utf-8"))["metrics"]
+                        cfg_to_metrics[cfg.label] = json.loads(read_file(metric_file))["metrics"]
                     else:
                         # Still set with a empty dict to mark that this eval can can be skipped
                         cfg_to_metrics[cfg.label] = {}
@@ -349,6 +348,10 @@ class ModelEvaluator:
             # Post-process the metrics by saving the wandb.Html outputs to disk
             if save_dir and get_global_rank() == 0:
                 for k, v in list(metrics.items()):
+                    if k == "HighResSelection":
+                        # FIXME Ideally we would save the histogram as a PNG
+                        del metrics[k]
+                        continue
                     if isinstance(v, wandb.Html):
                         filename = f"{evaluation.label}-{k}.html"
                         write_file(save_dir, filename, v.html, True)
