@@ -71,7 +71,7 @@ class HePreprocessorConfig(BaseConfig):
             overlap_margins=self.overlap_margins,
             resize=vit.resize_mode,
             use_col_tokens=self.use_col_tokens,
-
+            use_high_res_col_tokens=self.use_col_tokens,
             base_image_input_size=vit.image_default_input_size,
             image_pooling_w=vision_backbone_config.image_pooling_w,
             image_pooling_h=vision_backbone_config.image_pooling_h,
@@ -87,14 +87,12 @@ class HePreprocessorConfig(BaseConfig):
 class HeMultiModalPreprocessor(MultiModalPreprocessor):
     num_high_res_features: int=512
     max_query_len: Optional[int] = None
-    fully_offset_position_ids: Optional[bool] = True
     multi_res_selection: Optional[int] = None
     multi_res_min: Optional[int] = None
-    use_high_res_col_tokens: bool = True
-    mask_invalid_values: bool = True
-    debug: Optional[str] = None
     indicate_k: Optional[str] = None
+    use_high_res_col_tokens: bool = True
     vector_query: bool = False
+    debug: Optional[str] = None
 
     def image_to_patches_and_tokens(
         self,
@@ -288,8 +286,7 @@ class HeMultiModalPreprocessor(MultiModalPreprocessor):
             # A low res image might have less than `self.num_high_res_features`
             # patches total
             image_k = num_high_res_features if num_high_res_features else self.num_high_res_features
-            if self.mask_invalid_values:
-                image_k = min(image_k, num_high_res_tokens)
+            image_k = min(image_k, num_high_res_tokens)
 
             if self.use_high_res_col_tokens:
                 n_col_tokens = 1+h // self.image_pooling_h
@@ -369,8 +366,6 @@ class HeMultiModalPreprocessor(MultiModalPreprocessor):
         patch_idx = self.build_image_input_idx(low_res_tokens, None)
         patch_idx = patch_idx.reshape([-1])
         high_res_idx = np.where(high_res_tokens == self.image_patch_token_id)[0]
-        if not self.use_high_res_col_tokens and not self.mask_invalid_values:
-            assert len(high_res_idx) == num_high_res_features
         patch_idx = np.concatenate([patch_idx, len(low_res_tokens) + high_res_idx])
         if self.indicate_k == "before-low-res":
             n_high_res = len(high_res_idx)
@@ -588,10 +583,9 @@ class HeMultiModalPreprocessor(MultiModalPreprocessor):
                 all_subsegment_ids.append(subsegment_ids[start:token_ix])
             out_tokens.append(tokens[start:token_ix])
             all_loss_masks.append(loss_masks[start:token_ix])
-            if self.fully_offset_position_ids:
-                n = len(out_tokens[-1])
-                all_position_ids.append(np.arange(current_position, current_position+n))
-                current_position += n
+            n = len(out_tokens[-1])
+            all_position_ids.append(np.arange(current_position, current_position+n))
+            current_position += n
 
             if subsegment_ids is not None:
                 n_los_res = np.argmax(image_tokens == self.image_end_token_id) + 1
@@ -608,38 +602,35 @@ class HeMultiModalPreprocessor(MultiModalPreprocessor):
                 all_subsegment_ids.append(image_subsegment_ids)
 
             out_tokens.append(image_tokens)
-            if self.fully_offset_position_ids:
-                if subsegment_ids is not None:
-                    assert subsegment_ids[0] == 0
-                if self.debug and "v1_explicit" in self.debug:
-                    pos_ids = np.arange(current_position, current_position+len(image_tokens))
-                    high_res_start = 5 + np.argmax(image_tokens[5:] == self.image_start_token_id)
-                    is_high_res = np.arange(len(image_tokens)) > high_res_start
-                    pos_ids[(image_tokens == self.image_patch_token_id) & is_high_res] = current_position + 1 + high_res_start
-                    all_position_ids.append(pos_ids)
-                    current_position += len(image_tokens)
-                elif self.debug and "repeat_image_pos_ids" in self.debug:
-                    should_increment = np.cumsum((image_tokens != self.image_patch_token_id) & (image_tokens != self.image_col_token_id))
-                    all_position_ids.append(current_position + should_increment)
-                    current_position += should_increment.max() + 1
-                elif self.debug and "compressed_pos_ids_32" in self.debug:
-                    # import pdb; pdb.set_trace()
-                    # image_pos_ids = np.cumsum(np.where(image_tokens == self.image_patch_token_id, 1.0/32, 1))
-                    patch_data[:, :, 576] /= 32.0
-                    image_pos_ids = image_pos_ids / 32.0
-                    image_pos_ids[-1] = np.ceil(image_pos_ids[-1])
-                    all_position_ids.append(current_position + image_pos_ids)
-                    current_position += (image_pos_ids.max() + 1)
-                else:
-                    all_position_ids.append(image_pos_ids + current_position)
-                    if self.debug and "start_pos_ids_at_half" in self.debug:
-                        current_position += image_pos_ids.max() // 2 + 1
-                    elif self.debug and "start_pos_ids_len" in self.debug:
-                        current_position += len(image_pos_ids)
-                    else:
-                        current_position += image_pos_ids.max() + 1
-            else:
+            if subsegment_ids is not None:
+                assert subsegment_ids[0] == 0
+            if self.debug and "v1_explicit" in self.debug:
+                pos_ids = np.arange(current_position, current_position+len(image_tokens))
+                high_res_start = 5 + np.argmax(image_tokens[5:] == self.image_start_token_id)
+                is_high_res = np.arange(len(image_tokens)) > high_res_start
+                pos_ids[(image_tokens == self.image_patch_token_id) & is_high_res] = current_position + 1 + high_res_start
+                all_position_ids.append(pos_ids)
                 current_position += len(image_tokens)
+            elif self.debug and "repeat_image_pos_ids" in self.debug:
+                should_increment = np.cumsum((image_tokens != self.image_patch_token_id) & (image_tokens != self.image_col_token_id))
+                all_position_ids.append(current_position + should_increment)
+                current_position += should_increment.max() + 1
+            elif self.debug and "compressed_pos_ids_32" in self.debug:
+                # import pdb; pdb.set_trace()
+                # image_pos_ids = np.cumsum(np.where(image_tokens == self.image_patch_token_id, 1.0/32, 1))
+                patch_data[:, :, 576] /= 32.0
+                image_pos_ids = image_pos_ids / 32.0
+                image_pos_ids[-1] = np.ceil(image_pos_ids[-1])
+                all_position_ids.append(current_position + image_pos_ids)
+                current_position += (image_pos_ids.max() + 1)
+            else:
+                all_position_ids.append(image_pos_ids + current_position)
+                if self.debug and "start_pos_ids_at_half" in self.debug:
+                    current_position += image_pos_ids.max() // 2 + 1
+                elif self.debug and "start_pos_ids_len" in self.debug:
+                    current_position += len(image_pos_ids)
+                else:
+                    current_position += image_pos_ids.max() + 1
             all_loss_masks.append(np.zeros(image_tokens.shape[0], dtype=np.float32))
             if image_padding_mask:
                 all_crop_masks.append(img_mask)
@@ -647,12 +638,11 @@ class HeMultiModalPreprocessor(MultiModalPreprocessor):
         end = image_idx[-1] + 1
         out_tokens.append(tokens[end:])
         all_loss_masks.append(loss_masks[end:])
-        if self.fully_offset_position_ids:
-            n = len(out_tokens[-1])
-            if subsegment_ids is not None:
-                all_position_ids.append(current_position + build_pos_ids(subsegment_ids[end:]))
-            else:
-                all_position_ids.append(np.arange(current_position, current_position+n))
+        n = len(out_tokens[-1])
+        if subsegment_ids is not None:
+            all_position_ids.append(current_position + build_pos_ids(subsegment_ids[end:]))
+        else:
+            all_position_ids.append(np.arange(current_position, current_position+n))
         if subsegment_ids is not None:
             all_subsegment_ids.append(subsegment_ids[end:])
 
@@ -714,16 +704,13 @@ class HeMultiModalPreprocessor(MultiModalPreprocessor):
             out["subsegment_ids"] = all_subsegments
             out["position_ids"] = pos_ids
 
-        elif self.fully_offset_position_ids:
-            pos_ids = np.concatenate(all_position_ids, -1)
-            # Add BOS as the new position 0
-            pos_ids += 1
-            pos_ids = np.pad(pos_ids, [[1, 0]], constant_values=0)
-            if ends_with_eos:
-                pos_ids = pos_ids[:-1]
-            assert pos_ids.shape[0] == input_ids.shape[0]
-            out["position_ids"] = pos_ids
-        else:
-            out["position_ids"] = np.arange(len(input_ids), dtype=np.int64)
+        pos_ids = np.concatenate(all_position_ids, -1)
+        # Add BOS as the new position 0
+        pos_ids += 1
+        pos_ids = np.pad(pos_ids, [[1, 0]], constant_values=0)
+        if ends_with_eos:
+            pos_ids = pos_ids[:-1]
+        assert pos_ids.shape[0] == input_ids.shape[0]
+        out["position_ids"] = pos_ids
         return out
 
