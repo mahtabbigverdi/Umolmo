@@ -449,7 +449,7 @@ class DataFormatter(BaseConfig):
             else:
                 n = None
             if n is not None:
-                prefix = style + " " + str(n//15) + ":"
+                prefix = style + " " + str(n) + ":"
             else:
                 if self.system_prompt in ["style_and_length_v2"]:
                     prefix = style + ":"
