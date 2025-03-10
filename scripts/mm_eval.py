@@ -103,6 +103,8 @@ class DatasetEvaluatorConfig(BaseConfig):
                 max_examples=self.max_examples,
                 console_log_interval=console_log_interval
             )
+            return cfg.build_dataset_evaluator(
+                model_config=model_config, device=device, default_save_dir=default_save_dir)
         else:
             cfg = LossDatasetEvaluatorConfig(
                 self.label, self.data,
@@ -111,8 +113,7 @@ class DatasetEvaluatorConfig(BaseConfig):
                 max_examples=self.max_examples,
                 console_log_interval=console_log_interval
             )
-        return cfg.build_dataset_evaluator(
-            model_config=model_config, device=device, default_save_dir=default_save_dir)
+            return cfg.build_dataset_evaluator(model_config=model_config, device=device)
 
 
 @dataclasses.dataclass

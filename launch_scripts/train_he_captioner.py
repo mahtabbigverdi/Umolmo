@@ -94,12 +94,13 @@ if __name__ == "__main__":
                 additional_vocab_size=128
             ),
             token_scorer=TokenScorerConfig(
-                source="all_layers"
+                source="all_layers",
+                low_res_features_drop=0.1,
+                high_res_patch_prior_drop=0.1
             ),
             token_selection=TokenSelectionConfig(
                 loss="batch-mean"
             ),
-            # FIXME remove always_start_with_space
             data_formatter=HeDataFormatter(
                 system_prompt="style_and_length_v2"
             ),

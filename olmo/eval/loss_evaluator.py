@@ -93,8 +93,7 @@ class LossDatasetEvaluator:
         # Reset metrics.
         self.evaluator.reset()
         if loss_fn is None:
-            # FIXME not a default arg to avoid circular imports
-            from olmo.train import cross_entropy_loss as loss_fn
+            from olmo.train.trainer import cross_entropy_loss as loss_fn
 
         # Initialize data loader iterator.
         eval_batches = iter(self.eval_loader)
@@ -103,8 +102,7 @@ class LossDatasetEvaluator:
         num_eval_batches = self.num_batches
         if num_eval_batches > 0:
             if isinstance(self.eval_loader, torch.utils.data.IterableDataset):
-                # No defined length
-                num_eval_batches = None
+                num_eval_batches = None  # No defined length
             else:
                 num_eval_batches = min(num_eval_batches, len(self.eval_loader))
             eval_batches = islice(eval_batches, num_eval_batches)
