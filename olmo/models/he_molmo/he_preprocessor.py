@@ -227,7 +227,7 @@ class HeMultiModalPreprocessor(MultiModalPreprocessor):
             n_low_res_scores = 144*low_res_scaling*low_res_scaling
             patch_mapping = np.eye(n_low_res_scores, dtype=np.float32)
             patch_mapping = patch_mapping.reshape([n_low_res_scores, 12*low_res_scaling, 12*low_res_scaling])
-            if self.resize != "metaclip":
+            if self.resize not in ["metaclip", "siglip"]:
                 raise NotImplementedError(f"Resizing was {self.resize} but padding not implemented")
             high_res_pooled_h = src.shape[0]//(2*image_patch_size)
             high_res_pooled_w = src.shape[1]//(2*image_patch_size)
