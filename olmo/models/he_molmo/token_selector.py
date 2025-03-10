@@ -14,7 +14,7 @@ class TokenSelectionConfig:
     target_scale: float = 0.7 
     loss_pow: float = 1
     dropout: float = 0
-    loss: str = "mean-top-k"
+    loss: str = "batch-mean"
     scale_at_test: bool = False
     rescale: float = 1  
     offset: float = 0.0
@@ -68,7 +68,7 @@ class TokenSelector(nn.Module):
 
         metrics = {}
         if not self.training:
-            top_k, top_k_ixs = torch.topk(scores, k=k, sorted=True)
+            top_k, selection = torch.topk(scores, k=k, sorted=True)
             valid = top_k > self.MIN
             if topk_mask is not None:
                 valid = valid & (topk_mask > 0)

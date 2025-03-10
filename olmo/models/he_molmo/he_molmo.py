@@ -1,7 +1,8 @@
 import dataclasses
 import math
+from copy import copy
 from dataclasses import field
-from typing import Optional, Iterator, Sequence, Tuple, List, Dict
+from typing import Optional, Iterator, Sequence, Tuple, List, Dict, Literal
 import numpy as np
 
 import torch
@@ -19,9 +20,11 @@ from olmo.he_molmo.he_collator import HeMMCollator
 from olmo.he_molmo.hierarchical_preprocessor import HePreprocessorConfig
 from olmo.he_molmo.token_selector import TokenSelectionConfig, SelectionOutput
 from olmo.nn.beam_search import FinalSequenceScorer, Constraint, Sampler, BeamSearch
+from olmo.nn.image_vit import ResidualAttentionBlock, VisionTransformer
 from olmo.nn.legacy_config import convert_legacy_config
-from olmo.nn.llm import LlmConfig, Llm
-from olmo.nn.model import ModelConfig, OLMoOutput, OLMoGenerateOutput
+from olmo.nn.llm import LlmConfig, Llm, llm_activation_checkpoint_function, OLMoBlock
+from olmo.nn.model import ModelConfig, OLMoOutput, OLMoGenerateOutput, FSDPWrapStrategy
+from olmo.nn.model_config import ModelConfigBase
 from olmo.nn.vision_backbone import VisionBackboneConfig, MolmoVisionBackbone
 from olmo.torch_util import BufferCache, get_default_device
 from olmo.util import flatten_list
@@ -29,7 +32,7 @@ from olmo.util import flatten_list
 
 @dataclasses.dataclass
 class TokenScorerConfig(BaseConfig):
-    n_features: int
+    n_features: int = 512
     selection_model: str = "linear"
     normalize_importance_scores: bool = True
     four_scores_per_low_res_patch: bool = True
@@ -51,8 +54,10 @@ class TokenScorerConfig(BaseConfig):
 
 
 @dataclasses.dataclass
-class HeMolmoConfig(BaseConfig):
+class HeMolmoConfig(ModelConfigBase):
     """Molmo model configuration"""
+
+    model_name: str = "he_molmo"
 
     llm: LlmConfig = field(default_factory=LlmConfig)
     """LLM to use for generation"""
@@ -106,12 +111,12 @@ class HeMolmoConfig(BaseConfig):
             is_training=is_training,
         )
 
-    def build_collator(self, sequence_length, pad_mode: str) -> HeMMCollator:
+    def build_collator(self, sequence_length, pad_mode: str, include_metadata) -> HeMMCollator:
         """Collators for tensors from the preprocessor produces"""
         return HeMMCollator(
             sequence_length,
             max_crops=self.mm_preprocessor.get_max_crops(),
-            include_metadata=True,
+            include_metadata=include_metadata,
             pad=pad_mode,
         )
 
@@ -171,6 +176,7 @@ class HeMolmo(nn.Module):
             ]], dtype=torch.long, device=get_default_device())
             ts_config = config.token_selection
         self._image_end_token_id = self.special_ids[tokenizer.DEFAULT_IM_END_TOKEN]
+        self._block_checkpoint_fn = None
 
         ts_config = self.config.token_scorer
         llm_cfg = self.config.llm
@@ -236,6 +242,7 @@ class HeMolmo(nn.Module):
 
     def apply_activation_checkpointing(self):
         """Enable activation checkpointing"""
+        # self._block_checkpoint_fn = llm_activation_checkpoint_function(self.config.llm)
         self.transformer.apply_activation_checkpointing()
         if self.vision_backbone is not None:
             self.vision_backbone.apply_activation_checkpointing()
@@ -261,7 +268,57 @@ class HeMolmo(nn.Module):
         fully_shard(self, **fully_shard_kwargs)
 
     def get_fsdp_wrap_policy(self, wrap_strategy):
-        raise NotImplementedError()
+        if wrap_strategy is None:
+            return None
+
+        # The 'recurse' mode for the wrap function does not behave like you'd expect.
+        # Even if we return False, it may still recurse because PyTorch does what it wants,
+        # not what you want. This causes issues when, for example, we want to wrap 'ff_out' (a linear layer)
+        # but not other linear layers within a block.
+        # So we have to explicitly tell PyTorch which linear layers to wrap, and we also just
+        # return True in 'recurse' mode for simplicity.
+        size_based_module_to_wrap = {self.transformer.wte}
+        if hasattr(self.transformer, "ff_out"):
+            size_based_module_to_wrap.add(self.transformer.ff_out)
+        if hasattr(self.transformer, "ln_f"):
+            size_based_module_to_wrap.add(self.transformer.ln_f)
+        if self.vision_backbone is not None:
+            size_based_module_to_wrap.add(self.vision_backbone.image_pooling_2d)
+            size_based_module_to_wrap.add(self.vision_backbone.image_projector)
+        for module in self.get_token_scoring_modules():
+            size_based_module_to_wrap.add(module)
+
+        wrap_layer_names = (OLMoBlock, ResidualAttentionBlock, MolmoVisionBackbone, VisionTransformer)
+
+        if wrap_strategy == FSDPWrapStrategy.by_block:
+
+            def fsdp_wrap_fn(module, recurse: bool = True, nonwrapped_numel: int = 0):
+                del nonwrapped_numel
+                wrap = isinstance(module, wrap_layer_names)
+                if recurse:
+                    return True
+                else:
+                    return wrap
+
+            return fsdp_wrap_fn
+        elif wrap_strategy == FSDPWrapStrategy.by_block_and_size:
+
+            def fsdp_wrap_fn(module, recurse: bool = True, nonwrapped_numel: int = 0):
+                del nonwrapped_numel
+                wrap = isinstance(module, wrap_layer_names) or module in size_based_module_to_wrap
+                if recurse:
+                    return True
+                else:
+                    return wrap
+
+            return fsdp_wrap_fn
+
+        elif wrap_strategy == FSDPWrapStrategy.size_based:
+            from torch.distributed.fsdp.wrap import size_based_auto_wrap_policy
+
+            return size_based_auto_wrap_policy
+        else:
+            raise NotImplementedError(wrap_strategy)
 
     def get_connector_parameters(self) -> Iterator[torch.Tensor]:
         parameters = list(self.vision_backbone.get_connector_parameters())
@@ -483,8 +540,10 @@ class HeMolmo(nn.Module):
 
                 low_res_x_in = low_res_x
                 if ts_cfg.source != "prior-only":
+                    low_res_layer_outputs = [low_res_x]
                     for block_idx, block in enumerate(self.transformer.blocks[:ts_cfg.n_low_res_layers]):
                         enable_grad = ts_cfg.bp_low_res_start <= block_idx < ts_cfg.bp_low_res_end and self.training
+                        # with torch.set_grad_enabled(enable_grad), torch.compiler.set_stance("force_eager"):
                         with torch.set_grad_enabled(enable_grad):
                             low_res_x, cache = block(
                                 low_res_x, drop_mask=low_res_response_mask, attention_bias=low_res_bias, position_ids=low_res_pos_ids,
@@ -594,11 +653,10 @@ class HeMolmo(nn.Module):
                     elif ts_cfg.vector_query is not None:
                         raise NotImplementedError(ts_cfg.vector_query)
 
-                    if ts_cfg.high_res_patch_prior:
-                        if ts_cfg.debug == "prior_only":
-                            high_res_importance = self.patch_importance_ln(features).squeeze(-1)
-                        else:
-                            high_res_importance = high_res_importance + self.patch_importance_ln(features).squeeze(-1)
+                    if ts_cfg.source == "prior_only":
+                        high_res_importance = self.patch_importance_ln(features).squeeze(-1)
+                    elif ts_cfg.high_res_patch_prior:
+                        high_res_importance = high_res_importance + self.patch_importance_ln(features).squeeze(-1)
 
             if ts_cfg.learned_rescaling in ["norm-with-bias", "rescale-with-bias"]:
                 if ts_cfg.learned_rescaling == "norm-with-bias":
@@ -609,7 +667,7 @@ class HeMolmo(nn.Module):
                 raise NotImplementedError(ts_cfg.learned_rescaling)
 
             if ts_cfg.normalize_importance_scores:
-                high_res_importance = low_res_importance_flat / np.sqrt(high_res_importance.shape[-1])
+                high_res_importance = high_res_importance / np.sqrt(high_res_importance.shape[-1])
 
             high_res_idx = image_input_idx[:, 144:]
             if high_res_features_weights is None:
@@ -620,20 +678,15 @@ class HeMolmo(nn.Module):
             else:
                 assert torch.all((high_res_features_weights > 0) == (high_res_idx >= 0))
 
-            selection_out: SelectionOutput = self.high_res_patch_selector(
+            selection_out: SelectionOutput = self.token_selector(
                 high_res_importance, mask, high_res_features_weights)
             selection = selection_out.selection
-
-            import pdb; pdb.set_trace()
-            selection = selection.permute(0, 2, 1)  # [batch, (n_crops*n_patches), n_high_res_out]
-            selected_features = torch.einsum('bwn,bwf->bnf', selection, high_image_features)
-
 
             batch_idx = torch.arange(batch_size, device=x.device)
             batch_idx = torch.tile(batch_idx[:, None], [1, high_res_idx.shape[1]])
 
-            # Equals x[batch_idx, high_res_idx] = selected_features, but avoid being in-place
-            selected_features = selected_features.to(dtype=x.dtype)
+            # To [batch, n_high_res, dim] -> [batch, n_selected, dim]
+            selected_features = high_image_features[batch_idx, selection].to(dtype=x.dtype)
 
             # [batch, num_high_res_features]
             selection_valid = (high_res_features_weights > 0).flatten()
@@ -646,19 +699,21 @@ class HeMolmo(nn.Module):
                  .index_add(0, valid_high_res_idx, valid_selected_features)
                  .reshape(*x.shape))
 
-            # convert to float32 to support gradients
-            # with torch.amp.autocast(selection.device.type, enabled=False):
-            #     selected_pos_ids = torch.einsum('bwn,bw->bn', selection.float(), high_res_pos_ids)
-            raise NotImplementedError()
-            selected_pos_ids = selected_pos_ids.to(dtype=torch.long)
-            position_ids.flatten()[valid_high_res_idx] += selected_pos_ids.flatten()[selection_valid]
+            selected_pos_ids = high_res_pos_ids[batch_idx, selection]
+            position_ids.flatten()[valid_high_res_idx] += selected_pos_ids.flatten().long()[selection_valid]
 
+            if selection_out.token_importance is not None:
+                token_scores = torch.ones([batch_size, x.shape[1]], dtype=x.dtype, device=x.device)
+                token_scores.flatten()[valid_high_res_idx] = selection_out.token_importance.to(x.dtype).flatten()[selection_valid]
+            else:
+                token_scores = None
             # Sanity checkpoint, the selection matrix should map to patch tokens
             # import pdb; pdb.set_trace()
             # image_patch_id = get_special_token_ids(self.config.get_tokenizer())[tokenizer.DEFAULT_IMAGE_PATCH_TOKEN]
             # assert torch.all(input_ids[batch_idx, high_res_idx] == image_patch_id, selection.sum(1) > 0)
         else:
             assert len(attention_mask.shape) == 4
+            selection_out = None
             token_scores = None
             selection = None
 
@@ -678,12 +733,20 @@ class HeMolmo(nn.Module):
             position_ids = position_ids[:, high_res_start:]
             response_mask = response_mask[:, high_res_start:]
 
+        if self.config.token_scorer.attention_scaling and token_scores is not None:
+            ascale = self.config.token_scorer.attention_scaling
+            self_atten = (1 - torch.eye(x.shape[1], device=attention_bias.device, dtype=attention_bias.dtype))[None, None, :, :]
+            attention_bias = attention_bias + torch.log(token_scores*ascale+(1-ascale))[:, None, None, :] * self_atten
+            token_scaling = None
+        else:
+            token_scaling = token_scores
+
         all_hidden_states = []
         for block_idx, block in enumerate(self.transformer.blocks):
             layer_past = None if past_key_values is None else past_key_values[block_idx]
             x, cache = block(
                 x, attention_bias=attention_bias, position_ids=position_ids, drop_mask=response_mask,
-                layer_past=layer_past, use_cache=use_cache, token_scores=token_scores,
+                layer_past=layer_past, use_cache=use_cache, token_scores=token_scaling,
             )
 
             if attn_key_values is not None:

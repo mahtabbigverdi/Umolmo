@@ -1,7 +1,5 @@
 import numpy as np
-from PIL import Image
-from olmo.data.data_formatter import DataFormatter
-from olmo.data.model_preprocessor import Preprocessor, MultiModalPreprocessor
+from olmo.models.molmo.model_preprocessor import MultiModalPreprocessor
 from olmo.html_utils import postprocess_prompt
 from olmo.tokenizer import build_tokenizer, IMAGE_PROMPT
 

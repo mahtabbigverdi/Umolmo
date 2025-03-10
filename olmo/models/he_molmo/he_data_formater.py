@@ -1,12 +1,11 @@
 from typing import Dict, Tuple
 
 from olmo import tokenizer
-from olmo.config import BaseConfig
-from olmo.data.data_formatter import DataFormatter
+from olmo.models.molmo.data_formatter import DataFormatter
 
 
 class HeDataFormatter(DataFormatter):
-    """The HE models the query BEFORE the image, so we have a custom preprocess to do that"""
+    """The HE models puts the query BEFORE the image, so we have a custom preprocess to do that"""
 
     def _format_example(self, message, example, is_training, for_inference, rng):
         metadata = {}

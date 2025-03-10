@@ -28,6 +28,7 @@ from olmo.nn.beam_search import BeamSearch, Constraint, FinalSequenceScorer, Sam
 from olmo.nn.image_vit import ResidualAttentionBlock, VisionTransformer
 from olmo.nn.legacy_config import convert_legacy_config
 from olmo.nn.llm import LlmConfig, OLMoBlock, LlmActivationCheckpointMode, Llm
+from olmo.nn.model_config import ModelConfigBase
 from olmo.nn.vision_backbone import MolmoVisionBackbone, VisionBackboneConfig
 from olmo.torch_util import BufferCache, get_global_rank, get_default_device
 from torch.distributed.fsdp import fully_shard
@@ -37,8 +38,10 @@ log = logging.getLogger(__name__)
 
 
 @dataclasses.dataclass
-class ModelConfig(BaseConfig):
+class ModelConfig(ModelConfigBase):
     """Molmo model configuration"""
+
+    model_name: str = "molmo"
 
     llm: LlmConfig = field(default_factory=LlmConfig)
     """LLM to use for generation"""
