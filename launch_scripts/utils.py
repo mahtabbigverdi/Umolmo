@@ -152,6 +152,7 @@ def get_evaluation(name, seq_len, max_examples, num_workers=2, device_batch_size
 
 
 DEFAULT_VISION_BACKBONE = VitConfig(
+    init_path="${oc.env:MOLMO_DATA_DIR}/pretrained_image_encoders/vit-l-14-336.pt",
     image_model_type="openai",
     image_default_input_size=(336, 336),
     image_patch_size=14,
@@ -173,6 +174,7 @@ DEFAULT_VISION_BACKBONE = VitConfig(
 
 
 SIGLIP_VISION_BACKBONE = VitConfig(
+    init_path="/weka/oe-training-default/mm-olmo/pretrained_image_encoders/siglip2-so400m-14-384.pt",
     image_model_type="siglip",
     image_default_input_size=(378, 378),
     image_patch_size=14,
@@ -195,6 +197,7 @@ SIGLIP_VISION_BACKBONE = VitConfig(
 
 
 DINOV2_LARGE_336_VISION_BACKBONE = VitConfig(
+    init_path="${oc.env:MOLMO_DATA_DIR}/pretrained_image_encoders/dinov2-large-336.pt",
     image_model_type="dino",
     image_default_input_size=(336, 336),
     image_patch_size=14,
@@ -217,6 +220,7 @@ DINOV2_LARGE_336_VISION_BACKBONE = VitConfig(
 
 
 METACLIP_L14_336_VISION_BACKBONE = VitConfig(
+    init_path="${oc.env:MOLMO_DATA_DIR}/pretrained_image_encoders/metaclip-l14-336.pt",
     image_model_type="openai",
     image_default_input_size=(336, 336),
     image_patch_size=14,
@@ -239,6 +243,7 @@ METACLIP_L14_336_VISION_BACKBONE = VitConfig(
 
 
 OLMOE = LlmConfig(
+    init_path="${oc.env:MOLMO_DATA_DIR}/pretrained_llms/olmoe.pt",
     d_model=2048,
     n_heads=16,
     n_layers=16,
@@ -290,6 +295,7 @@ OLMOE = LlmConfig(
 
 
 OLMO_1024_PREVIEW = LlmConfig(
+    init_path="${oc.env:MOLMO_DATA_DIR}/pretrained_llms/olmo-1024-preview.pt",
     d_model=4096,
     n_heads=32,
     n_kv_heads=None,
@@ -326,6 +332,7 @@ OLMO_1024_PREVIEW = LlmConfig(
 
 
 QWEN2_7B = LlmConfig(
+    init_path="${oc.env:MOLMO_DATA_DIR}/pretrained_llms/qwen2-7b.pt",
     vocab_size=152064,
     max_sequence_length=4096,
     residual_dropout=0,
@@ -352,6 +359,7 @@ QWEN2_7B = LlmConfig(
 )
 
 QWEN25_15B = LlmConfig(
+    init_path="${oc.env:MOLMO_DATA_DIR}/pretrained_llms/qwen2.5-3b.pt",
     vocab_size=151936,
     max_sequence_length=4096,
     residual_dropout=0,
@@ -379,6 +387,7 @@ QWEN25_15B = LlmConfig(
 
 
 QWEN25_3B = LlmConfig(
+    init_path="${oc.env:MOLMO_DATA_DIR}/pretrained_llms/qwen2.5-3b.pt",
     vocab_size=151936,
     max_sequence_length=4096,
     residual_dropout=0,
@@ -406,6 +415,7 @@ QWEN25_3B = LlmConfig(
 
 
 QWEN2_72B = LlmConfig(
+    init_path="${oc.env:MOLMO_DATA_DIR}/pretrained_llms/qwen2-70b.pt",
     additional_vocab_size=128,
     vocab_size=152064,
     max_sequence_length=4096,
@@ -430,20 +440,6 @@ QWEN2_72B = LlmConfig(
         identifier="Qwen/Qwen2-72B",
     ),
 )
-
-
-DEFAULT_LOAD_PATHS = {
-    "openai": "${oc.env:MOLMO_DATA_DIR}/pretrained_image_encoders/vit-l-14-336.pt",
-    "siglip": "${oc.env:MOLMO_DATA_DIR}/pretrained_image_encoders/siglip-so400m-14-384.pt",
-    "dinov2_large_336": "${oc.env:MOLMO_DATA_DIR}/pretrained_image_encoders/dinov2-large-336.pt",
-    "metaclip_l14_336": "${oc.env:MOLMO_DATA_DIR}/pretrained_image_encoders/metaclip-l14-336.pt",
-    "olmoe": "${oc.env:MOLMO_DATA_DIR}/pretrained_llms/olmoe.pt",
-    "olmo_1024_preview": "${oc.env:MOLMO_DATA_DIR}/pretrained_llms/olmo-1024-preview.pt",
-    "qwen2.5_1.5b": "${oc.env:MOLMO_DATA_DIR}/pretrained_llms/qwen2.5-1.5b.pt",
-    "qwen2.5_3b": "${oc.env:MOLMO_DATA_DIR}/pretrained_llms/qwen2.5-3b.pt",
-    "qwen2_7b": "${oc.env:MOLMO_DATA_DIR}/pretrained_llms/qwen2-7b.pt",
-    "qwen2_72b": "${oc.env:MOLMO_DATA_DIR}/pretrained_llms/qwen2-70b.pt",
-}
 
 
 VISION_BACKBONES: Dict[str, VitConfig] = {

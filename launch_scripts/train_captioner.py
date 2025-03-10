@@ -66,14 +66,12 @@ if __name__ == "__main__":
         model_cfg = MolmoConfig(
             llm=replace(
                 LLMS[args.llm],
-                init_path=DEFAULT_LOAD_PATHS[args.llm],
                 residual_dropout=0.0,
                 response_residual_dropout=0.1,
                 additional_vocab_size=128,
             ),
             vision_backbone=VisionBackboneConfig(
-                vit=replace(VISION_BACKBONES[args.vision_backbone],
-                            init_path=DEFAULT_LOAD_PATHS.get(args.vision_backbone, omegaconf.MISSING)),
+                vit=VISION_BACKBONES[args.vision_backbone],
                 vit_layers=vit_layers,
                 image_padding_embed=ImagePaddingEmbed.pad_and_partial_pad
             ),

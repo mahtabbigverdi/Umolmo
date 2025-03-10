@@ -5,7 +5,7 @@ from typing import cast
 
 from omegaconf import omegaconf, OmegaConf
 
-from launch_scripts.utils import VISION_BACKBONES, LLMS, DEFAULT_LOAD_PATHS
+from launch_scripts.utils import VISION_BACKBONES, LLMS
 from olmo.data.data_loader import DataConfig
 from olmo.data.pixmo_datasets import PixMoCap
 from olmo.eval.loss_evaluator import LossDatasetEvaluatorConfig
@@ -88,7 +88,6 @@ if __name__ == "__main__":
         model_cfg = HeMolmoConfig(
             llm=replace(
                 LLMS[args.llm],
-                init_path=DEFAULT_LOAD_PATHS[args.llm],
                 residual_dropout=0.0,
                 response_residual_dropout=0.1,
                 additional_vocab_size=128
@@ -111,10 +110,7 @@ if __name__ == "__main__":
             vision_backbone=VisionBackboneConfig(
                 vit_layers=vit_layers,
                 image_padding_embed=None,
-                vit=replace(
-                    VISION_BACKBONES[args.vision_backbone],
-                    init_path=DEFAULT_LOAD_PATHS.get(args.vision_backbone, omegaconf.MISSING)
-                )
+                vit=VISION_BACKBONES[args.vision_backbone]
             ),
             bi_directional_attn="within_image"
         )
