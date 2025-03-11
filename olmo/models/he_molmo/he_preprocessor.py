@@ -94,6 +94,10 @@ class HeMultiModalPreprocessor(MultiModalPreprocessor):
     vector_query: bool = False
     debug: Optional[str] = None
 
+    @property
+    def tokens_per_image(self):
+        return self.image_token_length_h * self.image_token_length_w
+
     def image_to_patches_and_tokens(
         self,
         image: ImageInput,
@@ -112,7 +116,7 @@ class HeMultiModalPreprocessor(MultiModalPreprocessor):
             base_image_input_size = (base_image_input_size, base_image_input_size)
 
         base_image_input_d = image_patch_size
-        tokens_per_image = image_token_length_w * image_token_length_h
+        tokens_per_image = self.tokens_per_image
         image_base_patch_w = base_image_input_size[1] // base_image_input_d
         image_base_patch_h = base_image_input_size[0] // base_image_input_d
 
@@ -122,12 +126,11 @@ class HeMultiModalPreprocessor(MultiModalPreprocessor):
         if self.crop_mode in ["overlap-and-resize-c2",]:
             # Discard this many patches from the (left/top, right/bottom) of crops
             left_margin, right_margin = overlap_margins
-            # Required for compatibility with image pooling
-            assert left_margin % self.image_pooling_w == 0 and right_margin % self.image_pooling_w == 0
-            assert left_margin % self.image_pooling_h == 0 and right_margin % self.image_pooling_h == 0
             total_margin_pixels = base_image_input_d*(right_margin + left_margin)  # pixels removed per dim
             crop_patches = base_image_input_size[0] // base_image_input_d  # patches per crop dim
             crop_window_patches = crop_patches - (right_margin + left_margin)  # usable patches
+            assert crop_window_patches % self.image_pooling_w == 0
+            assert crop_window_patches % self.image_pooling_h == 0
             crop_window_size = crop_window_patches * base_image_input_d
 
             # Decide how to tile the image, to account for the overlap margins we compute the tiling
@@ -224,13 +227,18 @@ class HeMultiModalPreprocessor(MultiModalPreprocessor):
 
             # Build a map of low-res -> high-res patches
             low_res_scaling = 2
-            n_low_res_scores = 144*low_res_scaling*low_res_scaling
+            n_low_res_scores = tokens_per_image*low_res_scaling*low_res_scaling
             patch_mapping = np.eye(n_low_res_scores, dtype=np.float32)
-            patch_mapping = patch_mapping.reshape([n_low_res_scores, 12*low_res_scaling, 12*low_res_scaling])
+            patch_mapping = patch_mapping.reshape([n_low_res_scores, image_token_length_w*low_res_scaling, image_token_length_h*low_res_scaling])
             if self.resize not in ["metaclip", "siglip"]:
                 raise NotImplementedError(f"Resizing was {self.resize} but padding not implemented")
             high_res_pooled_h = src.shape[0]//(2*image_patch_size)
             high_res_pooled_w = src.shape[1]//(2*image_patch_size)
+            if self.base_image_input_size[0] // self.image_patch_size % 2 == 1:
+                # Extra pooled patch will be added due to pooling
+                high_res_pooled_w += 1
+                high_res_pooled_h += 1
+            assert high_res_pooled_h * high_res_pooled_w == (patch_ordering >= 0).sum()
             patch_mapping = torchvision.transforms.Resize(
                 [high_res_pooled_h, high_res_pooled_w], InterpolationMode.BILINEAR, antialias=False)(
                 torch.from_numpy(patch_mapping)).numpy().transpose(1, 2, 0)
@@ -258,9 +266,9 @@ class HeMultiModalPreprocessor(MultiModalPreprocessor):
             ix = ix[ix >= 0]
             patch_data_ = np.full([len(ix), patch_data_size], -1, dtype=np.float32)
             patch_data_[ix] = patch_mapping.reshape(-1, patch_data_size)
-            patch_data = np.full([tiling[0]*tiling[1]*12*12, patch_data_size], -1, dtype=np.float32)
+            patch_data = np.full([tiling[0]*tiling[1]*image_token_length_h*image_token_length_w, patch_data_size], -1, dtype=np.float32)
             patch_data[patch_ordering.ravel() >= 0] = patch_data_
-            patch_data = patch_data.reshape(tiling[0]*tiling[1], 12*12, -1)
+            patch_data = patch_data.reshape(tiling[0]*tiling[1], tokens_per_image, -1)
 
             # Switch to [n_crops, n_patches, pixels_per_patch] format
             image_layout_impatch_w, image_layout_impatch_h = tiling[0], tiling[1]
@@ -291,7 +299,8 @@ class HeMultiModalPreprocessor(MultiModalPreprocessor):
             if self.use_high_res_col_tokens:
                 n_col_tokens = 1+h // self.image_pooling_h
                 col_token_positions = np.arange(1, h // self.image_pooling_h + 1) * (w // self.image_pooling_w + 1)
-                patches_per_row = (tiling[0]*(12-4)+4) * 28
+                patches_per_row = (crop_window_patches // self.image_pooling_w)
+                patches_per_row += (left_margin + right_margin + self.image_pooling_w - 1) // self.image_pooling_w
                 joint = [
                     [self.image_start_token_id],
                     np.full(image_k, self.image_patch_token_id, dtype=np.int32),
@@ -563,7 +572,7 @@ class HeMultiModalPreprocessor(MultiModalPreprocessor):
 
             # In case there were fewer than `n_high_res` high-res tokens for this image
             # (e.g., it was a low-resolution image)
-            n_high_res_tokens = len(patch_idx) - 144
+            n_high_res_tokens = len(patch_idx) - self.tokens_per_image
             assert n_high_res_tokens <= n_high_res
             assert n == 1
 

@@ -63,7 +63,6 @@ class HeMMCollator:
         # Note these are NOT padded to a max length
         out["high_res_features_weights"] = _collate([ex["high_res_features_weights"] for ex in batch], None, pad_value=0)
         out["image_input_idx"] = _collate([ex["image_input_idx"] for ex in batch], allow_truncate=False)
-        assert out["image_input_idx"].shape[1] == out["high_res_features_weights"].shape[1] + 144
 
         out["input_ids"] = out.pop("input_tokens")
         if "target_tokens" in out:
