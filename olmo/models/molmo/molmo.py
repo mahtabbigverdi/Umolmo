@@ -28,7 +28,7 @@ from olmo.nn.legacy_config import convert_legacy_config
 from olmo.nn.llm import LlmConfig, OLMoBlock, Llm
 from olmo.models.model_config import BaseModelConfig
 from olmo.nn.vision_backbone import MolmoVisionBackbone, VisionBackboneConfig
-from olmo.torch_util import BufferCache
+from olmo.torch_util import BufferCache, get_default_device
 from torch.distributed.fsdp import fully_shard
 
 
@@ -117,14 +117,16 @@ class Molmo(ModelBase):
         self.vision_backbone: Optional[MolmoVisionBackbone] = None
         if self.config.vision_backbone is not None:
             self.vision_backbone = self.config.vision_backbone.build(self.config.llm, device)
-        if self.config.bi_directional_attn == "image_tokens":
-            special_ids = tokenizer.get_special_token_ids(self.config.build_tokenizer())
-            self.__cache["image_tokens"] = torch.as_tensor([special_ids[x] for x in [
+        if self.config.bi_directional_attn:
+            self.special_ids = tokenizer.get_special_token_ids(self.config.build_tokenizer())
+            self.__cache["image_tokens"] = torch.as_tensor([self.special_ids[x] for x in [
                 tokenizer.DEFAULT_IMAGE_PATCH_TOKEN,
                 tokenizer.DEFAULT_IM_COL_TOKEN,
                 tokenizer.DEFAULT_IM_START_TOKEN,
                 tokenizer.DEFAULT_IM_END_TOKEN,
-            ]], dtype=torch.long)
+            ]], dtype=torch.long, device=get_default_device())
+        self._image_end_token_id = self.special_ids[tokenizer.DEFAULT_IM_END_TOKEN]
+        self._image_start_token_id = self.special_ids[tokenizer.DEFAULT_IM_START_TOKEN]
 
     def reset_parameters(self):
         """Re-initialize the weights from scratch"""
@@ -421,12 +423,20 @@ class Molmo(ModelBase):
                 device=x.device, dtype=torch.bool))[None, None, :, :]
         casual_mask = self.__cache["casual_mask"].to(x.device)[:, :, :attention_mask_len, :attention_mask_len]
 
-        if self.config.bi_directional_attn == "image_tokens":
+        if self.config.bi_directional_attn:
             image_tokens = self.__cache["image_tokens"].to(input_ids.device)
-            can_attend_bk = torch.any(input_ids[:, :, None] == image_tokens[None, None, :], -1)
-            casual_mask = casual_mask | (can_attend_bk[:, :, None] & can_attend_bk[:, None, :])[:, None, :, :]
-        elif self.config.bi_directional_attn is not None:
-            raise NotImplementedError(self.config.bi_directional_attn)
+            is_image_token = torch.any(input_ids[:, :, None] == image_tokens, -1)
+            can_attend_bk = (is_image_token[:, :, None] & is_image_token[:, None, :])
+            if self.config.bi_directional_attn == "within_image":
+                # images cannot attend to one another
+                image_starts = input_ids == self._image_start_token_id
+                image_segment_ids = torch.cumsum(image_starts, -1)
+                can_attend_bk &= image_segment_ids[:, None, :] == image_segment_ids[:, :, None]
+            elif self.config.bi_directional_attn == "image_tokens":
+                pass
+            else:
+                raise NotImplementedError()
+            casual_mask = casual_mask | can_attend_bk[:, None, :, :]
 
         attention_mask = attention_mask & casual_mask
 
