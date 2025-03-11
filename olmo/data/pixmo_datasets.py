@@ -8,6 +8,7 @@ from os.path import join, exists
 import datasets
 import numpy as np
 import torchvision
+from cached_path import cached_path
 from torchvision.transforms import functional as VF
 from PIL import ImageOps
 import PIL
@@ -484,7 +485,7 @@ class DenseCaptionEval(Dataset):
         raise NotImplementedError()
 
     def __init__(self):
-        with open(join(PIXMO_DATASETS, "dense-caption-eval", "test.jsonl"), "r") as f:
+        with open(cached_path(join(PIXMO_DATASETS, "dense-caption-eval", "test.jsonl")), "r") as f:
             self.lines = f.readlines()
 
     def __len__(self):
@@ -493,7 +494,7 @@ class DenseCaptionEval(Dataset):
     def get(self, item, rng):
         ex = json.loads(self.lines[item])
         return dict(
-            image=join("/weka/oe-training-default/mm-olmo/torch_datasets/pixmo_images", ex["image"]),
+            image=join(DATA_HOME, "pixmo_images", ex["image"]),
             style="long_caption",
             metadata=dict(
                 image_url=ex["url"],
