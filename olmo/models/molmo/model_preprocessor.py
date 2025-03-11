@@ -460,6 +460,8 @@ class MultiModalPreprocessor:
             total_margin_pixels = base_image_input_d*(right_margin + left_margin)  # pixels removed per dim
             crop_patches = base_image_input_size[0] // base_image_input_d  # patches per crop dim
             crop_window_patches = crop_patches - (right_margin + left_margin)  # usable patches
+            assert crop_window_patches % self.image_pooling_w == 0
+            assert crop_window_patches % self.image_pooling_h == 0
             crop_window_size = crop_window_patches * base_image_input_d
 
             # Decide how to tile the image, to account for the overlap margins we compute the tiling
