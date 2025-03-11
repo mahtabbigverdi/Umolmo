@@ -70,7 +70,7 @@ class HeMolmoConfig(BaseModelConfig):
     token_scorer: TokenScorerConfig = field(default_factory=TokenScorerConfig)
     """"How to get token scores"""
 
-    token_selection: TokenSelectionConfig = field(default_factory=TokenSelectionConfig)
+    token_selector: TokenSelectionConfig = field(default_factory=TokenSelectionConfig)
     """"How to select tokens using the scores"""
 
     mm_preprocessor: HePreprocessorConfig = field(default_factory=HePreprocessorConfig)
@@ -164,7 +164,7 @@ class HeMolmo(ModelBase):
         self.transformer: Llm = self.config.llm.build(self.__cache, device)
         self.vision_backbone: Optional[MolmoVisionBackbone] = None
         self.vision_backbone = self.config.vision_backbone.build(self.config.llm, device)
-        self.token_selector = config.token_selection.build()
+        self.token_selector = config.token_selector.build()
         if self.config.bi_directional_attn:
             self.special_ids = tokenizer.get_special_token_ids(self.config.build_tokenizer())
             self.__cache["image_tokens"] = torch.as_tensor([self.special_ids[x] for x in [
@@ -173,7 +173,7 @@ class HeMolmo(ModelBase):
                 tokenizer.DEFAULT_IM_COL_TOKEN,
                 tokenizer.DEFAULT_IM_END_TOKEN,
             ]], dtype=torch.long, device=get_default_device())
-            ts_config = config.token_selection
+            ts_config = config.token_selector
         self._image_end_token_id = self.special_ids[tokenizer.DEFAULT_IM_END_TOKEN]
         self._image_start_token_id = self.special_ids[tokenizer.DEFAULT_IM_START_TOKEN]
         self._block_checkpoint_fn = None

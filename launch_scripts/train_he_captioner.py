@@ -68,7 +68,7 @@ if __name__ == "__main__":
             token_scorer=TokenScorerConfig(
               source="all-layers"
             ),
-            token_selection=TokenSelectionConfig(loss="batch-mean"),
+            token_selector=TokenSelectionConfig(loss="batch-mean"),
             data_formatter=HeDataFormatter(),
             mm_preprocessor=HePreprocessorConfig(crop_mode="overlap-and-resize-c2", max_crops=6)
         )
@@ -99,7 +99,7 @@ if __name__ == "__main__":
                 low_res_features_drop=0.1,
                 high_res_patch_prior_drop=0.1
             ),
-            token_selection=TokenSelectionConfig(
+            token_selector=TokenSelectionConfig(
                 loss="batch-mean"
             ),
             data_formatter=HeDataFormatter(
@@ -133,7 +133,10 @@ if __name__ == "__main__":
         )
     else:
         model_cfg.mm_preprocessor.num_high_res_features = 512
-        seq_len = 768 + 512
+        if args.vision_backbone == "siglip":
+            seq_len = 768 + 512 + 64
+        else:
+            seq_len = 768 + 512
 
     evaluator = LossDatasetEvaluatorConfig(
         label="val",
