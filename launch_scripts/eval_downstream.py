@@ -110,7 +110,7 @@ def main():
         base_config = get_evaluation(name=task, seq_len=args.seq_len, max_examples=args.max_examples)
         eval_config = DatasetEvaluatorConfig(
             label=base_config.label,
-            data=base_config.data,
+            data=replace(base_config.data, pad="to_max" if args.fsdp else None),
             generative_evaluator=replace(
                 base_config.evaluator,
                 n_to_log=4,
