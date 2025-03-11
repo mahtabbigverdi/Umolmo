@@ -89,7 +89,10 @@ class MMCollator:
             if any(key in ex for ex in batch):
                 out[key] = _collate([ex.get(key) for ex in batch], self.max_crops, pad=self.pad, allow_truncate=False)
 
-        out["pooled_patches_idx"] = _collate([ex["pooled_patches_idx"] for ex in batch], self.max_images_tokens, pad=self.pad, allow_truncate=False)
+        out["pooled_patches_idx"] = _collate(
+            [ex["pooled_patches_idx"] for ex in batch],
+            self.max_images_tokens, pad=self.pad, allow_truncate=False
+        )
 
         out["input_ids"] = out.pop("input_tokens")
         if "target_tokens" in out:

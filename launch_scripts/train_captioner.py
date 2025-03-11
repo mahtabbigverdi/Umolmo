@@ -73,7 +73,7 @@ if __name__ == "__main__":
             vision_backbone=VisionBackboneConfig(
                 vit=VISION_BACKBONES[args.vision_backbone],
                 vit_layers=vit_layers,
-                image_padding_embed=ImagePaddingEmbed.pad_and_partial_pad
+                image_padding_embed=ImagePaddingEmbed.pad_and_partial_pad if args.vision_backbone == "openai" else None
             ),
             data_formatter=DataFormatter(
                 system_prompt='style_and_length',

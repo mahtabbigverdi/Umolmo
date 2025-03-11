@@ -65,6 +65,12 @@ class VisionBackboneConfig(BaseConfig):
     are computed, should only be false for legacy models 
     """
 
+    image_pooling_h: int = 2
+    """Pooling patch features height"""
+
+    image_pooling_w: int = 2
+    """Pooling patch features width"""
+
     vit_layers: Tuple = (-1,)
     """What layers to use from the VIT"""
 

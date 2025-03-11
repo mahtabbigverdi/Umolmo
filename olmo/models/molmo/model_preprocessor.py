@@ -295,12 +295,6 @@ class MolmoPreprocessorConfig(BaseConfig):
     overlap_margins: Tuple[int, int] = (4, 4)
     """Overlap margins for overlapping crops modes"""
 
-    image_pooling_h: int = 2
-    """Pooling patch features height"""
-
-    image_pooling_w: int = 2
-    """Pooling patch features width"""
-
     use_col_tokens: bool = True
     """Use column tokens in the image tokens"""
 
@@ -336,8 +330,8 @@ class MolmoPreprocessorConfig(BaseConfig):
             use_col_tokens=self.use_col_tokens,
 
             base_image_input_size=vit.image_default_input_size,
-            image_pooling_w=self.image_pooling_w,
-            image_pooling_h=self.image_pooling_h,
+            image_pooling_w=vision_backbone_config.image_pooling_w,
+            image_pooling_h=vision_backbone_config.image_pooling_h,
             image_patch_size=vit.image_patch_size,
             image_padding_mask=vision_backbone_config.image_padding_embed is not None,
             pad_value=vit.pad_value,
@@ -383,18 +377,9 @@ class MolmoPreprocessor:
             self.image_patch_token_id = special_tokens[tokenizer.DEFAULT_IMAGE_PATCH_TOKEN]
             self.image_prompt_token_id = special_tokens[tokenizer.IMAGE_PROMPT]
 
-    def max_image_tokens(self):
-        """Return the max number of tokens this could produce after pooling"""
+    def max_image_tokens(self) -> int:
+        """Return the max number of pooled image tokens this could produce for any image"""
         base_h, base_w = self.base_image_input_size
-        patch_size = self.image_patch_size
-        crop_patch_w = base_h // patch_size
-        crop_patch_h = base_w // patch_size
-
-        if self.crop_mode == "resize":
-            resized_tokens = (((crop_patch_w + self.image_pooling_w - 1) // self.image_pooling_w) *
-                              ((crop_patch_h + self.image_pooling_h - 1) // self.image_pooling_h))
-            return resized_tokens
-
         # Doing the math on what the max is not-trivial, just brute force it assuming long
         # skinny images are the wors due the having the least overlap
         max_tokens = -1
@@ -402,9 +387,40 @@ class MolmoPreprocessor:
             [base_h, base_w*self.max_crops],
             [base_h*self.max_crops, base_w]
         ]:
-            idx = self.image_to_patches_and_tokens(np.zeros([base_h, base_w*self.max_crops, 3]))[-1]
-            max_tokens = max(max_tokens, len(idx))
+            max_tokens = max(max_tokens, self.compute_num_tokens(h, w))
         return max_tokens
+
+    def compute_num_tokens(self, image_h, image_w) -> int:
+        """Return the max number of pooled image tokens produced for an image of size image_w, image_h"""
+        image_patch_size = self.image_patch_size
+        crop_patch_w = self.base_image_input_size[1] // image_patch_size
+        crop_patch_h = self.base_image_input_size[0] // image_patch_size
+
+        resize_idx = np.arange(crop_patch_w*crop_patch_h).reshape([crop_patch_h, crop_patch_w])
+        idx_arr = arange_for_pooling(resize_idx, self.image_pooling_w, self.image_pooling_h)
+        resize_tokens = idx_arr.shape[0] * idx_arr.shape[1]
+
+        if self.crop_mode == "resize":
+            return resize_tokens
+
+        margin_patches = sum(self.overlap_margins)
+        margin_pixels = image_patch_size*margin_patches  # pixels removed per dim
+        assert crop_patch_w == crop_patch_h
+        crop_window_patches = crop_patch_w - margin_patches
+        crop_window_size = crop_window_patches * image_patch_size
+        tiling = select_tiling(
+            image_h - margin_pixels,
+            image_w - margin_pixels,
+            crop_window_size,
+            self.max_crops
+        )
+        idx_arr = arange_for_pooling(torch.zeros([tiling[0]*crop_patch_h, tiling[1]*crop_patch_w]),
+                                     self.image_pooling_h, self.image_pooling_w)
+        overlap_tokens = idx_arr.shape[0] * idx_arr.shape[1]
+        if self.crop_mode in ["overlap-and-resize-c2"]:
+            return overlap_tokens + resize_tokens
+        else:
+            return overlap_tokens
 
     def _normalize(self, image):
         if self.normalize == "openai":
@@ -436,8 +452,14 @@ class MolmoPreprocessor:
         self,
         image: ImageInput,
         is_training=False,
-        rng=None
+        rng=None,
     ):
+        """
+        :return image_tokens, the token IDS for this image
+        :return crops, the image crops to processes with the ViT
+        :return mask, the padding mask for each crop
+        :return pooled_patch_idx, the padding mask for each crop
+        """
         max_crops = self.max_crops
         overlap_margins = self.overlap_margins
         base_image_input_size = self.base_image_input_size
@@ -567,7 +589,7 @@ class MolmoPreprocessor:
 
             if self.crop_mode == "overlap-and-resize":
                 crop_arr = batch_pixels_to_patches(crop_arr, image_patch_size)
-                mask_arr = batch_pixels_to_patches(mask_arr, image_patch_size)
+                mask_arr = batch_pixels_to_patches(mask_arr, image_patch_size).astype(np.float32).mean(axis=-1)
                 return np.concatenate(joint, 0), crop_arr, mask_arr, idx_arr
 
             # Finally do the same for the global image
@@ -602,8 +624,9 @@ class MolmoPreprocessor:
                         extra_tokens,
                         [self.image_end_token_id],
                     ] + joint
+            mask_arr = batch_pixels_to_patches(mask_arr, image_patch_size).astype(np.float32).mean(axis=-1)
             return (np.concatenate(joint, 0), batch_pixels_to_patches(crop_arr, image_patch_size),
-                    batch_pixels_to_patches(mask_arr, image_patch_size), idx_arr)
+                    mask_arr, idx_arr)
         else:
             raise NotImplementedError(self.crop_mode)
 
