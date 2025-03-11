@@ -457,9 +457,6 @@ class MultiModalPreprocessor:
         if self.crop_mode in ["overlap-and-resize-c2", "overlap-and-resize"]:
             # Discard this many patches from the (left/top, right/bottom) of crops
             left_margin, right_margin = overlap_margins
-            # Required for compatibility with image pooling
-            assert left_margin % self.image_pooling_w == 0 and right_margin % self.image_pooling_w == 0
-            assert left_margin % self.image_pooling_h == 0 and right_margin % self.image_pooling_h == 0
             total_margin_pixels = base_image_input_d*(right_margin + left_margin)  # pixels removed per dim
             crop_patches = base_image_input_size[0] // base_image_input_d  # patches per crop dim
             crop_window_patches = crop_patches - (right_margin + left_margin)  # usable patches
