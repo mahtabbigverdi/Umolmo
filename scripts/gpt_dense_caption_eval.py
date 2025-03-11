@@ -12,14 +12,16 @@ from dataclasses import dataclass, asdict
 from datetime import datetime
 from json import JSONEncoder
 from os.path import exists, join, dirname, isdir, isfile
+from pathlib import Path
 from typing import Dict, Tuple, List, Union
 
 import numpy as np
 import wandb
 from openai import OpenAI, BadRequestError
+from torchvision.datasets.utils import list_dir
 from tqdm import tqdm
 
-from olmo.io import read_json, is_url, write_json
+from olmo.io import read_json, is_url, write_json, file_exists, dir_is_empty
 from olmo.util import prepare_cli_environment
 
 METRIC_ORDER = ["name", "wandb", "step", "checkpoint", "src", "num_statements", "is_repeating",
@@ -659,18 +661,14 @@ def main():
 
     resolved_targets = []
     for name, file in target_files:
-        if is_url(file):
-            # TODO add auto prediction finding here as well
-            resolved_targets.append((name, file))
-        else:
-            if isdir(file):
-                candidates = [x for x in file.iterdir() if "dense_caption_eval-validation" in x.name]
-                if len(candidates) == 1:
-                    logging.info(f"Selecting {candidates[0]} for {file.name}")
-                    file = (candidates[0] / "predictions.json")
-                else:
-                    raise ValueError(f"Unable to auto-select predictions in directory {file}")
-            resolved_targets.append((name, file))
+        if not dir_is_empty(file):
+            candidates = [x for x in list_dir(file) if "dense_caption_eval-test" in x]
+            if len(candidates) == 1:
+                logging.info(f"Selecting {candidates[0]} for {file}")
+                file = join(file, candidates[0], "predictions.json")
+            else:
+                raise ValueError(f"Unable to auto-select predictions in directory {file}")
+        resolved_targets.append((name, file))
     target_files = resolved_targets
 
     runs = None
@@ -698,7 +696,6 @@ def main():
            results = read_json(results_file)
         else:
             try:
-                import pdb; pdb.set_trace()
                 captions = read_json(file)
             except Exception as e:
                 if len(target_files) == 1:
