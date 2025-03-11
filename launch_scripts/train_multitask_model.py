@@ -44,7 +44,7 @@ AUX = [
     "st_qa",
     "tally_qa",
 
-    ("clocks", 250000),  # Downsample since it is huge
+    ("pixmo_clocks", 250000),  # Downsample since it is huge
     "pixmo_docs_charts",
     "pixmo_docs_tables",
     "pixmo_docs_other",
@@ -119,7 +119,7 @@ if __name__ == "__main__":
             "doc_qa",
             "ai2_diagram_v2_mix_transparent",
             "coco_2014_vqa_multi",
-            "clocks",
+            "pixmo_clocks",
             "android_control_ll",
             "pointing_eval:test",
             "countbench_qa:huggingface"
@@ -128,7 +128,7 @@ if __name__ == "__main__":
             ["demo", [
                 "pixmo_ask_model_anything",
                 ("pixmo_cap", 50000),
-                "pixmo_cap_qa",
+                "pixmo_cap_qa_as_user_qa",
                 "pixmo_pointing_explanations"
             ], 0.15],
             ["aux", aux, 0.50],

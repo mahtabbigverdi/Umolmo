@@ -246,8 +246,10 @@ def get_dataset_by_name(dataset_name, split):
         return PixMoAskModelAnything(split=split)
 
     # PixMo-CapQa
-    elif dataset_name in ["synthetic_qa_v3_as_user_qa", "pixmo_cap_qa"]:
+    elif dataset_name in ["synthetic_qa_v3", "pixmo_cap_qa"]:
         return PixMoCapQa(split=split)
+    elif dataset_name in ["synthetic_qa_v3_as_user_qa", "pixmo_cap_qa_as_user_qa"]:
+        return PixMoCapQa(split=split, style="user_qa")
 
     # PixMo-Cap
     if dataset_name in ["cockatoo_and_transcript_712k_sept6", "pixmo_cap_with_transcripts"]:
@@ -257,7 +259,7 @@ def get_dataset_by_name(dataset_name, split):
     if dataset_name in ["pixmo_cap_transcript"]:
         return PixMoCap(split, mode="transcript")
 
-    elif dataset_name in ["pixmo_clocks"]:
+    elif dataset_name in ["clocks", "pixmo_clocks"]:
         return PixMoClocks(split=split)
 
     if dataset_name == "pointing_eval":
