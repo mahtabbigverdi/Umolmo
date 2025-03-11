@@ -117,8 +117,8 @@ class Molmo(ModelBase):
         self.vision_backbone: Optional[MolmoVisionBackbone] = None
         if self.config.vision_backbone is not None:
             self.vision_backbone = self.config.vision_backbone.build(self.config.llm, device)
+        self.special_ids = tokenizer.get_special_token_ids(self.config.build_tokenizer())
         if self.config.bi_directional_attn:
-            self.special_ids = tokenizer.get_special_token_ids(self.config.build_tokenizer())
             self.__cache["image_tokens"] = torch.as_tensor([self.special_ids[x] for x in [
                 tokenizer.DEFAULT_IMAGE_PATCH_TOKEN,
                 tokenizer.DEFAULT_IM_COL_TOKEN,
