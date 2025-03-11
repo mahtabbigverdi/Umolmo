@@ -127,17 +127,33 @@ def example_to_html_dict(ex, preprocessor, show_patches=False, show_crops=False)
                 max_dim=max_dim
             )
 
-    base_image_input_d = 14
+    base_image_input_d = preprocessor.mm_preprocessor.image_patch_size
+    base_h, base_w = preprocessor.mm_preprocessor.base_image_input_size
     images = einops.rearrange(
         ex["images"], 't (h w) (dh dw c) -> t (h dh) (w dw) c',
-        w=336//base_image_input_d,
-        h=336//base_image_input_d,
+        h=base_h//base_image_input_d,
+        w=base_w//base_image_input_d,
         dh=base_image_input_d, dw=base_image_input_d, c=3)
     images = unnormalize_image(images)
 
     if show_crops:
-        for ix, image in enumerate(images):
-            out[f"patch-{ix}"] = image
+        patch_w = preprocessor.mm_preprocessor.image_token_length_w
+        patch_h = preprocessor.mm_preprocessor.image_token_length_h
+        for image_ix, image in enumerate(images):
+            boxes = []
+            valid = (ex["image_input_idx"][image_ix] >= 0)
+            valid = valid.reshape((patch_h, patch_w))
+            for x in range(valid.shape[0]):
+                for y in range(valid.shape[1]):
+                    if not valid[x, y]:
+                        x0 = x * base_image_input_d * 2
+                        y0 = y * base_image_input_d * 2
+                        boxes.append([x0, y0, min(x0 + base_image_input_d * 2, image.shape[1]), min(y0 + base_image_input_d * 2, image.shape[0])])
+            if len(boxes) > 0:
+                out[f"patch-{image_ix}"] = get_html_image_with_boxes(
+                    build_embedded_image(image), [BoxesToVisualize(np.array(boxes), "red")])
+            else:
+                out[f"patch-{image_ix}"] = image
 
     if show_patches:
         special_token_to_id = get_special_token_ids(voc)
@@ -146,7 +162,7 @@ def example_to_html_dict(ex, preprocessor, show_patches=False, show_crops=False)
         with_patches = []
         patches = einops.rearrange(images,
             't (h dh) (w dw) c -> (t h w) dh dw c',
-            dh=28, dw=28
+            dh=base_image_input_d*2, dw=base_image_input_d*2
         )
         # patches = tf.transpose(patches, [0, 2, 1])
         assert len(patches) == len(image_input_idx)
@@ -168,6 +184,8 @@ def example_to_html_dict(ex, preprocessor, show_patches=False, show_crops=False)
 
 def build_embedded_image(image_data):
     """Turns an image into a string that can be used as a src in html images"""
+    if image_data.dtype == np.float32:
+        image_data = (image_data*255).astype(np.uint8)
     with PIL.Image.fromarray(image_data) as img:
         image_data = io.BytesIO()
         img.save(image_data, format='JPEG')
