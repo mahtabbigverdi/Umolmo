@@ -5,8 +5,8 @@ from tqdm import tqdm
 
 import numpy as np
 
+from olmo.data.get_dataset import get_dataset_by_name
 from olmo.html_utils import example_to_html_dict, build_html_table
-from olmo.data import get_dataset_by_name
 from olmo.models.molmo.data_formatter import DataFormatter
 from olmo.data.dataset import DeterministicDataset
 from olmo.models.molmo.model_preprocessor import Preprocessor
