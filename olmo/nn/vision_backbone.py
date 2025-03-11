@@ -80,14 +80,19 @@ class VisionBackboneConfig(BaseConfig):
     image_feature_dropout: float = 0.0
     """Dropout for image patch features"""
 
-    activation_checkpointing: bool = True
-    """Allow activation checkpoint to the connector components"""
+    connector_activation_checkpointing: bool = True
+    """Allow activation checkpoint on the connector components"""
 
     compile_vit: Optional[str] = "blocks"
     """How to compile the ViT"""
 
     def __post_init__(self):
         self.vit_layers = tuple(self.vit_layers)  # type: ignore[assignment]
+
+    @property
+    def tokens_per_crop(self):
+        h, w = self.llm_patches_per_crop()
+        return h * w
 
     @property
     def image_num_patch(self):
@@ -269,7 +274,7 @@ class MolmoVisionBackbone(nn.Module):
 
     def apply_activation_checkpointing(self):
         self.image_vit.apply_activation_checkpointing()
-        if self.config.activation_checkpointing:
+        if self.config.connector_activation_checkpointing:
             self.image_projector = checkpoint_wrapper(self.image_projector)
             self.image_pooling_2d = checkpoint_wrapper(self.image_pooling_2d)
 
