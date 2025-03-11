@@ -9,6 +9,7 @@ import torch
 import torch.backends.cuda
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import checkpoint_wrapper
 from transformers.activations import get_activation
 
 from olmo.config import BaseConfig, StrEnum
@@ -513,8 +514,13 @@ class SiglipVisionTransformer(nn.Module):
         self.transformer = BlockCollection(config, device)
 
     def apply_activation_checkpointing(self):
-        if self.config.activation_checkpointing:
-            self.transformer._activation_checkpoint_fn = vit_activation_checkpoint_function(self.config)
+        # if self.config.activation_checkpointing:
+        #     self.transformer._activation_checkpoint_fn = vit_activation_checkpoint_function(self.config)
+        # Use `checkpoint_wrapper` since just setting `_activation_checkpoint_fn` is leading
+        # to errors when compiling, which makes 0 sense but such is the finicky nature of torch.compile
+        fn = vit_activation_checkpoint_function(self.config)
+        self.transformer.resblocks = nn.ModuleList([
+            checkpoint_wrapper(x, checkpoint_fn=fn) for x in self.transformer.resblocks])
 
     def reset_with_pretrained_weights(self):
         # FIXME just repeating the code in `VisionTransformer`
@@ -634,7 +640,7 @@ class DinoVisionTransformer(nn.Module):
     def full_shard(self, *args, **kwargs):
         for block in self.transformer.resblocks:
             fully_shard(block, *args, **kwargs)
-        fully_shard([self.patch_embedding, self.class_embedding, self.positional_embedding], *args, **kwargs)
+        fully_shard(self, *args, **kwargs)
 
     def add_pos_emb(self, x: torch.Tensor, patch_num: int) -> torch.Tensor:
         cls_emb = self.positional_embedding[0:1]
