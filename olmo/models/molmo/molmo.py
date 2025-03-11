@@ -20,7 +20,7 @@ from olmo import tokenizer
 from olmo.config import D
 from olmo.models.molmo.collator import MMCollator
 from olmo.models.molmo.data_formatter import DataFormatter
-from olmo.models.molmo.model_preprocessor import MultiModalPreprocessorConfig, Preprocessor
+from olmo.models.molmo.model_preprocessor import Preprocessor, MolmoPreprocessorConfig
 from olmo.models.model import FSDPWrapStrategy, OLMoOutput, OLMoGenerateOutput, ModelBase
 from olmo.nn.beam_search import BeamSearch, Constraint, FinalSequenceScorer, Sampler
 from olmo.nn.image_vit import ResidualAttentionBlock, VisionTransformer
@@ -51,7 +51,7 @@ class MolmoConfig(BaseModelConfig):
     data_formatter: DataFormatter = field(default_factory=DataFormatter)
     """How to prompt the model for different tasks"""
 
-    mm_preprocessor: MultiModalPreprocessorConfig = field(default_factory=MultiModalPreprocessorConfig)
+    mm_preprocessor: MolmoPreprocessorConfig = field(default_factory=MolmoPreprocessorConfig)
     """How to crop images and encoding jointly with text"""
 
     bi_directional_attn: Optional[str] = None
@@ -66,7 +66,7 @@ class MolmoConfig(BaseModelConfig):
         if config.vision_backbone is not None:
             config.vision_backbone = VisionBackboneConfig.update_legacy_settings(config.vision_backbone)
         config.data_formatter = DataFormatter.update_legacy_settings(config.data_formatter)
-        config.mm_preprocessor = MultiModalPreprocessorConfig.update_legacy_settings(config.mm_preprocessor)
+        config.mm_preprocessor = MolmoPreprocessorConfig.update_legacy_settings(config.mm_preprocessor)
         return config
 
     def build_tokenizer(self):
@@ -94,6 +94,7 @@ class MolmoConfig(BaseModelConfig):
         return MMCollator(
             sequence_length,
             max_crops=self.mm_preprocessor.get_max_crops(),
+            max_images_tokens=self.mm_preprocessor.get_max_tokens(self.vision_backbone),
             include_metadata=include_metadata,
             pad=pad_mode,
         )
@@ -127,6 +128,7 @@ class Molmo(ModelBase):
             ]], dtype=torch.long, device=get_default_device())
         self._image_end_token_id = self.special_ids[tokenizer.DEFAULT_IM_END_TOKEN]
         self._image_start_token_id = self.special_ids[tokenizer.DEFAULT_IM_START_TOKEN]
+        self._image_patch_id = self.special_ids[tokenizer.DEFAULT_IMAGE_PATCH_TOKEN]
 
     def reset_parameters(self):
         """Re-initialize the weights from scratch"""
@@ -283,7 +285,7 @@ class Molmo(ModelBase):
         response_mask: Optional[torch.Tensor] = None,
         images: Optional[torch.Tensor] = None,
         image_masks: Optional[torch.Tensor] = None,
-        image_input_idx: Optional[torch.Tensor] = None,
+        pooled_patches_idx: Optional[torch.Tensor] = None,
         subsegment_ids: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.Tensor] = None,
         past_key_values: Optional[Sequence[Tuple[torch.Tensor, torch.Tensor]]] = None,
@@ -372,24 +374,10 @@ class Molmo(ModelBase):
 
         num_image: Optional[int] = None
         if images is not None:
-            # shape: (batch_size, num_image, num_patch, d_model)
-            # cls_embed: (batch_size, num_image, d_model)
-            image_features = self.vision_backbone(images, image_masks)
-            num_image, num_patch = image_features.shape[1:3]
-            assert image_input_idx.shape == (batch_size, num_image, num_patch)
-
-            # inster the image feature into the embedding.
-            image_features = image_features.view(batch_size, num_image * num_patch, -1)
-            image_input_idx = image_input_idx.view(batch_size, num_image * num_patch)
-
-            valid = image_input_idx >= 0
-            batch_idx = torch.arange(batch_size, device=x.device)
-            batch_idx = torch.tile(batch_idx[:, None], [1, image_features.shape[1]])
-
-            # For hf demo/endpoint
-            image_features = image_features.to(x.device)
-
-            x[batch_idx[valid], image_input_idx[valid]] += image_features[valid]
+            image_features = self.vision_backbone(images, image_masks, pooled_patches_idx)
+            is_image_patch = input_ids.view(-1) == self._image_patch_id
+            assert is_image_patch.sum() == len(image_features)
+            x.view(-1, x.shape[-1])[is_image_patch] += image_features
 
         if not self.config.llm.rope:
             # Get positional embeddings.

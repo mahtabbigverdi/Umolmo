@@ -6,7 +6,7 @@ from typing import cast
 from omegaconf import omegaconf, OmegaConf
 
 from olmo.models.molmo.data_formatter import DataFormatter
-from olmo.models.molmo.model_preprocessor import MultiModalPreprocessorConfig
+from olmo.models.molmo.model_preprocessor import MolmoPreprocessorConfig
 from olmo.data.pixmo_datasets import PixMoCap
 from launch_scripts.utils import DEBUG_MODEL, VISION_BACKBONES, LLMS
 from olmo.eval.loss_evaluator import LossDatasetEvaluatorConfig
@@ -78,7 +78,7 @@ if __name__ == "__main__":
             data_formatter=DataFormatter(
                 system_prompt='style_and_length',
             ),
-            mm_preprocessor=MultiModalPreprocessorConfig(
+            mm_preprocessor=MolmoPreprocessorConfig(
                 crop_mode="overlap-and-resize-c2",
                 max_crops=8 if args.vision_backbone == "siglip" else 12,
                 overlap_margins=(4, 3) if args.vision_backbone == "siglip" else (4, 4)

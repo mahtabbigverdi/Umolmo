@@ -50,10 +50,10 @@ class MMCollator:
     """Converts list of examples from our datasets into a tensor batch"""
 
     TEXT_KEYS = ["input_tokens", "target_tokens", "loss_masks", "subsegment_ids", "position_ids"]
-    IMAGE_KEYS = ["images", "image_masks", "image_input_idx",]
+    IMAGE_KEYS = ["images", "image_masks"]
 
     def __init__(self, max_sequence_length=None, include_metadata=True, pad=None,
-                 max_crops=None):
+                 max_crops=None, max_images_tokens=None):
         """
         :param max_sequence_length: truncate examples longer than this length
         :param include_metadata: whether to include the metadata in the out batch
@@ -65,6 +65,7 @@ class MMCollator:
         self.max_sequence_length = max_sequence_length
         self.max_crops = max_crops
         self.include_metadata = include_metadata
+        self.max_images_tokens=  max_images_tokens
         self.pad = pad
 
     def __call__(self, batch: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -87,6 +88,9 @@ class MMCollator:
         for key in self.IMAGE_KEYS:
             if any(key in ex for ex in batch):
                 out[key] = _collate([ex.get(key) for ex in batch], self.max_crops, pad=self.pad, allow_truncate=False)
+
+        out["pooled_patches_idx"] = _collate([ex["pooled_patches_idx"] for ex in batch], self.max_images_tokens, pad=self.pad, allow_truncate=False)
+
         out["input_ids"] = out.pop("input_tokens")
         if "target_tokens" in out:
             out["labels"] = out.pop("target_tokens")

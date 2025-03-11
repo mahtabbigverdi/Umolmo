@@ -603,8 +603,15 @@ def main_llm(args: argparse.Namespace) -> None:
 
     olmo_state_dict = convert_fn(state_dict, cfg, cfg.block_type)
 
-    logging.info("Saving...")
-    torch.save(olmo_state_dict, output_path)
+    if args.sharded:
+        import torch.distributed.checkpoint as dist_cp
+        import torch.distributed as dist
+        dist.init_process_group(backend="nccl")
+        dist_cp.state_dict_saver.save(state_dict, checkpoint_id=output_path)
+    else:
+        logging.info("Saving...")
+        torch.save(olmo_state_dict, output_path)
+
 
 
 def main(args: argparse.Namespace) -> None:
@@ -641,6 +648,11 @@ def get_parser() -> argparse.ArgumentParser:
         "--cache_dir",
         type=str,
         help="Directory to save HF parameters",
+    )
+    parser.add_argument(
+        "--sharded",
+        action="store_true",
+        help="Save as a sharded checkpoints",
     )
 
     return parser

@@ -71,12 +71,6 @@ class VisionBackboneConfig(BaseConfig):
     skip_unused_layers: bool = True
     """Don't load layers we don't need from the ViT"""
 
-    image_pooling_h: int = 2
-    """Pooling patch features height"""
-
-    image_pooling_w: int = 2
-    """Pooling patch features width"""
-
     image_feature_dropout: float = 0.0
     """Dropout for image patch features"""
 
@@ -90,20 +84,8 @@ class VisionBackboneConfig(BaseConfig):
         self.vit_layers = tuple(self.vit_layers)  # type: ignore[assignment]
 
     @property
-    def tokens_per_crop(self):
-        h, w = self.llm_patches_per_crop()
-        return h * w
-
-    @property
     def image_num_patch(self):
         return self.vit.image_num_patch
-
-    def llm_patches_per_crop(self):
-        h, w = self.image_num_patch
-        # Round up in case we need to pad the image features for pooling
-        h = (h + self.image_pooling_h - 1) // self.image_pooling_h
-        w = (w + self.image_pooling_w - 1) // self.image_pooling_w
-        return h, w
 
     def build(self, llm_config, device):
 
@@ -308,7 +290,7 @@ class MolmoVisionBackbone(nn.Module):
         image_features = image_features.view(B, T, N, -1)
         return image_features
 
-    def forward(self, images: torch.Tensor, image_masks: torch.Tensor) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    def forward(self, images: torch.Tensor, image_masks: torch.Tensor, pooled_patches_idx: torch.Tensor) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         cfg = self.config
 
         # image_features: (batch_size, num_crops(=num_image), num_patch, nximage_emb_dim)
@@ -335,27 +317,18 @@ class MolmoVisionBackbone(nn.Module):
                 raise ValueError(cfg.image_padding_embed)
 
         image_features = self.image_feature_dropout(image_features)
+        dim = image_features.shape[-1]
 
-        image_features = image_features.reshape(
-            (batch_size, num_image) + cfg.image_num_patch + (-1,),
-            )
+        # Use `pooled_patches_idx` to arange the features for image pooling
+        batch_idx = torch.arange(pooled_patches_idx.shape[0], dtype=torch.long, device=pooled_patches_idx.device)
+        batch_idx = torch.tile(batch_idx.view(batch_size, 1, 1), [1, pooled_patches_idx.shape[1], pooled_patches_idx.shape[2]])
+        valid = pooled_patches_idx >= 0
+        valid_token = torch.any(valid, -1)
 
-        if cfg.image_num_patch[0] % cfg.image_pooling_h != 0 or cfg.image_num_patch[1] % cfg.image_pooling_w != 0:
-            pad_h = cfg.image_num_patch[0] % cfg.image_pooling_h
-            pad_w = cfg.image_num_patch[1] % cfg.image_pooling_w
-            # Pad so we can still pool mxn patches
-            image_features = F.pad(
-                image_features,
-                (0, 0, 0, pad_w, 0, pad_h, 0, 0, 0, 0),
-            )
-
-        # image pooling
-        image_features = einops.rearrange(
-            image_features,
-            'b n (h dh) (w dw) c -> (b n h w) (dh dw) c',
-            dh=cfg.image_pooling_h,
-            dw=cfg.image_pooling_w,
-        )
+        # Now [batch, num_high_res_features, 4, dim]
+        image_features = image_features.reshape(batch_size, -1, dim)[batch_idx, torch.clip(pooled_patches_idx, 0)]
+        image_features = image_features * valid.float()[:, :, :, None]
+        image_features = image_features.reshape([-1, pooled_patches_idx.shape[-1], dim])
 
         if cfg.image_pooling_2d == ImagePooling2DType.attention_meanq:
             query = image_features.mean(-2, keepdim=True)
@@ -363,8 +336,7 @@ class MolmoVisionBackbone(nn.Module):
         elif cfg.image_pooling_2d not in {ImagePooling2DType.none, ImagePooling2DType.stack}:
             image_features = self.image_pooling_2d(image_features[:, :1, :], image_features)
 
-        h, w = cfg.llm_patches_per_crop()
-        image_features = image_features.reshape(batch_size, num_image, h * w, -1)
+        image_features = image_features.reshape([-1, image_features.shape[-1]])
 
         # MLP layer to map the feature.
         if cfg.image_projector == ImageProjectType.mlpx2:
@@ -373,6 +345,5 @@ class MolmoVisionBackbone(nn.Module):
         else:
             image_features = self.image_projector(image_features)
 
-        # image_features: (batch_size, num_image, num_patch, d_model)
-        return image_features
+        return image_features[valid_token.flatten()]
 

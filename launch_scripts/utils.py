@@ -3,7 +3,7 @@ from typing import Dict
 
 from olmo.models.molmo.data_formatter import DataFormatter
 from olmo.data.data_loader import DataConfig
-from olmo.models.molmo.model_preprocessor import MultiModalPreprocessorConfig
+from olmo.models.molmo.model_preprocessor import MolmoPreprocessorConfig
 from olmo.eval.inf_evaluator import InfDatasetEvaluatorConfig, EvaluatorConfig
 from olmo.nn.image_vit import VitConfig
 from olmo.nn.llm import LlmConfig, AttentionType, LayerNormType
@@ -33,7 +33,7 @@ DEBUG_MODEL = MolmoConfig(
         vit=VitConfig(image_num_layers=1)
     ),
     data_formatter=DataFormatter(),
-    mm_preprocessor=MultiModalPreprocessorConfig(crop_mode="resize", max_crops=1)
+    mm_preprocessor=MolmoPreprocessorConfig(crop_mode="resize", max_crops=1)
 )
 
 

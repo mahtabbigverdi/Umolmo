@@ -7,8 +7,7 @@ from torchvision.transforms import InterpolationMode
 from transformers.image_utils import ImageInput
 
 from olmo.config import BaseConfig
-from olmo.models.molmo.model_preprocessor import select_tiling, batch_pixels_to_patches, pixels_to_patches, \
-    MultiModalPreprocessor
+from olmo.models.molmo.model_preprocessor import select_tiling, batch_pixels_to_patches, MolmoPreprocessor
 from olmo.nn.vision_backbone import VisionBackboneConfig
 
 
@@ -84,7 +83,7 @@ class HePreprocessorConfig(BaseConfig):
 
 
 @dataclasses.dataclass
-class HeMultiModalPreprocessor(MultiModalPreprocessor):
+class HeMultiModalPreprocessor(MolmoPreprocessor):
     num_high_res_features: int=512
     max_query_len: Optional[int] = None
     multi_res_selection: Optional[int] = None

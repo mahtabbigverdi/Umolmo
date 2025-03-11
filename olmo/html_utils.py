@@ -62,8 +62,6 @@ def example_to_html_dict(ex, preprocessor, show_patches=False, show_crops=False)
         metadata = {k[len("metadata/"):]: v for k, v in
                     ex.items() if k.startswith("metadata/")}
     voc = preprocessor.tokenizer
-    image_input_idx = ex["image_input_idx"].ravel()
-    token_to_patch_ix = {k: i for i, k in enumerate(image_input_idx.reshape(-1)) if k >= 0}
 
     boxes = []
     if "subsegment_ids" in ex:
@@ -137,18 +135,18 @@ def example_to_html_dict(ex, preprocessor, show_patches=False, show_crops=False)
     images = unnormalize_image(images)
 
     if show_crops:
-        patch_w = preprocessor.mm_preprocessor.image_token_length_w
-        patch_h = preprocessor.mm_preprocessor.image_token_length_h
+        used_in_output = set(ex["pooled_patches_idx"].ravel())
+        patch_idx = 0
         for image_ix, image in enumerate(images):
+            patch_id = 0
             boxes = []
-            valid = (ex["image_input_idx"][image_ix] >= 0)
-            valid = valid.reshape((patch_h, patch_w))
-            for x in range(valid.shape[0]):
-                for y in range(valid.shape[1]):
-                    if not valid[x, y]:
-                        x0 = x * base_image_input_d * 2
-                        y0 = y * base_image_input_d * 2
-                        boxes.append([x0, y0, min(x0 + base_image_input_d * 2, image.shape[1]), min(y0 + base_image_input_d * 2, image.shape[0])])
+            for x in range(image.shape[0]//base_image_input_d):
+                for y in range(image.shape[1]//base_image_input_d):
+                    if patch_idx not in used_in_output:
+                        x0 = x * base_image_input_d
+                        y0 = y * base_image_input_d
+                        boxes.append([x0, y0, x0 + base_image_input_d, y0 + base_image_input_d])
+                    patch_idx += 1
             if len(boxes) > 0:
                 out[f"patch-{image_ix}"] = get_html_image_with_boxes(
                     build_embedded_image(image), [BoxesToVisualize(np.array(boxes), "red")])
@@ -156,24 +154,32 @@ def example_to_html_dict(ex, preprocessor, show_patches=False, show_crops=False)
                 out[f"patch-{image_ix}"] = image
 
     if show_patches:
+        pooled_patches_idx = ex["pooled_patches_idx"]
         special_token_to_id = get_special_token_ids(voc)
         image_patch_id = special_token_to_id[tokenizer.DEFAULT_IMAGE_PATCH_TOKEN]
         id_to_special_token = {i: k for i, k in special_token_to_id.items()}
         with_patches = []
         patches = einops.rearrange(images,
             't (h dh) (w dw) c -> (t h w) dh dw c',
-            dh=base_image_input_d*2, dw=base_image_input_d*2
+            dh=base_image_input_d, dw=base_image_input_d
         )
-        # patches = tf.transpose(patches, [0, 2, 1])
-        assert len(patches) == len(image_input_idx)
-        assert (ex["decoder_input_tokens"] == image_patch_id).sum() == len(token_to_patch_ix)
-        on = 0
-        for token_ix, ix in enumerate(ex["decoder_input_tokens"]):
+        on_pooled_patch = 0
+        for token_ix, ix in enumerate(ex["input_tokens"]):
             if ix == -1:
                 with_patches.append("<PAD>")
             elif ix == image_patch_id:
-                src = build_embedded_image(patches[token_to_patch_ix[token_ix]])
+                # [pool_h, pool_w, patch_h, patch_w, dim]
+                sub_patches = patches[pooled_patches_idx[on_pooled_patch]]
+                patch = einops.rearrange(
+                    sub_patches,
+                    '(pool_h pool_w) patch_h patch_w c -> (pool_h patch_h) (pool_w patch_w) c',
+                    pool_h=preprocessor.mm_preprocessor.image_pooling_h,
+                    pool_w=preprocessor.mm_preprocessor.image_pooling_w
+                )
+
+                src = build_embedded_image(patch)
                 with_patches.append(f"<img src={src}></img>")
+                on_pooled_patch += 1
             elif ix in id_to_special_token:
                 with_patches.append(html_escape(str(id_to_special_token)))
             else:

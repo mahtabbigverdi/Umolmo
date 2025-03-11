@@ -11,6 +11,7 @@ from olmo.models.molmo.data_formatter import DataFormatter
 from olmo.data.dataset import DeterministicDataset
 from olmo.models.molmo.model_preprocessor import Preprocessor
 from olmo.models.molmo.model_preprocessor import MultiModalPreprocessor as TorchMultiModalPreprocessor
+from olmo.models.molmo_dev.model_preprocessor import MolmoPreprocessor
 from olmo.tokenizer import build_tokenizer
 
 
@@ -39,7 +40,6 @@ def build_qualitative_table(name, split, n, preprocessor, is_training=None, for_
     n_images = []
     n_tokens = []
     for ix, ex in enumerate(tqdm(it, total=n)):
-        idx = ex["image_input_idx"]
         n_tokens.append((ex["target_tokens"] != -1).sum())
         n_images.append(ex["images"].shape[0])
         table.append(example_to_html_dict(ex, preprocessor, show_patches, show_crops))
@@ -97,7 +97,7 @@ def main():
             system_prompt=args.system_prompt,
             always_start_with_space=True,
         ),
-        TorchMultiModalPreprocessor(
+        MolmoPreprocessor(
             tokenizer=build_tokenizer(args.tokenizer),
             crop_mode=args.crop_mode,
             max_crops=args.max_crops,

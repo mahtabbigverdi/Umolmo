@@ -3,7 +3,7 @@ from typing import Dict
 from omegaconf import omegaconf as om
 
 from olmo.models.molmo.data_formatter import DataFormatter
-from olmo.models.molmo.model_preprocessor import MultiModalPreprocessorConfig
+from olmo.models.molmo.model_preprocessor import MolmoPreprocessorConfig
 from olmo.nn.image_vit import VitConfig
 from olmo.nn.llm import LlmConfig
 from olmo.nn.vision_backbone import VisionBackboneConfig
@@ -69,7 +69,7 @@ def convert_legacy_config(config):
     config = dict(config)
 
     llm = {k: MISSING for k in LlmConfig().asdict()}
-    preprocessor = {k: MISSING for k in MultiModalPreprocessorConfig().asdict()}
+    preprocessor = {k: MISSING for k in MolmoPreprocessorConfig().asdict()}
     data_formater = {k: MISSING for k in DataFormatter().asdict()}
     image_vit_keys = {k: MISSING for k in VitConfig().asdict()}
     vision_backbone = {k: MISSING for k in VisionBackboneConfig().asdict()}
