@@ -53,9 +53,9 @@ def main():
     args, other_args = parser.parse_known_args()
 
     if args.high_res:
-        args.max_crops = 36
+        args.max_crops = 36 if args.max_crops is None else args.max_crops
         args.seq_len = 4096
-        args.eval_name = "36crop"
+        args.eval_name = f"{args.max_crops}crop"
 
     try:
         mp.set_start_method("spawn", force=True)
