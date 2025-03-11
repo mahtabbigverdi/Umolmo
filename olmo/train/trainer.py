@@ -47,7 +47,7 @@ from olmo.torch_util import (
     move_to_device,
     peak_gpu_memory,
     synchronize_flag,
-    synchronize_value, get_local_world_size, )
+    synchronize_value, get_local_world_size, clip_grad_norm, )
 from olmo.io import PathOrStr, clear_directory, is_url, normalize_path
 from olmo.train.checkpointer import Checkpointer, save_unsharded
 from ..util import flatten_lists
@@ -668,7 +668,7 @@ class Trainer:
         if max_grad_norm is not None:
             for group_name, groups in param_norm_groups.items():
                 params = flatten_lists(group["params"] for group in groups)
-                grad_norm = nn.utils.clip_grad_norm_(params, max_norm=max_grad_norm)
+                grad_norm = clip_grad_norm(params, max_grad_norm=max_grad_norm)
                 grad_norms.append(grad_norm)
                 optim_metrics[f"{group_name}_grad_norm"] = grad_norm
 
