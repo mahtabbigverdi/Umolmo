@@ -103,13 +103,14 @@ class TokenSelector(nn.Module):
             if cfg.loss == "batch-mean":
                 loss = torch.pow(torch.abs(importance_score_mean - cfg.target_scale), cfg.loss_pow) * cfg.loss_weight
             elif cfg.loss == "example-mean":
-                importance_score_mean = ((importance_scores*loss_mask).sum(-1) / loss_mask.sum(-1))
+                # Compute loss on each example individually
+                _importance_score_mean = ((importance_scores*loss_mask).sum(-1) / loss_mask.sum(-1))
                 loss = torch.pow(torch.abs(
-                    importance_score_mean - cfg.target_scale), cfg.loss_pow).mean() * cfg.loss_weight
-            elif cfg.loss == "example-mean-of-means":
-                importance_score_mean = ((importance_scores*loss_mask).sum(-1) / loss_mask.sum(-1)).mean()
+                    _importance_score_mean - cfg.target_scale), cfg.loss_pow).mean() * cfg.loss_weight
+            elif cfg.loss == "loss-mean":
+                _importance_score_mean = ((importance_scores*loss_mask).sum(-1) / loss_mask.sum(-1)).mean()
                 loss = torch.pow(torch.abs(
-                    importance_score_mean - cfg.target_scale), cfg.loss_pow) * cfg.loss_weight
+                    _importance_score_mean - cfg.target_scale), cfg.loss_pow) * cfg.loss_weight
             else:
                 raise NotImplementedError(cfg.loss)
 
