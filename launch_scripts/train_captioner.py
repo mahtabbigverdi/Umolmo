@@ -8,7 +8,7 @@ from omegaconf import omegaconf, OmegaConf
 from olmo.models.molmo.data_formatter import DataFormatter
 from olmo.models.molmo.model_preprocessor import MultiModalPreprocessorConfig
 from olmo.data.pixmo_datasets import PixMoCap
-from launch_scripts.utils import DEBUG_MODEL, VISION_BACKBONES, LLMS, DEFAULT_LOAD_PATHS
+from launch_scripts.utils import DEBUG_MODEL, VISION_BACKBONES, LLMS
 from olmo.eval.loss_evaluator import LossDatasetEvaluatorConfig
 from olmo.models.molmo.molmo import MolmoConfig
 from olmo.models.model import FSDPWrapStrategy
@@ -80,7 +80,8 @@ if __name__ == "__main__":
             ),
             mm_preprocessor=MultiModalPreprocessorConfig(
                 crop_mode="overlap-and-resize-c2",
-                max_crops=12,
+                max_crops=8 if args.vision_backbone == "siglip" else 12,
+                overlap_margins=(4, 3) if args.vision_backbone == "siglip" else (4, 4)
             )
         )
 
