@@ -174,7 +174,7 @@ DEFAULT_VISION_BACKBONE = VitConfig(
 
 
 SIGLIP_VISION_BACKBONE = VitConfig(
-    init_path="/weka/oe-training-default/mm-olmo/pretrained_image_encoders/siglip2-so400m-14-384.pt",
+    init_path="${oc.env:MOLMO_DATA_DIR}/pretrained_image_encoders/siglip2-so400m-14-384.pt",
     image_model_type="siglip",
     image_default_input_size=(378, 378),
     image_patch_size=14,
