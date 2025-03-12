@@ -154,7 +154,9 @@ def setup_logging(log_filter_type: LogFilterType = LogFilterType.rank0_only) -> 
 
     if filter is not None:
         handler.addFilter(filter)  # type: ignore
-    logging.basicConfig(handlers=[handler], level=logging.INFO)
+    # torch 2.6 will try setup some loggers of its own when we import, so
+    # use `force` to use our logging settings instead
+    logging.basicConfig(handlers=[handler], level=logging.INFO, force=True)
 
     logging.captureWarnings(True)
 
