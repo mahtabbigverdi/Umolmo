@@ -81,7 +81,7 @@ if __name__ == "__main__":
             mm_preprocessor=MolmoPreprocessorConfig(
                 crop_mode="overlap-and-resize-c2",
                 max_crops=8 if args.vision_backbone == "siglip" else 12,
-                overlap_margins=(4, 3) if args.vision_backbone == "siglip" else (4, 4)
+                overlap_margins=(4, 4)
             )
         )
 
