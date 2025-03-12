@@ -419,8 +419,10 @@ class MolmoPreprocessor:
             crop_window_size,
             self.max_crops
         )
-        idx_arr = arange_for_pooling(torch.zeros([tiling[0]*crop_patch_h, tiling[1]*crop_patch_w]),
-                                     self.image_pooling_h, self.image_pooling_w)
+        h, w = [tiling[0]*crop_window_size+margin_pixels, tiling[1]*crop_window_size+margin_pixels]
+        h, w = h//image_patch_size, w//image_patch_size
+        idx_arr = arange_for_pooling(
+            torch.zeros([h, w]), self.image_pooling_h, self.image_pooling_w)
         overlap_tokens = idx_arr.shape[0] * idx_arr.shape[1]
         if self.crop_mode in ["overlap-and-resize-c2"]:
             return overlap_tokens + resize_tokens
@@ -708,20 +710,7 @@ class MolmoPreprocessor:
                 subsegments = np.pad(subsegments, [[1, 0]], constant_values=subsegments[0])[:-1]
                 data["subsegments"] = subsegments
             if require_image_features:
-                # Add size-zero image features, this can be useful to make sure all devices
-                # get an image input when the image ViT is FSDP wrapped
-                tokens_per_image = self.image_token_length_w * self.image_token_length_h
-                n_pixels = self.image_patch_size ** 2 * 3
-                h, w = self.base_image_input_size
-                image_num_patch = (h//self.image_patch_size * w//self.image_patch_size)
-                crops = np.zeros((0, image_num_patch, n_pixels), dtype=np.float32)
-                image_idx = np.zeros((0, tokens_per_image), np.int32)
-                data.update(dict(
-                    images=crops,
-                    image_input_idx=image_idx,
-                ))
-                if self.image_padding_mask:
-                    data["image_masks"] = np.zeros((0, image_num_patch), dtype=np.float32)
+                raise NotImplementedError("")
             return data
 
         if not isinstance(images, (list, tuple)):
@@ -752,7 +741,7 @@ class MolmoPreprocessor:
                 start = 0 if ix == 0 else image_idx[ix-1] + 1
                 end = token_ix + 1
 
-            pooled_patches_idx.append(pooled_idx + sum(x.shape[0] for x in all_crops))
+            pooled_patches_idx.append(pooled_idx + sum(np.prod(x.shape[:2]) for x in all_crops))
             all_crops.append(crops)
             out_tokens.append(tokens[start:token_ix])
             all_loss_masks.append(loss_masks[start:token_ix])
