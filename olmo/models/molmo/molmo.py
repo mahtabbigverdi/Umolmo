@@ -513,7 +513,7 @@ class Molmo(ModelBase):
         attention_mask: Optional[torch.Tensor] = batch.get("attention_mask")
         images: Optional[torch.Tensor] = batch.get("images")
         image_masks: Optional[torch.Tensor] = batch.get("image_masks")
-        image_input_idx: Optional[torch.Tensor] = batch.get("image_input_idx")
+        pooled_patches_idx: Optional[torch.Tensor] = batch.get("pooled_patches_idx")
 
         llm_cfg = self.config.llm
 
@@ -584,7 +584,7 @@ class Molmo(ModelBase):
             nonlocal tokens_generated
             nonlocal position_ids
             nonlocal images
-            nonlocal image_input_idx
+            nonlocal pooled_patches_idx
             nonlocal append_last_valid_logits
 
             attention_mask = state.get("attention_mask")
@@ -597,7 +597,7 @@ class Molmo(ModelBase):
                     group_size = input_ids.shape[0]
                     attention_mask = torch.cat((attention_mask, attention_mask.new_ones((group_size, 1))), dim=-1)
                 _images = None
-                _image_input_idx = None
+                _pooled_patches_idx = None
                 if llm_cfg.use_position_ids:
                     position_ids = position_ids[:, -1:] + 1
                     _, *last_dims = position_ids.size()
@@ -615,7 +615,7 @@ class Molmo(ModelBase):
                 past_key_values = None
                 input_ids = state["input_ids"]
                 _images = images
-                _image_input_idx = image_input_idx
+                _pooled_patches_idx = pooled_patches_idx
                 _position_ids = position_ids
                 _append_last_valid_logits = append_last_valid_logits
 
@@ -630,7 +630,7 @@ class Molmo(ModelBase):
                 attention_bias=attention_bias,
                 images=_images,
                 image_masks=image_masks,
-                image_input_idx=_image_input_idx,
+                pooled_patches_idx=_pooled_patches_idx,
                 position_ids=_position_ids,
                 past_key_values=past_key_values,
                 use_cache=True,
