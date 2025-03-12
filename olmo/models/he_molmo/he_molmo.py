@@ -660,7 +660,6 @@ class HeMolmo(ModelBase):
             selection_valid = (high_res_features_weights > 0).flatten()
             valid_selected_features = selected_features.reshape([-1, dim])[selection_valid]
 
-            import pdb; pdb.set_trace()
             x.view(-1, dim)[is_high_res_patch.view(-1)] += valid_selected_features
             selected_pos_ids = high_res_patch_pos_ids[batch_idx, selection]
             position_ids.view(-1)[is_high_res_patch.view(-1)] += selected_pos_ids.view(-1)[selection_valid]

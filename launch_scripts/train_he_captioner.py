@@ -13,7 +13,7 @@ from olmo.models.he_molmo.he_data_formater import HeDataFormatter
 from olmo.models.he_molmo.he_molmo import TokenScorerConfig, HeMolmoConfig
 from olmo.models.he_molmo.he_preprocessor import HePreprocessorConfig
 from olmo.models.he_molmo.token_selector import TokenSelectionConfig
-from olmo.models.molmo.model_preprocessor import MultiModalPreprocessorConfig
+from olmo.models.molmo.model_preprocessor import MolmoPreprocessorConfig
 from olmo.models.molmo.molmo import MolmoConfig
 from olmo.nn.image_vit import VitConfig
 from olmo.nn.llm import LlmConfig
@@ -108,7 +108,7 @@ if __name__ == "__main__":
             mm_preprocessor=HePreprocessorConfig(
                 crop_mode="overlap-and-resize-c2",
                 max_crops=8 if args.vision_backbone == "siglip" else 12,
-                overlap_margins=(4, 3) if args.vision_backbone == "siglip" else (4, 4)
+                overlap_margins=(4, 4)
             ),
             vision_backbone=VisionBackboneConfig(
                 vit_layers=vit_layers,
@@ -123,10 +123,10 @@ if __name__ == "__main__":
         model_cfg = MolmoConfig(
             llm=model_cfg.llm,
             data_formatter=model_cfg.data_formatter,
-            mm_preprocessor=MultiModalPreprocessorConfig(
+            mm_preprocessor=MolmoPreprocessorConfig(
                 crop_mode="overlap-and-resize-c2",
                 max_crops=8 if args.vision_backbone == "siglip" else 12,
-                overlap_margins=(4, 3) if args.vision_backbone == "siglip" else (4, 4)
+                overlap_margins=(4, 4)
             ),
             vision_backbone=model_cfg.vision_backbone,
             bi_directional_attn=model_cfg.bi_directional_attn
@@ -134,9 +134,9 @@ if __name__ == "__main__":
     else:
         model_cfg.mm_preprocessor.num_high_res_features = 512
         if args.vision_backbone == "siglip":
-            seq_len = 768 + 512 + 64
+            seq_len = 768 + 512 + 128
         else:
-            seq_len = 768 + 512
+            seq_len = 768 + 512 + 64
 
     evaluator = LossDatasetEvaluatorConfig(
         label="val",

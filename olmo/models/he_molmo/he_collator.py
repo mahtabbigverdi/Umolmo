@@ -57,11 +57,13 @@ class HeMMCollator:
             self.max_images_tokens, pad=self.pad, allow_truncate=False
         )
 
+        n_high_res = self.max_images_tokens-144
         out["low_to_high"] = _collate(
             [ex["low_to_high"] for ex in batch],
-            self.max_images_tokens-144, pad=self.pad, allow_truncate=False, pad_value=0
+            n_high_res, pad=self.pad, allow_truncate=False, pad_value=0
         )
-        out["high_res_features_weights"] = _collate([ex["high_res_features_weights"] for ex in batch], None, pad_value=0)
+        out["high_res_features_weights"] = _collate([ex["high_res_features_weights"] for ex in batch], n_high_res, pad_value=0)
+        out["high_res_patch_pos_ids"] = _collate([ex["high_res_pos_ids"] for ex in batch], n_high_res, pad_value=0)
         out["input_ids"] = out.pop("input_tokens")
         if "target_tokens" in out:
             out["labels"] = out.pop("target_tokens")
