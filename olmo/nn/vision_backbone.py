@@ -48,7 +48,7 @@ class VisionBackboneConfig(BaseConfig):
     vit: VitConfig = field(default_factory=VitConfig)
     """The vision ViT"""
 
-    image_pooling_2d: ImagePooling2DType = ImagePooling2DType.attention
+    image_pooling_2d: ImagePooling2DType = ImagePooling2DType.attention_meanq
     """Layer to pool image features"""
 
     image_projector: ImageProjectType = ImageProjectType.mlp
@@ -57,12 +57,6 @@ class VisionBackboneConfig(BaseConfig):
     image_padding_embed: Optional[ImagePaddingEmbed] = None
     """
     Image padding mode to use to tell the model what parts of the image are padding
-    """
-
-    fix_image_padding: bool = True
-    """
-    Use a version of the image padding mask that fixes the an off-by-one error how the embeddings
-    are computed, should only be false for legacy models 
     """
 
     image_pooling_h: int = 2
@@ -94,8 +88,14 @@ class VisionBackboneConfig(BaseConfig):
         return self.vit.image_num_patch
 
     def build(self, llm_config, device):
-
         return MolmoVisionBackbone(self, llm_config, device)
+
+    @classmethod
+    def update_legacy_settings(cls, config: D) -> D:
+        if "fix_image_padding" in config:
+            assert config.image_padding_embed is None or config.fix_image_padding
+            del config["fix_image_padding"]
+        return config
 
 
 class ImageProjectorMLP(nn.Module):
@@ -296,7 +296,8 @@ class MolmoVisionBackbone(nn.Module):
         image_features = image_features.view(B, T, N, -1)
         return image_features
 
-    def forward(self, images: torch.Tensor, image_masks: torch.Tensor, pooled_patches_idx: torch.Tensor) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    def forward(self, images: torch.Tensor, image_masks: torch.Tensor,
+                pooled_patches_idx: torch.Tensor, return_masked=False) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         cfg = self.config
 
         # image_features: (batch_size, num_crops(=num_image), num_patch, nximage_emb_dim)
@@ -351,5 +352,8 @@ class MolmoVisionBackbone(nn.Module):
         else:
             image_features = self.image_projector(image_features)
 
-        return image_features[valid_token.flatten()]
+        if return_masked:
+            return image_features.reshape([batch_size, -1, image_features.shape[-1]]), valid_token
+        else:
+            return image_features[valid_token.flatten()]
 
