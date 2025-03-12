@@ -127,6 +127,7 @@ def convert_legacy_config(config):
 
     llm = {k: v for k, v in llm.items() if v is not MISSING}
     preprocessor = {k: v for k, v in preprocessor.items() if v is not MISSING}
+    preprocessor["legacy_image_mask"] = True
     formatter = {k: v for k, v in data_formater.items() if v is not MISSING}
     return om.DictConfig(dict(
         llm=llm,

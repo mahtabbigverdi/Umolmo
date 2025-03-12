@@ -301,6 +301,9 @@ class MolmoPreprocessorConfig(BaseConfig):
     loss_token_weighting: Optional[str] = None
     """Automatically weight multi-message per image input"""
 
+    legacy_image_mask: bool = False
+    """Use legacy off-by-one mask, should only be true for old models"""
+
     def get_max_crops(self) -> int:
         """Max numbers of that can be built for one image"""
         if self.crop_mode == "resize":
@@ -321,6 +324,7 @@ class MolmoPreprocessorConfig(BaseConfig):
         return MolmoPreprocessor(
             tokenizer,
             loss_token_weighting=self.loss_token_weighting,
+            legacy_image_mask=self.legacy_image_mask,
 
             normalize=vit.normalize,
             crop_mode=self.crop_mode,
@@ -346,6 +350,8 @@ class MolmoPreprocessor:
     """
     tokenizer: Any
     loss_token_weighting: Optional[str] = None
+
+    legacy_image_mask: bool = True
 
     # How to crops/resize images
     normalize: str = "openai"
@@ -481,9 +487,9 @@ class MolmoPreprocessor:
             resized_mask = np.expand_dims(resized_mask, 0)
             resized = self._normalize(resized)
             resize_idx = np.arange(crop_patch_w*crop_patch_h).reshape([crop_patch_h, crop_patch_w])
-            idx_arr = arange_for_pooling(resize_idx, self.image_pooling_w, self.image_pooling_h)
-            h, w = idx_arr.shape[:2]
-            idx_arr = idx_arr.reshape([-1, self.image_pooling_w*self.image_pooling_h])
+            pooling_idx = arange_for_pooling(resize_idx, self.image_pooling_w, self.image_pooling_h)
+            h, w = pooling_idx.shape[:2]
+            pooling_idx = pooling_idx.reshape([-1, self.image_pooling_w*self.image_pooling_h])
 
             per_row = np.full(
                 (w,),
@@ -499,7 +505,7 @@ class MolmoPreprocessor:
                         [self.image_end_token_id],
             ]
             return (np.concatenate(joint, 0), batch_pixels_to_patches(resized, image_patch_size),
-                    batch_pixels_to_patches(resized_mask, image_patch_size), idx_arr)
+                    batch_pixels_to_patches(resized_mask, image_patch_size), pooling_idx)
 
         if self.crop_mode in ["overlap-and-resize-c2", "overlap-and-resize"]:
             # Discard this many patches from the (left/top, right/bottom) of crops
@@ -530,7 +536,7 @@ class MolmoPreprocessor:
             n_crops = tiling[0] * tiling[1]
             crop_arr = np.zeros([n_crops, crop_size, crop_size, 3], dtype=src.dtype)
             mask_arr = np.zeros([n_crops, crop_size, crop_size], dtype=img_mask.dtype)
-            idx_arr = np.zeros([n_crops, crop_patch_h, crop_patch_w], dtype=np.int32)
+            patch_idx_arr = np.zeros([n_crops, crop_patch_h, crop_patch_w], dtype=np.int32)
             on = 0
             on_crop = 0
             for i in range(tiling[0]):
@@ -553,28 +559,28 @@ class MolmoPreprocessor:
                         patch_idx[-right_margin:, :] = -1
                     if j != tiling[1]-1:
                         patch_idx[:, -right_margin:] = -1
-                    idx_arr[on_crop] = patch_idx
+                    patch_idx_arr[on_crop] = patch_idx
                     on_crop += 1
 
-            # `idx_arr` is ordered crop-by-crop, here we transpose `idx_arr`
+            # `patch_idx_arr` is ordered crop-by-crop, here we transpose `patch_idx_arr`
             # so it is ordered left-to-right order
-            idx_arr = np.reshape(
-                idx_arr,
+            patch_idx_arr = np.reshape(
+                patch_idx_arr,
                 [tiling[0], tiling[1], crop_patch_h, crop_patch_w]
             )
-            idx_arr = np.transpose(idx_arr, [0, 2, 1, 3])
-            idx_arr = np.reshape(idx_arr, [-1])
+            patch_idx_arr = np.transpose(patch_idx_arr, [0, 2, 1, 3])
+            patch_idx_arr = np.reshape(patch_idx_arr, [-1])
 
             # Now get the non-masked parts, now it should map each patch in `src` to the
             # correct patch it should come from in `crop_arr`
-            idx_arr = idx_arr[idx_arr >= 0].reshape(
+            patch_idx_arr = patch_idx_arr[patch_idx_arr >= 0].reshape(
                 src.shape[0]//image_patch_size,
                 src.shape[1]//image_patch_size,
             )
 
-            idx_arr = arange_for_pooling(idx_arr, self.image_pooling_w, self.image_pooling_h)
-            h, w = idx_arr.shape[:2]
-            idx_arr = idx_arr.reshape([-1, self.image_pooling_w*self.image_pooling_h])
+            pooling_idx = arange_for_pooling(patch_idx_arr, self.image_pooling_w, self.image_pooling_h)
+            h, w = pooling_idx.shape[:2]
+            pooling_idx = pooling_idx.reshape([-1, self.image_pooling_w*self.image_pooling_h])
 
             # Now build the output tokens
             per_row = np.full(w, self.image_patch_token_id, dtype=np.int32)
@@ -590,13 +596,17 @@ class MolmoPreprocessor:
             if self.crop_mode == "overlap-and-resize":
                 crop_arr = batch_pixels_to_patches(crop_arr, image_patch_size)
                 mask_arr = batch_pixels_to_patches(mask_arr, image_patch_size).astype(np.float32).mean(axis=-1)
-                return np.concatenate(joint, 0), crop_arr, mask_arr, idx_arr
+                return np.concatenate(joint, 0), crop_arr, mask_arr, pooling_idx
 
             # Finally do the same for the global image
             resized, resized_mask = self.resize_image(image, base_image_input_size, is_training, rng)
             resized = self._normalize(resized)
             crop_arr = np.concatenate([np.expand_dims(resized, 0), crop_arr], 0)
-            mask_arr = np.concatenate([np.expand_dims(resized_mask, 0), mask_arr], 0)
+
+            if self.legacy_image_mask:
+                mask_arr = np.pad(mask_arr, [[0, 1], [0, 0], [0, 0]], constant_values=-1)
+            else:
+                mask_arr = np.concatenate([np.expand_dims(resized_mask, 0), mask_arr], 0)
 
             resize_idx = np.arange(crop_patch_h*crop_patch_w).reshape([crop_patch_h, crop_patch_w])
             resize_idx = arange_for_pooling(resize_idx, self.image_pooling_h, self.image_pooling_w)
@@ -604,12 +614,12 @@ class MolmoPreprocessor:
             resize_idx = resize_idx.reshape([-1, self.image_pooling_w*self.image_pooling_h])
 
             # Global image goes first, so the order of patches in previous crops gets increased
-            idx_arr = np.where(
-                idx_arr >= 0,
-                idx_arr + crop_patch_h*crop_patch_w,
+            pooling_idx = np.where(
+                pooling_idx >= 0,
+                pooling_idx + crop_patch_h*crop_patch_w,
                 -1
             )
-            idx_arr = np.concatenate([resize_idx, idx_arr])
+            pooling_idx = np.concatenate([resize_idx, pooling_idx])
 
             per_row = np.full(
                 (w,),
@@ -626,7 +636,7 @@ class MolmoPreprocessor:
                     ] + joint
             mask_arr = batch_pixels_to_patches(mask_arr, image_patch_size).astype(np.float32).mean(axis=-1)
             return (np.concatenate(joint, 0), batch_pixels_to_patches(crop_arr, image_patch_size),
-                    mask_arr, idx_arr)
+                    mask_arr, pooling_idx)
         else:
             raise NotImplementedError(self.crop_mode)
 
