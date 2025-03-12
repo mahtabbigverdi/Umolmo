@@ -76,9 +76,8 @@ def load_image(image_path):
 def arange_for_pooling(idx_arr, pool_w, pool_h):
     h_pad = idx_arr.shape[0] % pool_h
     w_pad = idx_arr.shape[1] % pool_w
-    idx_arr = np.pad(idx_arr, [[w_pad//2, (w_pad+1)//2],
-                               [h_pad//2, (h_pad+1)//2]], mode='constant',
-                     constant_values=-1)
+    idx_arr = np.pad(idx_arr, [[h_pad//2, (h_pad+1)//2], [w_pad//2, (w_pad+1)//2]],
+                     mode='constant',constant_values=-1)
     return einops.rearrange(
         idx_arr, "(h dh) (w dw) -> h w (dh dw)", dh=pool_h, dw=pool_w)
 
