@@ -15,7 +15,7 @@ import wandb
 
 from olmo.config import BaseConfig
 from olmo.data.data_loader import DataConfig
-from olmo.models.molmo.model_preprocessor import MultiModalPreprocessorConfig
+from olmo.models.molmo.model_preprocessor import MolmoPreprocessorConfig
 from olmo.eval.inf_evaluator import InfDatasetEvaluator, EvaluatorConfig, \
     InfDatasetEvaluatorConfig
 from olmo.eval.loss_evaluator import LossDatasetEvaluatorConfig, LossDatasetEvaluator
@@ -245,7 +245,7 @@ class ModelEvaluator:
                         image_num_key_value_heads=2
                     )
                 ),
-                mm_preprocessor=MultiModalPreprocessorConfig(crop_mode="resize")
+                mm_preprocessor=MolmoPreprocessorConfig(crop_mode="resize")
             )
             with torch.device("meta"):
                 model = model_cfg.build_model()
