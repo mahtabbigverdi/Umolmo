@@ -132,6 +132,7 @@ def main():
         load_path=checkpoint_dir,
         console_log_interval=10,
         precision="amp_bf16",
+        pbar=False,
         eval_name="36crop" if args.high_res else None,
         fsdp=FSDPConfig(
             wrapping_strategy=FSDPWrapStrategy.by_block_and_size,
