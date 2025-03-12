@@ -291,6 +291,20 @@ def batch_pixels_to_patches(array, patch_size):
         return array
 
 
+def normalize_image(image, normalize):
+    if normalize == "openai":
+        image -= np.array(OPENAI_CLIP_MEAN, dtype=np.float32)[None, None, :]
+        image /= np.array(OPENAI_CLIP_STD, dtype=np.float32)[None, None, :]
+    elif normalize == "siglip":
+        image = np.asarray(-1.0, dtype=np.float32) + image * np.asarray(2.0, dtype=np.float32)
+    elif normalize == "dino":
+        image -= np.array([0.485, 0.456, 0.406], dtype=np.float32)[None, None, :]
+        image /= np.array([0.229, 0.224, 0.225], dtype=np.float32)[None, None, :]
+    else:
+        raise NotImplementedError(normalize)
+    return image
+
+
 @dataclasses.dataclass
 class MultiModalPreprocessorConfig(BaseConfig):
     crop_mode: str = "resize"
@@ -384,17 +398,7 @@ class MultiModalPreprocessor:
         self.image_prompt_token_id = special_tokens[tokenizer.IMAGE_PROMPT]
 
     def _normalize(self, image):
-        if self.normalize == "openai":
-            image -= np.array(OPENAI_CLIP_MEAN, dtype=np.float32)[None, None, :]
-            image /= np.array(OPENAI_CLIP_STD, dtype=np.float32)[None, None, :]
-        elif self.normalize == "siglip":
-            image = np.asarray(-1.0, dtype=np.float32) + image * np.asarray(2.0, dtype=np.float32)
-        elif self.normalize == "dino":
-            image -= np.array([0.485, 0.456, 0.406], dtype=np.float32)[None, None, :]
-            image /= np.array([0.229, 0.224, 0.225], dtype=np.float32)[None, None, :]
-        else:
-            raise NotImplementedError(self.normalize)
-        return image
+        return normalize_image(image, self.normalize)
 
     def resize_image(self, image, output_size, is_training, rng):
         if self.resize == "siglip":

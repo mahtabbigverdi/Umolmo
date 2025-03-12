@@ -16,7 +16,7 @@ from olmo.train.optim import OptimizerConfig, OptimizerType, SchedulerConfig, Sc
 from olmo.nn.vision_backbone import VisionBackboneConfig, ImagePaddingEmbed
 from scripts.train import run_trainer
 
-from olmo.data.data_loader import DataConfig
+from olmo.data.data_loader import DataLoaderConfig
 from olmo.train.trainer_config import BatchDivisor, SpeedMonitorConfig, \
     CompilerConfig, TrainConfig, WandbConfig, FSDPConfig, FSDPPrecision
 from olmo.util import clean_opt, prepare_torchrun_environment
@@ -89,7 +89,7 @@ if __name__ == "__main__":
         max_examples=eval_examples,
         device_batch_size=args.device_eval_batch_size,
         console_log_interval="${console_log_interval}",
-        data=DataConfig(
+        data=DataLoaderConfig(
             seed="${seed}",
             dataset=args.dataset,
             shuffle=False,
@@ -117,7 +117,7 @@ if __name__ == "__main__":
         fused_loss=False,
         compile_loss=True,
         model=model_cfg,
-        data=DataConfig(
+        data=DataLoaderConfig(
             dataset=args.dataset,
             shuffle=True,
             split="train",

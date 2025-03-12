@@ -14,10 +14,10 @@ from tqdm import tqdm
 
 from .evaluators import (
     HtmlTable, CountEval, PointCountEval, PointingEval, ClockEval, VqaEval,
-    SavePredictions, AndroidControlEval, MathVistaEval, PointingEval
+    SavePredictions, AndroidControlEval, MathVistaEval, PointingEval, TempCompassEval
 )
 from ..config import BaseConfig
-from ..data.data_loader import DataConfig
+from ..data.data_loader import DataLoaderConfig
 from ..torch_util import (
     get_global_rank,
     get_world_size,
@@ -101,6 +101,10 @@ class EvaluatorConfig(BaseConfig):
     clock_eval: bool = False
     clock_bench_eval: bool = False # Clock reading benchmark, coco/openimg/movies
     math_vista_eval: bool = False
+    temp_compass_eval: str = ''
+    """TempCompass tasks to run evaluation on, either one of the tasks or 'all'"""
+    temp_compass_disable_api: bool = False
+    """Whether not to use ChatGPT evaluation for TempCompass"""
 
     def build(self, default_save_dir=None) -> InfEvaluator:
         evaluators = []
@@ -131,6 +135,8 @@ class EvaluatorConfig(BaseConfig):
             evaluators.append(CountEval(self.num_wandb_examples))
         elif self.android_eval:
             evaluators.append(AndroidControlEval(self.num_wandb_examples))
+        elif self.temp_compass_eval:
+            evaluators.append(TempCompassEval(self.temp_compass_eval, self.temp_compass_disable_api))
         if self.pointing_eval:
             evaluators.append(PointingEval(self.num_wandb_examples))
         else:
@@ -215,7 +221,7 @@ class InfDatasetEvaluatorConfig(BaseConfig):
     label: Optional[str] = None
     """Label to use when logging"""
 
-    data: DataConfig = dataclasses.field(default_factory=DataConfig)
+    data: DataLoaderConfig = dataclasses.field(default_factory=DataLoaderConfig)
     """Data to evaluate on"""
 
     evaluator: EvaluatorConfig = dataclasses.field(default_factory=EvaluatorConfig)

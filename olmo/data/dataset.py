@@ -7,9 +7,11 @@ import numpy as np
 
 if "MOLMO_DATA_DIR" in os.environ:
     DATA_HOME = join(os.environ["MOLMO_DATA_DIR"], "torch_datasets")
+    VIDEO_DATA_HOME = join(os.environ["MOLMO_DATA_DIR"], "video_datasets")
 else:
     warnings.warn("MOLMO_DATA_DIR is not set, data loading might fail")
     DATA_HOME = None
+    VIDEO_DATA_HOME = None
 
 
 class Dataset:

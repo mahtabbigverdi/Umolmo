@@ -14,7 +14,7 @@ from olmo.train.trainer_config import (
 )
 from olmo.models.model import FSDPWrapStrategy
 from olmo.models.molmo.molmo import MolmoConfig
-from olmo.data.data_loader import DataConfig, RootSizeMixture
+from olmo.data.data_loader import DataLoaderConfig, RootSizeMixture
 from olmo.torch_util import get_world_size
 from olmo.util import clean_opt, prepare_torchrun_environment, select_checkpoint
 from scripts.train import run_trainer
@@ -220,7 +220,7 @@ if __name__ == "__main__":
         allow_resume=True,
         model=model_cfg,
         save_overwrite=debug,
-        data=DataConfig(
+        data=DataLoaderConfig(
             root_size_mixture=root_size_mixture,
             shuffle=True,
             split="train",

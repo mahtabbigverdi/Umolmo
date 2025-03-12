@@ -7,14 +7,14 @@ import re
 import sys
 from datetime import datetime
 from os.path import dirname, join
-from typing import Optional, List
+from typing import Optional, List, Tuple
 
 import omegaconf
 import torch
 import wandb
 
 from olmo.config import BaseConfig
-from olmo.data.data_loader import DataConfig
+from olmo.data.data_loader import DataLoaderConfig
 from olmo.models.molmo.model_preprocessor import MultiModalPreprocessorConfig
 from olmo.eval.inf_evaluator import InfDatasetEvaluator, EvaluatorConfig, \
     InfDatasetEvaluatorConfig
@@ -71,7 +71,7 @@ class DatasetEvaluatorConfig(BaseConfig):
 
     label: str = omegaconf.MISSING
 
-    data: DataConfig = dataclasses.field(default_factory=DataConfig)
+    data: DataLoaderConfig = dataclasses.field(default_factory=DataLoaderConfig)
     """Data to evaluate on"""
 
     device_batch_size: Optional[int] = None
@@ -129,6 +129,12 @@ class EvalConfig(BaseConfig):
     max_crops_override: Optional[int] = None
     """Override the max crops used in the model"""
 
+    max_frames_override: Optional[int] = None
+    """Override the max frames used in the model"""
+
+    candidate_sampling_fps_override: Optional[Tuple[float]] = None
+    """Override the candidate sampling fps used in the model"""
+
     console_log_interval: int = 10
     """How often to log what step we are on to console"""
 
@@ -166,6 +172,10 @@ class EvalConfig(BaseConfig):
             return torch.float32
         else:
             raise ValueError(f"Unexpected precision type '{self.precision}'")
+
+    def __post_init__(self):
+        if self.candidate_sampling_fps_override is not None:
+            self.candidate_sampling_fps_override = tuple(self.candidate_sampling_fps_override)  # type: ignore[assignment]
 
     def build(self) -> 'ModelEvaluator':
         return ModelEvaluator(self)
@@ -269,6 +279,14 @@ class ModelEvaluator:
         if self.config.max_crops_override:
             logging.info(f"Overriding max crops from {model.config.mm_preprocessor.max_crops} to {self.config.max_crops_override}")
             model.config.mm_preprocessor.max_crops = self.config.max_crops_override
+        
+        if self.config.max_frames_override:
+            logging.info(f"Overriding max frames from {model.config.mm_preprocessor.max_frames} to {self.config.max_frames_override}")
+            model.config.mm_preprocessor.max_frames = self.config.max_frames_override
+        
+        if self.config.candidate_sampling_fps_override:
+            logging.info(f"Overriding candidate sampling fps from {model.config.mm_preprocessor.candidate_sampling_fps} to {self.config.candidate_sampling_fps_override}")
+            model.config.mm_preprocessor.candidate_sampling_fps = self.config.candidate_sampling_fps_override
 
         # Just in case the model is doing randomization even during eval
         seed_all(cfg.seed)

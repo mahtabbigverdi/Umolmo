@@ -77,6 +77,12 @@ class VisionBackboneConfig(BaseConfig):
     image_pooling_w: int = 2
     """Pooling patch features width"""
 
+    high_res_token_length_h: Optional[int] = None
+    """If periodic_high_res_frame, use high-res image tokens with this pooling size"""
+
+    high_res_token_length_w: Optional[int] = None
+    """If periodic_high_res_frame, use high-res image tokens with this pooling size"""
+
     image_feature_dropout: float = 0.0
     """Dropout for image patch features"""
 
@@ -93,12 +99,15 @@ class VisionBackboneConfig(BaseConfig):
     def image_num_patch(self):
         return self.vit.image_num_patch
 
-    def llm_patches_per_crop(self):
+    def llm_patches_per_crop_given_pool_size(self, image_pooling_w, image_pooling_h):
         h, w = self.image_num_patch
         # Round up in case we need to pad the image features for pooling
-        h = (h + self.image_pooling_h - 1) // self.image_pooling_h
-        w = (w + self.image_pooling_w - 1) // self.image_pooling_w
+        h = (h + image_pooling_h - 1) // image_pooling_h
+        w = (w + image_pooling_w - 1) // image_pooling_w
         return h, w
+
+    def llm_patches_per_crop(self):
+        return self.llm_patches_per_crop_given_pool_size(self.image_pooling_w, self.image_pooling_h)
 
     def build(self, llm_config, device):
 
@@ -303,6 +312,53 @@ class MolmoVisionBackbone(nn.Module):
         image_features = image_features.view(B, T, N, -1)
         return image_features
 
+    def get_features_for_pool(self, image_features: torch.Tensor, image_pooling_h: int, image_pooling_w: int, cfg: VisionBackboneConfig) -> torch.Tensor:
+        batch_size, num_image = image_features.shape[:2]
+        if cfg.image_num_patch[0] % image_pooling_h != 0 or cfg.image_num_patch[1] % image_pooling_w != 0:
+            pad_h = cfg.image_num_patch[0] % image_pooling_h
+            pad_w = cfg.image_num_patch[1] % image_pooling_w
+            # Pad so we can still pool mxn patches
+            image_features = F.pad(
+                image_features,
+                (0, 0, 0, pad_w, 0, pad_h, 0, 0, 0, 0),
+            )
+
+        # image pooling
+        image_features = einops.rearrange(
+            image_features,
+            'b n (h dh) (w dw) c -> (b n h w) (dh dw) c',
+            dh=image_pooling_h,
+            dw=image_pooling_w,
+        )
+
+        if cfg.image_pooling_2d == ImagePooling2DType.attention_meanq:
+            query = image_features.mean(-2, keepdim=True)
+            image_features = self.image_pooling_2d(query, image_features)
+        elif cfg.image_pooling_2d not in {ImagePooling2DType.none, ImagePooling2DType.stack}:
+            if self.grad_checkpointing:
+                from torch.utils.checkpoint import checkpoint
+                image_features = checkpoint(self.image_pooling_2d, image_features[:, :1, :], image_features, use_reentrant=False)
+            else:
+                image_features = self.image_pooling_2d(image_features[:, :1, :], image_features)
+
+        h, w = cfg.llm_patches_per_crop_given_pool_size(image_pooling_w, image_pooling_h)
+        image_features = image_features.reshape(batch_size, num_image, h * w, -1)
+
+        # MLP layer to map the feature.
+        if cfg.image_projector == ImageProjectType.mlpx2:
+            for module in self.image_projector:
+                image_features = module(image_features)
+        else:
+            if self.grad_checkpointing:
+                from torch.utils.checkpoint import checkpoint
+                image_features = checkpoint(self.image_projector, image_features, use_reentrant=False)
+            else:
+                image_features = self.image_projector(image_features)
+        
+        # image_features: (batch_size, num_image, num_patch, d_model)
+        return image_features
+
+
     def forward(self, images: torch.Tensor, image_masks: torch.Tensor) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         cfg = self.config
 
@@ -335,39 +391,49 @@ class MolmoVisionBackbone(nn.Module):
             (batch_size, num_image) + cfg.image_num_patch + (-1,),
             )
 
-        if cfg.image_num_patch[0] % cfg.image_pooling_h != 0 or cfg.image_num_patch[1] % cfg.image_pooling_w != 0:
-            pad_h = cfg.image_num_patch[0] % cfg.image_pooling_h
-            pad_w = cfg.image_num_patch[1] % cfg.image_pooling_w
-            # Pad so we can still pool mxn patches
-            image_features = F.pad(
-                image_features,
-                (0, 0, 0, pad_w, 0, pad_h, 0, 0, 0, 0),
+        return self.get_features_for_pool(image_features, cfg.image_pooling_h, cfg.image_pooling_w, cfg)
+
+
+class VideoVisionBackbone(MolmoVisionBackbone):
+    def __init__(self, config: VisionBackboneConfig, llm_config, device=None):
+        super().__init__(config, llm_config, device)
+
+    def forward(self, images: torch.Tensor, image_masks: torch.Tensor) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+        cfg = self.config
+
+        # image_features: (batch_size, num_crops(=num_image), num_patch, nximage_emb_dim)
+        batch_size, num_image = images.shape[:2]
+        image_features = self.encode_image(images)
+
+        if cfg.image_padding_embed:
+            assert image_masks is not None
+            if cfg.image_padding_embed == "pad_embed":
+                all_pad = (image_masks == 0).to(dtype=torch.float32)
+                pad_embed = self.pad_embed[None, None, None, :]
+                image_features = image_features + pad_embed * torch.unsqueeze(all_pad, -1)
+            elif cfg.image_padding_embed == "regress":
+                pad_embed = self.pad_embed[None, None, None, :]
+                image_features = image_features + pad_embed * torch.unsqueeze(torch.maximum(image_masks, torch.zeros_like(image_masks)), -1)
+            elif cfg.image_padding_embed == "pad_and_partial_pad":
+                pad_embed = self.pad_embed[:, None, None, None, :]
+                all_pad = image_masks == 0
+                partial_pad = torch.logical_and(image_masks < 1, torch.logical_not(all_pad)).to(dtype=torch.float32)
+                all_pad = all_pad.to(dtype=torch.float32)
+                image_features = image_features + pad_embed[0] * torch.unsqueeze(all_pad, -1)
+                image_features = image_features + pad_embed[1] * torch.unsqueeze(partial_pad, -1)
+            else:
+                raise ValueError(cfg.image_padding_embed)
+
+        image_features = self.image_feature_dropout(image_features)
+
+        image_features = image_features.reshape(
+            (batch_size, num_image) + cfg.image_num_patch + (-1,),
             )
 
-        # image pooling
-        image_features = einops.rearrange(
-            image_features,
-            'b n (h dh) (w dw) c -> (b n h w) (dh dw) c',
-            dh=cfg.image_pooling_h,
-            dw=cfg.image_pooling_w,
-        )
+        default_image_features = self.get_features_for_pool(image_features, cfg.image_pooling_h, cfg.image_pooling_w, cfg)
 
-        if cfg.image_pooling_2d == ImagePooling2DType.attention_meanq:
-            query = image_features.mean(-2, keepdim=True)
-            image_features = self.image_pooling_2d(query, image_features)
-        elif cfg.image_pooling_2d not in {ImagePooling2DType.none, ImagePooling2DType.stack}:
-            image_features = self.image_pooling_2d(image_features[:, :1, :], image_features)
-
-        h, w = cfg.llm_patches_per_crop()
-        image_features = image_features.reshape(batch_size, num_image, h * w, -1)
-
-        # MLP layer to map the feature.
-        if cfg.image_projector == ImageProjectType.mlpx2:
-            for module in self.image_projector:
-                image_features = module(image_features)
+        if cfg.periodic_high_res_frame is None:
+            return default_image_features
         else:
-            image_features = self.image_projector(image_features)
-
-        # image_features: (batch_size, num_image, num_patch, d_model)
-        return image_features
-
+            high_res_image_features = self.get_features_for_pool(image_features, cfg.high_res_pooling_h, cfg.high_res_pooling_w, cfg)
+            return default_image_features, high_res_image_features

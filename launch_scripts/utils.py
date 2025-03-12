@@ -2,7 +2,7 @@ import logging
 from typing import Dict
 
 from olmo.models.molmo.data_formatter import DataFormatter
-from olmo.data.data_loader import DataConfig
+from olmo.data.data_loader import DataLoaderConfig
 from olmo.models.molmo.model_preprocessor import MultiModalPreprocessorConfig
 from olmo.eval.inf_evaluator import InfDatasetEvaluatorConfig, EvaluatorConfig
 from olmo.nn.image_vit import VitConfig
@@ -74,14 +74,21 @@ def get_evaluator(name) -> EvaluatorConfig:
         return EvaluatorConfig(clock_bench_eval=True)
     elif name in ["countbench_qa"]:
         return EvaluatorConfig(count_eval=True)
-    elif name in ["dense_caption_eval", "user_qa", "vqa_v2_test"]:
+    elif name in ["mvbench", "llava_video_178k_mc"]: # expects a single character followed by a dot.
+        return EvaluatorConfig(vqa_eval="em_start")
+    elif name.startswith("temp_compass"):
+        disable_api = "disable_api" in name
+        name = name.replace("_disable_api", "")
+        task = '_'.join(name.split("_")[2:]) if len(name.split("_")) > 2 else "all"
+        return EvaluatorConfig(temp_compass_eval=task, temp_compass_disable_api=disable_api)
+    elif name in ["dense_caption_eval", "user_qa", "vqa_v2_test", "intern_vid"]:
         # No metrics, but still save prediction file
         return EvaluatorConfig()
     else:
         raise NotImplementedError(name)
 
 
-def get_evaluation(name, seq_len, max_examples, num_workers=2, device_batch_size=None) -> InfDatasetEvaluatorConfig:
+def get_evaluation(name, seq_len, max_examples, batch_size=8, for_inference=True,num_workers=2, device_batch_size=None) -> InfDatasetEvaluatorConfig:
     """Gets the default evaluation config for task (or task:split string) `name`"""
     if ":" in name:
         name, split = name.split(":")
@@ -129,14 +136,19 @@ def get_evaluation(name, seq_len, max_examples, num_workers=2, device_batch_size
         max_new_tokens = 64
     elif name.startswith("android_control"):
         max_new_tokens = 16
-    elif "refc" in name:
+    elif name == "llava_video_178k_oe" or name == "llava_video_178k_cap" or name.startswith("temp_compass"):
+        max_new_tokens = 192
+    elif "refc" in name or "mvbench" in name or name == "llava_video_178k_mc":
         max_new_tokens = 32
     else:
         max_new_tokens = 12
 
-    ds = DataConfig(
-        dataset=task_name, sequence_length=seq_len, split=split, shuffle=True,
-        num_workers=num_workers, pad="to_max", pin_memory=True, drop_last=False,
+    ds = DataLoaderConfig(
+        dataset=task_name, sequence_length=seq_len,
+        for_inference=for_inference,
+        split=split, shuffle=True, 
+        drop_last=max_examples is not None and max_examples >= 0,
+        num_workers=num_workers, pad="to_max", pin_memory=True,
         seed=691203
     )
 

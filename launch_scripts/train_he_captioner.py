@@ -6,7 +6,7 @@ from typing import cast
 from omegaconf import omegaconf, OmegaConf
 
 from launch_scripts.utils import VISION_BACKBONES, LLMS
-from olmo.data.data_loader import DataConfig
+from olmo.data.data_loader import DataLoaderConfig
 from olmo.data.pixmo_datasets import PixMoCap
 from olmo.eval.loss_evaluator import LossDatasetEvaluatorConfig
 from olmo.models.he_molmo.he_data_formater import HeDataFormatter
@@ -121,7 +121,7 @@ if __name__ == "__main__":
         label="val",
         max_examples=eval_examples,
         device_batch_size=args.device_eval_batch_size,
-        data=DataConfig(
+        data=DataLoaderConfig(
             seed=95818,
             dataset="pixmo_cap_transcript",
             shuffle=False,
@@ -150,7 +150,7 @@ if __name__ == "__main__":
         fused_loss=False,
         compile_loss=True,
         model=model_cfg,
-        data=DataConfig(
+        data=DataLoaderConfig(
             mixture=dict(
                 pixmo_cap=0.5,
                 pixmo_transcript=0.5

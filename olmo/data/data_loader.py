@@ -25,7 +25,7 @@ class RootSizeMixture(BaseConfig):
 
 
 @dataclass
-class DataConfig(BaseConfig):
+class DataLoaderConfig(BaseConfig):
     """Configuration for a torch `DataLoader`"""
 
     dataset: Optional[str] = None

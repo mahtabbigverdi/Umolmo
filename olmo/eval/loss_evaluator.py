@@ -13,7 +13,7 @@ from tqdm import tqdm
 from wandb.sdk.data_types.base_types.wb_value import WBValue
 
 from olmo.config import BaseConfig, D
-from olmo.data.data_loader import DataConfig
+from olmo.data.data_loader import DataLoaderConfig
 from olmo.models.molmo.molmo import MolmoConfig
 from olmo.torch_util import move_to_device, get_world_size
 
@@ -142,7 +142,7 @@ class LossDatasetEvaluatorConfig(BaseConfig):
     label: Optional[str] = None
     """Label to use when logging"""
 
-    data: DataConfig = field(default_factory=DataConfig)
+    data: DataLoaderConfig = field(default_factory=DataLoaderConfig)
     """Data to evaluate on"""
 
     device_batch_size: int = 4
@@ -163,7 +163,7 @@ class LossDatasetEvaluatorConfig(BaseConfig):
         if getattr(config, "mm_evaluator", None):
             config.generative_evaluator = LossDatasetEvaluatorConfig.update_legacy_settings(config.generative_evaluator)
         if getattr(config, "data", None):
-            config.data = DataConfig.update_legacy_settings(config.data)
+            config.data = DataLoaderConfig.update_legacy_settings(config.data)
         return config
 
     def build_dataset_evaluator(self, model_config: MolmoConfig, device) -> LossDatasetEvaluator:

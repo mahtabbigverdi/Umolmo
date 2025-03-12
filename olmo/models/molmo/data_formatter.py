@@ -223,7 +223,6 @@ GENERAL_PROMPTS_V1 = {
         "Locate the {label} and count them, then point to them.",
         "Find all the {label}. How many are there? Point to them.",
         "Find each {label}. How many are there? Point to them.",
-        "Point to and count the {label} in the picture.",
     ],
     "only_count": [
         "Count the {label} in the image.",
@@ -234,6 +233,10 @@ GENERAL_PROMPTS_V1 = {
         "Find each {label}. How many are there?",
     ],
 }
+
+
+GENERAL_PROMPTS_V1["video_short_caption"] = [prompt.replace("image", "video").replace("picture", "video") for prompt in GENERAL_PROMPTS_V1["short_caption"]]
+GENERAL_PROMPTS_V1["video_long_caption"] = [prompt.replace("image", "video").replace("picture", "video") for prompt in GENERAL_PROMPTS_V1["long_caption"]]
 
 
 STYLE_TO_GENERAL_PROMPT = {
@@ -293,6 +296,9 @@ DEMO_STYLES = [
     "pointing",
     "user_qa",
     "long_caption",
+    "short_caption",
+    "video_long_caption",
+    "video_short_caption"
 ]
 
 
@@ -409,13 +415,16 @@ class DataFormatter(BaseConfig):
         return out
 
     def get_system_prompt(self, style, for_inference, messages, rng):
-
         # For eval only dataset
         if style == "eval_short_answer":
             style = "vqa2"
         elif style == "eval_multiple_choice":
             style = "a_okvqa_mc"
-
+        elif style == "video_eval_short_answer":
+            style = "llava_video_da"
+        elif style == "video_eval_multiple_choice":
+            style = "llava_video_mc"
+        
         if self.system_prompt == "style":
             return style + ":"
 
@@ -502,8 +511,8 @@ class DataFormatter(BaseConfig):
             else:
                 # We template long captions and pointing since they are "demo" tasks, and use
                 # plain text for everything else
-                if style == "long_caption":
-                    prompt = apply_keyword_prompt(GENERAL_PROMPTS_V1["long_caption"], example, rng, dbg=self.debug)
+                if style in ["long_caption", "short_caption", "video_long_caption", "video_short_caption"] and "question" not in example:
+                    prompt = apply_keyword_prompt(GENERAL_PROMPTS_V1[style], example, rng, dbg=self.debug)
                 elif style in ["pointing", "point_count"]:
                     # output, prompt, metadata = self.format_points(example)
                     if "question" in example:

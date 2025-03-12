@@ -41,6 +41,7 @@ def unnormalize_image(image,
     """Normalizes the image to zero mean and unit variance."""
     image *= np.array(scale)[None, None, :]
     image += np.array(offset)[None, None, :]
+    image = np.clip(image * 255, 0, 255).astype(np.uint8)
     return image
 
 
@@ -150,9 +151,9 @@ def example_to_html_dict(ex, preprocessor, show_patches=False, show_crops=False)
         )
         # patches = tf.transpose(patches, [0, 2, 1])
         assert len(patches) == len(image_input_idx)
-        assert (ex["decoder_input_tokens"] == image_patch_id).sum() == len(token_to_patch_ix)
+        assert (ex["input_tokens"] == image_patch_id).sum() == len(token_to_patch_ix)
         on = 0
-        for token_ix, ix in enumerate(ex["decoder_input_tokens"]):
+        for token_ix, ix in enumerate(ex["input_tokens"]):
             if ix == -1:
                 with_patches.append("<PAD>")
             elif ix == image_patch_id:

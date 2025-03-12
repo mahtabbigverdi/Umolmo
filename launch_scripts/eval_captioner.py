@@ -7,7 +7,7 @@ from omegaconf import OmegaConf
 from olmo.eval.inf_evaluator import EvaluatorConfig
 from olmo.train.trainer_config import FSDPConfig, FSDPPrecision
 from olmo.models.model import FSDPWrapStrategy
-from olmo.data.data_loader import DataConfig
+from olmo.data.data_loader import DataLoaderConfig
 from olmo.torch_util import get_world_size
 from olmo.util import clean_opt, prepare_torchrun_environment, select_checkpoint
 from scripts.mm_eval import ModelEvaluator, EvalConfig, DatasetEvaluatorConfig
@@ -36,7 +36,7 @@ def main():
     checkpoint_dir = select_checkpoint(args.checkpoint)
 
     eval_config = DatasetEvaluatorConfig(
-        data=DataConfig(
+        data=DataLoaderConfig(
             args.task, split=args.split,
             sequence_length=args.seq_len,
             drop_last=False, seed=95818,

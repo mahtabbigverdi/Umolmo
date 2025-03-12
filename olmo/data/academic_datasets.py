@@ -324,7 +324,7 @@ class ScienceQAImageOnly(Dataset):
         question =  ex["question"]
         hint = ex["hint"]
         if hint:
-            question = hint + "\n" + hint
+            question = hint + "\n" + question
         return dict(
             image=ex["image"],
             question=question,
