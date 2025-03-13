@@ -49,7 +49,7 @@ class MMCollator:
     """Converts list of examples from our datasets into a tensor batch"""
 
     TEXT_KEYS = ["input_tokens", "target_tokens", "loss_masks", "subsegment_ids", "position_ids"]
-    IMAGE_KEYS = ["images", "image_masks"]
+    IMAGE_KEYS = ["images", "image_masks", "high_res_frame_ids"]
 
     def __init__(self, max_sequence_length=None, include_metadata=True, pad=None,
                  max_crops=None, max_images_tokens=None):

@@ -3,6 +3,9 @@ from olmo.data.academic_datasets import (
     AOkVqa, Vqa2, PlotQa, FigureQa, DvQa, TabWMPDirectAnswer,
     AndroidControl, TallyQa, AI2D, CountBenchQa, RealWorldQa, MathVista, MMMU, ClockBench
 )
+from olmo.data.video_datasets import (
+    InternVid, Koala, LLaVAVideo178K, MVBench, TempCompass
+)
 from olmo.data.academic_datasets_manual import ChartQa, InfoQa, SceneTextQa
 from olmo.data.dataset import Dataset
 from olmo.data.pixmo_datasets import (
@@ -12,6 +15,22 @@ from olmo.data.pixmo_datasets import (
 
 
 def get_dataset_by_name(dataset_name, split) -> Dataset:
+    if dataset_name == "intern_vid":
+        return InternVid(split=split)
+    if dataset_name == "koala":
+        return Koala(split=split)
+    if dataset_name == "llava_video_178k_mc":
+        return LLaVAVideo178K(split=split, answer_type="multi_choice")
+    if dataset_name == "llava_video_178k_oe":
+        return LLaVAVideo178K(split=split, answer_type="open_ended")
+    if dataset_name == "llava_video_178k_cap":
+        return LLaVAVideo178K(split=split, answer_type="caption")
+    if dataset_name == "mvbench":
+        return MVBench(split=split)
+    if dataset_name.startswith("temp_compass"):
+        dataset_name = dataset_name.replace("_disable_api", "")
+        task = '_'.join(dataset_name.split("_")[2:]) if len(dataset_name.split("_")) > 2 else "all"
+        return TempCompass(split=split, task=task)
     if dataset_name in ["scifi_document_qa", "pixmo_docs_other"]:
         return PixMoDocs("other", split=split)
     elif dataset_name in ["scifi_table_qa", "pixmo_docs_tables"]:

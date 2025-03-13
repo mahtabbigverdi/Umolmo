@@ -41,6 +41,7 @@ def unnormalize_image(image,
     """Normalizes the image to zero mean and unit variance."""
     image *= np.array(scale)[None, None, :]
     image += np.array(offset)[None, None, :]
+    image = np.clip(image * 255, 0, 255).astype(np.uint8)
     return image
 
 

@@ -15,13 +15,20 @@ def get_chat_response(
     max_tokens=256,
     n=1,
     patience=10000000,
-    sleep_time=0
+    sleep_time=0,
+    system_prompt=None,
+    **kwargs
 ):
     """Run a query through an OpenAI model"""
 
     messages = [
         {"role": "user", "content": prompt},
     ]
+    if system_prompt is not None:
+        messages = [
+            {"role": "system", "content": system_prompt}
+        ] + messages
+
     client = openai.OpenAI(
         api_key=api_key,
     )
@@ -34,6 +41,7 @@ def get_chat_response(
                 temperature=temperature,
                 max_tokens=max_tokens,
                 n=n,
+                **kwargs
             )
             if n == 1:
                 prediction = response.choices[0].message.content.strip()
