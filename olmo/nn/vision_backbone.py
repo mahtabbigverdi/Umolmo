@@ -51,6 +51,9 @@ class VisionBackboneConfig(BaseConfig):
     image_pooling_2d: ImagePooling2DType = ImagePooling2DType.attention_meanq
     """Layer to pool image features"""
 
+    pooling_attention_mask: bool = False
+    """Use an attention mask when pooling instead setting masked embeddings to 0"""
+
     image_projector: ImageProjectType = ImageProjectType.mlp
     """Layer to project pooled image features to the LLM embedding space"""
 
@@ -297,7 +300,7 @@ class MolmoVisionBackbone(nn.Module):
         return image_features
 
     def forward(self, images: torch.Tensor, image_masks: torch.Tensor,
-                pooled_patches_idx: torch.Tensor, return_masked=False) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+                pooled_patches_idx: torch.Tensor) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         cfg = self.config
 
         # image_features: (batch_size, num_crops(=num_image), num_patch, nximage_emb_dim)
@@ -326,34 +329,56 @@ class MolmoVisionBackbone(nn.Module):
         image_features = self.image_feature_dropout(image_features)
         dim = image_features.shape[-1]
 
-        # Use `pooled_patches_idx` to arange the features for image pooling
-        batch_idx = torch.arange(pooled_patches_idx.shape[0], dtype=torch.long, device=pooled_patches_idx.device)
-        batch_idx = torch.tile(batch_idx.view(batch_size, 1, 1), [1, pooled_patches_idx.shape[1], pooled_patches_idx.shape[2]])
-        valid = pooled_patches_idx >= 0
-        valid_token = torch.any(valid, -1)
-
-        # Now [batch, num_high_res_features, 4, dim]
-        image_features = image_features.reshape(batch_size, -1, dim)[batch_idx, torch.clip(pooled_patches_idx, 0)]
-        image_features = image_features * valid.float()[:, :, :, None]
-        image_features = image_features.reshape([-1, pooled_patches_idx.shape[-1], dim])
-
-        if cfg.image_pooling_2d == ImagePooling2DType.attention_meanq:
-            query = image_features.mean(-2, keepdim=True)
-            image_features = self.image_pooling_2d(query, image_features)
-        elif cfg.image_pooling_2d not in {ImagePooling2DType.none, ImagePooling2DType.stack}:
-            image_features = self.image_pooling_2d(image_features[:, :1, :], image_features)
-
-        image_features = image_features.reshape([-1, image_features.shape[-1]])
-
-        # MLP layer to map the feature.
-        if cfg.image_projector == ImageProjectType.mlpx2:
-            for module in self.image_projector:
-                image_features = module(image_features)
+        multiple_pooling = isinstance(pooled_patches_idx, (tuple, list))
+        if not multiple_pooling:
+            pooled_patches_idxs = [pooled_patches_idx]
         else:
-            image_features = self.image_projector(image_features)
+            pooled_patches_idxs = pooled_patches_idx
 
-        if return_masked:
-            return image_features.reshape([batch_size, -1, image_features.shape[-1]]), valid_token
+        all_pooled_features = []
+        for pooled_patches_idx in pooled_patches_idxs:
+            valid = pooled_patches_idx >= 0
+            valid_token = torch.any(valid, -1)
+
+            # Use `pooled_patches_idx` to arange the features for image pooling
+            batch_idx = torch.arange(pooled_patches_idx.shape[0], dtype=torch.long, device=pooled_patches_idx.device)
+            batch_idx = torch.tile(batch_idx.view(batch_size, 1, 1), [1, pooled_patches_idx.shape[1], pooled_patches_idx.shape[2]])
+
+            # Now [batch, num_high_res_features, pool_dim, dim]
+            to_pool = image_features.reshape(batch_size, -1, dim)[batch_idx, torch.clip(pooled_patches_idx, 0)]
+            to_pool = to_pool * valid.float()[:, :, :, None]
+            to_pool = to_pool.reshape([-1, pooled_patches_idx.shape[-1], dim])
+            if self.config.pooling_attention_mask:
+                attn_mask = valid.reshape([-1, 1, 1, valid.shape[-1]])
+            else:
+                attn_mask = None
+
+            if cfg.image_pooling_2d == ImagePooling2DType.attention_meanq:
+                if self.config.pooling_attention_mask:
+                    denom = valid.view(-1, to_pool.shape[-2]).float().sum(-1)
+                    denom = torch.where(denom == 0, 1, denom)
+                    query = to_pool.sum(-2, keepdim=True) / denom[:, None, None]
+                else:
+                    query = to_pool.mean(-2, keepdim=True)
+                pooled_features = self.image_pooling_2d(query, to_pool, attn_mask=attn_mask)
+            elif cfg.image_pooling_2d not in {ImagePooling2DType.none, ImagePooling2DType.stack}:
+                pooled_features = self.image_pooling_2d(to_pool[:, :1, :], to_pool, attn_mask=attn_mask)
+            else:
+                pooled_features = to_pool
+
+            pooled_features = pooled_features.reshape([batch_size, -1, pooled_features.shape[-1]])
+
+            # MLP layer to map the feature.
+            if cfg.image_projector == ImageProjectType.mlpx2:
+                for module in self.image_projector:
+                    pooled_features = module(pooled_features)
+            else:
+                pooled_features = self.image_projector(pooled_features)
+            all_pooled_features.append((pooled_features, valid_token))
+
+        if multiple_pooling:
+            return all_pooled_features
         else:
-            return image_features[valid_token.flatten()]
+            image_features, valid_token = all_pooled_features[0]
+            return image_features.view(-1, image_features.shape[-1])[valid_token.flatten()]
 
