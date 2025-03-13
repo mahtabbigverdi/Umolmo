@@ -91,6 +91,8 @@ def get_dataset_by_name(dataset_name, split) -> Dataset:
         return AndroidControl(split, mode="ll")
     if dataset_name == "chart_qa":
         return ChartQa(split, weighted=False)
+    if dataset_name == "chart_qa_exp":
+        return ChartQa(split, weighted=False, use_exp=True)
     if dataset_name == "real_world_qa_no_instruction":
         assert split == "test"
         return RealWorldQa("no_instruction")
