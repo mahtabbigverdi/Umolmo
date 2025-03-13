@@ -22,6 +22,8 @@ def _collate(tensors, max_sequence_length=None, dtype=None, pad=None, pad_value=
     tensor = [x for x in tensors if x is not None][0]
     if pad == "to_max":
         max_len = max_sequence_length
+        if not allow_truncate:
+            assert all(x.shape[0] <= max_len for x in tensors if x is not None)
     else:
         max_len = max((0 if x is None else x.shape[0]) for x in tensors)
         if max_sequence_length:
@@ -30,10 +32,7 @@ def _collate(tensors, max_sequence_length=None, dtype=None, pad=None, pad_value=
             elif max_sequence_length < max_len:
                 raise ValueError(f"{max_sequence_length} would truncate a non-truncatable tensor with length of {max_len}")
 
-        if pad == "to_128":
-            if len(tensor.shape) == 1 and max_len > 32:
-                max_len = 128 * ((max_len + 127) // 128)
-        elif pad is None:
+        if pad is None:
             pass
         elif pad is not None:
             raise NotImplementedError(pad)
