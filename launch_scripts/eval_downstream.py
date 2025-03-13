@@ -41,8 +41,8 @@ def main():
     args, other_args = parser.parse_known_args()
 
     if args.high_res:
+        args.max_crops = 36 if args.max_crops is None else args.max_crops
         args.seq_len = 4096
-        args.eval_name = "36crop"
 
     tasks = []
     for task in args.tasks:
@@ -133,7 +133,7 @@ def main():
         console_log_interval=10,
         precision="amp_bf16",
         pbar=False,
-        eval_name="36crop" if args.high_res else None,
+        eval_name=f"{args.max_crops}crop" if args.high_res else None,
         fsdp=FSDPConfig(
             wrapping_strategy=FSDPWrapStrategy.by_block_and_size,
             precision=FSDPPrecision.float,
