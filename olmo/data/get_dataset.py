@@ -7,9 +7,10 @@ from olmo.data.academic_datasets_manual import ChartQa, InfoQa, SceneTextQa
 from olmo.data.dataset import Dataset
 from olmo.data.pixmo_datasets import (
     PixMoDocs, PixMoCount, PixMoPoints, PixMoCapQa, PixMoCap, PixMoPointExplanations,
-    PixMoAskModelAnything, PixMoPointsEval, DenseCaptionEval, PixMoClocks
+    PixMoAskModelAnything, PixMoPointsEval, DenseCaptionEval, PixMoClocks,
+    CoSyn, CoSynPoint
 )
-
+import itertools
 
 def get_dataset_by_name(dataset_name, split) -> Dataset:
     if dataset_name in ["scifi_document_qa", "pixmo_docs_other"]:
@@ -20,6 +21,19 @@ def get_dataset_by_name(dataset_name, split) -> Dataset:
         return PixMoDocs("diagrams", split=split)
     elif dataset_name in ["scifi_charts_qa", "pixmo_docs_charts"]:
         return PixMoDocs("charts", split=split)
+
+    # CoSyn-400K / CoSyn-point
+    doc_types = [
+        "chart", "chemical", "circuit", "diagram",
+        "document", "graphic", "math", "music",
+        "nutrition", "table"
+    ]
+    cosyn_dataset_names = [f"cosyn_{doc_type}{suffix}" for doc_type, suffix in itertools.product(doc_types, ["", "_exp"])]
+    if dataset_name == "cosyn_point":
+        return CoSynPoint(split=split)
+    elif dataset_name in cosyn_dataset_names:
+        doc_type = dataset_name.split("_")[1]
+        return CoSyn(doc_type, split=split, use_exp=dataset_name.endswith("_exp"))
 
     # PixMo-Pointing
     elif dataset_name in ["pointing_high_freq", "pixmo_points_high_freq"]:

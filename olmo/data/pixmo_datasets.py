@@ -634,3 +634,102 @@ class PixMoClocks(DatasetBase):
             metadata=dict(hour=hour, second=second, minute=minute),
             style="clocks"
         )
+
+
+class CoSyn(Dataset):
+
+    @classmethod
+    def download(cls, n_procs=1):
+        for name in [
+            "chart", "chemical", "circuit", "diagram",
+            "document", "graphic", "math", "music",
+            "nutrition", "table"
+        ]:
+            datasets.load_dataset_builder("allenai/CoSyn-400K", name=name).download_and_prepare()
+    
+    def __init__(self, doc_type, split, use_exp=True, keep_in_memory=False):
+        assert doc_type in [
+            "chart", "chemical", "circuit", "diagram",
+            "document", "graphic", "math", "music",
+            "nutrition", "table"
+        ]
+        assert split in ["train", "validation"]
+        self.doc_type = doc_type
+        self.split = split
+        self.use_exp = use_exp
+        self.dataset = datasets.load_dataset(
+            "allenai/CoSyn-400K", name=doc_type, split=split, keep_in_memory=keep_in_memory)
+
+    def __len__(self):
+        return len(self.dataset)
+    
+    def get(self, item, rng):
+        style = f"cosyn_{self.doc_type}"
+        example = self.dataset[item]
+        qeas = example["qa_pairs"]
+        if self.use_exp:
+            style += "_exp"
+            message_list = [
+                dict(question=q, explanation=e, answer=a, style=style) for q, e, a in
+                zip(qeas["question"], qeas["explanation"], qeas["answer"])
+            ]
+        else:
+            message_list = [
+                dict(question=q, answer=a, style=style) for q, a in
+                zip(qeas["question"], qeas["answer"])
+            ]
+        return dict(
+            image=example["image"],
+            message_list=message_list,
+            metadata=dict(
+                image_id=example["id"]
+            )
+        )
+
+
+class CoSynPoint(Dataset):
+
+    @classmethod
+    def download(cls, n_procs=1):
+        local_name = join(PIXMO_DATASETS, "cosyn-point")
+        if exists(local_name):
+            return
+        local_data_name = cached_path(
+            join(PIXMO_DATASETS, "cosyn-point-data.json"), cache_dir=os.environ.get("MOLMO_CACHE_DIR"),
+        )
+        with open(local_data_name, 'r') as f:
+            data = json.load(f)
+        id2data = {ex["id"]: ex for ex in data}
+        all_data = datasets.DatasetDict()
+        for split in ["train", "validation"]:
+            ds = datasets.load_dataset("allenai/CoSyn-point", split=split)
+            ds = ds.add_column("names", [id2data[x]["names"] for x in ds["id"]])
+            all_data[split] = ds
+        save_local_dataset(all_data, local_name, n_procs)
+
+    def __init__(self, split, keep_in_memory=False):
+        assert split in ["train", "validation"]
+        self.dataset = datasets.load_from_disk(
+            join(PIXMO_DATASETS, "cosyn-point"), keep_in_memory=keep_in_memory)[split]
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def get(self, item, rng):
+        example = self.dataset[item]
+        messages = []
+        for question, points, name in zip(example["questions"], example["answer_points"], example["names"]):
+            messages.append(dict(
+                question=question,
+                points=np.stack([points['x'], points['y']], -1),
+                label=name,
+                point_scale=100,
+                style="cosyn_point",
+            ))
+        return dict(
+            image=example["image"],
+            message_list=messages,
+            metadata=dict(
+                image_id=example["id"]
+            )
+        )
