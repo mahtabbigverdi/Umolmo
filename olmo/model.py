@@ -1485,6 +1485,8 @@ class MolmoVisionBackbone(nn.Module):
             nn.init.xavier_uniform_(self.image_projector.weight)
         else:
             self.image_projector.reset_parameters()
+        if self.pad_embed is not None:
+            nn.init.zeros_(self.pad_embed)
 
     def reset_parameters(self):
         self.reset_connector_parameters()
