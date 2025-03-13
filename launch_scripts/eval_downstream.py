@@ -17,7 +17,7 @@ from olmo.util import (
     clean_opt,
     prepare_cli_environment, )
 from scripts.mm_eval import ModelEvaluator
-from launch_scripts.utils import get_evaluation
+from launch_scripts.utils import get_evaluation, select_checkpoint
 
 log = logging.getLogger(__name__)
 
@@ -53,9 +53,9 @@ def main():
     args, other_args = parser.parse_known_args()
 
     if args.high_res:
-        args.max_crops = 36
+        args.max_crops = 36 if args.max_crops is None else args.max_crops
         args.seq_len = 4096
-        args.eval_name = "36crop"
+        args.eval_name = f"{args.max_crops}crop"
 
     try:
         mp.set_start_method("spawn", force=True)
@@ -153,20 +153,7 @@ def main():
             skip_if_metrics_cached=not args.overwrite,
         ))
 
-    checkpoint_dir = Path(args.checkpoint)
-    if not (checkpoint_dir / "model.pt").exists() and args.checkpoint != "debug":
-        candidates = []
-        for file in checkpoint_dir.iterdir():
-            match = re.match("^step([0-9]+)-unsharded.*", file.name)
-            if match:
-                candidates.append((file, int(match.group(1))))
-        if len(candidates) == 0:
-            raise FileNotFoundError(f"{checkpoint_dir} is a directory but it did not "
-                                    f"contain any unsharded checkpoints")
-        checkpoint_dir = max(candidates, key=lambda x: x[1])[0].absolute().as_posix()
-        logging.info(f"Selected {checkpoint_dir} as oldest checkpoint in {checkpoint_dir}")
-    else:
-        checkpoint_dir = args.checkpoint
+    checkpoint_dir = select_checkpoint(args.checkpoint)
 
     cfg = EvalConfig(
         max_crops_override=args.max_crops,
@@ -185,7 +172,7 @@ def main():
     if other_args:
         config = OmegaConf.create(cfg)
         overrides = [clean_opt(arg) for arg in other_args]
-        config = OmegaConf.merge(config, OmegaConf.from_dotlist(overrides))
+        config.merge_with_dotlist(overrides)
         cfg = cast(EvalConfig, OmegaConf.to_object(config))
     ModelEvaluator(cfg).run()
 

@@ -290,10 +290,26 @@ To train with the Qwen2 LLM and the CLIP vision encoder:
 
 You can use other vision encoders including SigLIP, MetaCLIP and DINOv2 with the option `--vision_backbone=model_name`.
 
+Under-the-hood, the `launch_scripts/train_captioner.py` constructs a `TrainerConfig` object 
+and then runs it. For fine-grained control, CLI args can be used to override parts of
+the `TrainerConfig`, for example:
+
 To run without wandb, use:
 
 `torchrun --nproc-per-node=8 launch_scripts/train_captioner.py qwen2_7b
 --wandb=null --save_folder=/path/to/save/folder`
+
+To turn off dropout:
+
+`torchrun --nproc-per-node=8 launch_scripts/train_captioner.py qwen2_7b
+--wandb=null --save_folder=/path/to/save/folder --model.residual_dropout=0`
+
+Or to use 4 workers for the train and eval data loaders:
+
+`torchrun --nproc-per-node=8 launch_scripts/train_captioner.py qwen2_7b
+--wandb=null --save_folder=/path/to/save/folder --evaluations.0.data.num_workers=4 
+--evaluations.1.data.num_workers=4 --data.num_wokers=4`
+
 
 ## Multitask Training
 Multitask training can be done with `launch_scripts/multtask_train.py`, for example:
@@ -334,22 +350,7 @@ I have not seen compilation improve inference speed.
 
 For `torch.compile` I recommend using `dynamic=False` since if the model gets accidentally re-compiled in 
 dynamic mode you will see a significant performance drop. Autoregressive decoding is 
-done in a non-compiled path to avoid triggering an excessive number of re-compilations.
-
-## Training Changes
-There are minor differences between the published Molmo models that we trained and what this repo will produce.
-
-- Image URLs might fail to download, which will cause the amount of data to shrink slightly
-- PixMo-Clocks is not used by default, it requires a more complex download script that 
-we are still considering how to port.
-
-## Multi-Node
-Execute the `torchrun` commands on each node with the [appropriate args](https://pytorch.org/tutorials/intermediate/ddp_series_multinode.html)
-should allow multi-node training or evaluation. 
-
-We recommend ensuring the data is downloaded and then using the environment variable 
-`HF_DATASETS_OFFLINE=1` to ensure the nodes don't flood HF with requests as they all initialize 
-and then potentially get rate limited.
+done in a non-compiled path so it does not trigger an excessive number of re-compilations.
 
 ## Beaker
 `Dockerfile` can be used to build a beaker image. I have one built at `chrisc/molmo-torch2.5.1-cuda12.4`.

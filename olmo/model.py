@@ -38,6 +38,7 @@ import torch.nn.functional as F
 import torchmetrics
 from torch import einsum
 
+from . import tokenizer
 from .aliases import PathOrStr
 from .beam_search import BeamSearch, Constraint, FinalSequenceScorer, Sampler
 from .config import (
@@ -997,9 +998,9 @@ class OLMoSequentialBlock(OLMoBlock):
         # torch 2.6 will fix this by with a method to force a compiled method to run in eager mode,
         # but for now we forced to do this
         if force_eager:
-            return self.forward_can_compile(x, attention_bias, position_ids, drop_mask, layer_past, use_cache)
-        else:
             return self.forward_eager(x, attention_bias, position_ids, drop_mask, layer_past, use_cache)
+        else:
+            return self.forward_can_compile(x, attention_bias, position_ids, drop_mask, layer_past, use_cache)
 
     def forward_eager(self, *args, **kwargs) -> Tuple[torch.Tensor, Optional[Tuple[torch.Tensor, torch.Tensor]]]:
         return self._forward(*args, **kwargs)
@@ -1492,11 +1493,8 @@ class MolmoVisionBackbone(nn.Module):
     def reset_with_pretrained_weights(self):
         self.reset_connector_parameters()  # resets the connector
         if self.config.vit_load_path:
-            vit_load_path = Path(self.config.vit_load_path)
-            state_dict_path = resource_path(
-                vit_load_path.parent, vit_load_path.name,
-                local_cache=vit_load_path.parent,
-            )
+            parent, name = self.config.vit_load_path.rsplit("/", 1)
+            state_dict_path = resource_path(parent, name)
             assert state_dict_path.is_file(), f"Model file {str(state_dict_path)} not found"
             state_dict = torch.load(state_dict_path, map_location="cpu")
             self.image_vit.load_state_dict(state_dict)
@@ -1508,7 +1506,7 @@ class MolmoVisionBackbone(nn.Module):
         if strategy in (ActivationCheckpointingStrategy.whole_layer, ActivationCheckpointingStrategy.vit_only):
             self.image_vit.set_grad_checkpointing()
     
-    def encode_image(self, images: torch.Tensor) -> torch.Tensor:
+    def encode_image(self, images: torch.Tensor, force_eager=False) -> torch.Tensor:
         """
         : param images: (batch_size, num_crops, num_patch, n_pixels)
         """
@@ -1521,7 +1519,7 @@ class MolmoVisionBackbone(nn.Module):
         # Output all hidden states
         # n_layers x (batch_num_crops, (1+)n_tokens, image_emb_dim)
         images = images.view(B * T, N, D)
-        image_features = self.image_vit(images)
+        image_features = self.image_vit(images, force_eager=force_eager)
 
         if cfg.vit_layers is not None:
             features = []
@@ -1543,12 +1541,12 @@ class MolmoVisionBackbone(nn.Module):
 
         return image_features
     
-    def forward(self, images: torch.Tensor, image_masks: torch.Tensor) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    def forward(self, images: torch.Tensor, image_masks: torch.Tensor, force_eager=False) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         cfg = self.config
 
         # image_features: (batch_size, num_crops(=num_image), num_patch, nximage_emb_dim)
         batch_size, num_image = images.shape[:2]
-        image_features = self.encode_image(images)
+        image_features = self.encode_image(images, force_eager=force_eager)
 
         if cfg.image_padding_embed:
             assert image_masks is not None
@@ -1700,16 +1698,23 @@ class Molmo(nn.Module):
         if config.vision_backbone is not None:
             self.vision_backbone = MolmoVisionBackbone.build(config)
 
+        if self.config.bi_directional_attn == "image_tokens":
+            special_ids = tokenizer.get_special_token_ids(self.config.get_tokenizer())
+            self.__cache["image_tokens"] = torch.as_tensor([special_ids[x] for x in [
+                tokenizer.DEFAULT_IMAGE_PATCH_TOKEN,
+                tokenizer.DEFAULT_IM_COL_TOKEN,
+                tokenizer.DEFAULT_IM_START_TOKEN,
+                tokenizer.DEFAULT_IM_END_TOKEN,
+            ]], dtype=torch.long)
+
         self.__num_fwd_flops: Optional[int] = None
 
     def reset_with_pretrained_weights(self):
         if self.config.llm_load_path is None:
             self.reset_non_vision_parameters()
         else:
-            state_dict_path = resource_path(
-                Path(self.config.llm_load_path).parent, Path(self.config.llm_load_path).name,
-                local_cache=Path(self.config.llm_load_path).parent,
-            )
+            parent, name = self.config.llm_load_path.rstrip("/").rsplit("/", 1)
+            state_dict_path = resource_path(parent, name)
             assert state_dict_path.is_file(), f"Model file {str(state_dict_path)} not found"
             if state_dict_path.name.endswith("safetensors"):
                 state_dict = safetensors_file_to_state_dict(state_dict_path, map_location="cpu")
@@ -1932,7 +1937,7 @@ class Molmo(nn.Module):
         if images is not None:
             # shape: (batch_size, num_image, num_patch, d_model)
             # cls_embed: (batch_size, num_image, d_model)
-            image_features = self.vision_backbone(images, image_masks)
+            image_features = self.vision_backbone(images, image_masks, force_eager=force_eager)
             num_image, num_patch = image_features.shape[1:3]
             assert image_input_idx.shape == (batch_size, num_image, num_patch)
 
@@ -1965,38 +1970,39 @@ class Molmo(nn.Module):
         if self.config.normalize_input_embeds:
             x = x * (self.config.d_model ** 0.5)
 
-        # Transform the attention mask into what the blocks expect.
+        # Transform the attention mask into the 4D tensor blocks expect.
+        attention_mask_len = past_length + seq_len  # mask should include the K/V cache
         if len(attention_mask.shape) == 2:
-            attention_mask = attention_mask[:, :past_length + seq_len]
+            attention_mask = attention_mask[:, :attention_mask_len]
             attention_mask = attention_mask[:, None, None, :]
         else:
             attention_mask = attention_mask.unsqueeze(1)
+        assert attention_mask.shape[-1] == attention_mask_len
 
-        casual_mask = torch.tril(torch.ones(
-            past_length + seq_len, past_length + seq_len,
-            device=x.device, dtype=torch.bool))[None, None, :, :]
-        mask_len = seq_len
-        if attention_mask is not None:
-            mask_len = attention_mask.shape[-1]
-        elif past_key_values is not None:
-            mask_len = past_key_values[0][0].shape[-2] + seq_len
-        casual_mask = casual_mask[:, :, :mask_len, :mask_len]
+        # Combined with attention with the casual mask
+        if "casual_mask" not in self.__cache or self.__cache["casual_mask"].shape[-1] < attention_mask_len:
+            self.__cache["casual_mask"] = torch.tril(torch.ones(
+                attention_mask_len, attention_mask_len,
+                device=x.device, dtype=torch.bool))[None, None, :, :]
+        casual_mask = self.__cache["casual_mask"].to(x.device)[:, :, :attention_mask_len, :attention_mask_len]
 
-        if attention_mask is not None:
-            attention_mask = attention_mask & casual_mask
-        else:
-            attention_mask = casual_mask
+        if self.config.bi_directional_attn == "image_tokens":
+            image_tokens = self.__cache["image_tokens"].to(input_ids.device)
+            can_attend_bk = torch.any(input_ids[:, :, None] == image_tokens[None, None, :], -1)
+            casual_mask = casual_mask | (can_attend_bk[:, :, None] & can_attend_bk[:, None, :])[:, None, :, :]
+        elif self.config.bi_directional_attn is not None:
+            raise NotImplementedError(self.config.bi_directional_attn)
+
+        attention_mask = attention_mask & casual_mask
+
+        # Convert mask to a float mask, and possibly combine with `attention_bias`
         if attention_bias is not None:
-            attention_bias = torch.where(attention_mask, attention_bias.to(x.dtype), torch.finfo(x.dtype).min)
+            attention_bias = torch.where(attention_mask, attention_bias, torch.finfo(x.dtype).min)
         else:
             attention_bias = torch.where(attention_mask, 0, torch.finfo(x.dtype).min)
 
         attn_key_values: Optional[List[Tuple[torch.Tensor, torch.Tensor]]] = [] if use_cache else None
-
-        # decoder layers
         all_hidden_states = []
-
-        # Apply blocks one-by-one.
         if self.config.block_group_size == 1:
             for block_idx, block in enumerate(self.transformer.blocks):
                 if output_hidden_states:
@@ -2364,7 +2370,7 @@ class Molmo(nn.Module):
                 use_cache=True,
                 last_logits_only=True,
                 append_last_valid_logits=_append_last_valid_logits,
-                # force_eager=tokens_generated > 1
+                force_eager=True
             )
             log_probs = F.log_softmax(output.logits[:, -1, :], dim=-1)
 

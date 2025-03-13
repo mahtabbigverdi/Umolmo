@@ -111,7 +111,7 @@ GENERAL_PROMPTS_V1 = {
         "Help me answer this question: \"{question}\", by stating which of the following options is correct\n{options}."
     ],
     "pointing": [
-        "Point to {label}\nPlease say 'This isn't in the image.' if it is not in the image.",
+        "Point to {label}\nPlease say 'There are none.' if it is not in the image.",
         "Point to all occurrences of \"{label}\"",
         "Point to any {label} in the image",
         "Point to any {label} in the image.",
@@ -191,7 +191,7 @@ GENERAL_PROMPTS_V1 = {
         "In all the picture, how many {label} are there?",
         "Point at the {label} and then count them.",
         "Point to all the visible {label} output the total count.",
-        "Point to all the {label} visible and output the total count. \nPlease say 'This isn't in the image.' if it is not in the image.",
+        "Point to all the {label} visible and output the total count. \nPlease say 'There are none.' if it is not in the image.",
         "Point to all occurrences of \"{label}\" and output the total count.",
         "Show me where the {label} are and output the total count.",
         "Where are the {label}? How many are there?",
@@ -211,7 +211,7 @@ GENERAL_PROMPTS_V1 = {
         "Can you count every {label} in the picture?",
         "Can you see any {label} in the image? How many are there?",
         "Are there any {label} in the image? How many are there?",
-        "If you see any {label} in the image, give me the count. Otherwise, say 'This isn't in the image.'",
+        "If you see any {label} in the image, give me the count. Otherwise, say 'There are none.'",
         "Object: {label}\nInstruction: How many are there?",
     ],
     "count_then_point": [

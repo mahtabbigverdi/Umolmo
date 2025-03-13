@@ -201,7 +201,6 @@ class Trainer:
     cur_train_loss: float = float("inf")
     _start_time: float = 0.0
     _gc_init_state: bool = True
-    _inference_warmup: bool = True
     loss_fn: Callable[..., torch.Tensor] = field(default_factory=lambda: cross_entropy_loss)  # type: ignore
     last_sharded_checkpoint_step: Optional[int] = None
     last_unsharded_checkpoint_step: Optional[int] = None
@@ -992,10 +991,8 @@ class Trainer:
                 device=self.device,
                 autocast_precision=self.cfg.autocast_precision,
                 is_distributed=True,
-                inference_warmup=self._inference_warmup,
                 pbar=False
             )
-            self._inference_warmup = False
             self.log_metrics_to_console(f"{evaluator.label}", dataset_metrics)
             all_metrics.update({f"{evaluator.label}/{k}": v for k, v in dataset_metrics.items()})
             log.info(f"Eval for '{evaluator.label}' done in {time.perf_counter()-t0:0.1f} seconds")

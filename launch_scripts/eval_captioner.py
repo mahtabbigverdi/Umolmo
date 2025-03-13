@@ -9,6 +9,7 @@ import torch.multiprocessing as mp
 from omegaconf import OmegaConf
 from transformers import CompileConfig
 
+from launch_scripts.utils import select_checkpoint
 from olmo.config import EvalConfig, FSDPConfig, FSDPWrapStrategy, FSDPPrecision, \
     DatasetEvaluatorConfig, \
     EvaluatorConfig, DataConfig, CompilerConfig
@@ -61,20 +62,7 @@ def main():
     else:
         n_batches = -1
 
-    checkpoint_dir = Path(args.checkpoint)
-    if not (checkpoint_dir / "model.pt").exists() and checkpoint_dir.exists():
-        candidates = []
-        for file in checkpoint_dir.iterdir():
-            match = re.match("^step([0-9]+)-unsharded.*", file.name)
-            if match:
-                candidates.append((file, int(match.group(1))))
-        if len(candidates) == 0:
-            raise FileNotFoundError(f"{checkpoint_dir} is a directory but it did not "
-                                    f"contain any unsharded checkpoints")
-        checkpoint_dir = max(candidates, key=lambda x: x[1])[0].absolute().as_posix()
-        logging.info(f"Selected {checkpoint_dir} as oldest checkpoint in {checkpoint_dir}")
-    else:
-        checkpoint_dir = args.checkpoint
+    checkpoint_dir = select_checkpoint(args.checkpoint)
 
     eval_config = DatasetEvaluatorConfig(
         data=DataConfig(

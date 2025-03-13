@@ -614,7 +614,7 @@ def main():
     parser.add_argument("--data_dir", default="/weka/oe-training-default/mm-olmo/dense_caption_eval/")
     parser.add_argument(
         "--metrics", nargs="+", choices=["recall", "repeat", "consistency", "all"],
-        default=["all"],
+        default=["recall", "consistency"],
     )
     parser.add_argument("--sample", type=int, default=None)
     parser.add_argument("--model", default="gpt-4o-2024-05-13")

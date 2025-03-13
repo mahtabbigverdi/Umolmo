@@ -708,6 +708,15 @@ class ModelConfig(BaseConfig):
     """
 
     pad_tokenizer: bool = True
+    """
+    Pad tokenizer to make sure the new embeddings line-up with the new tokens, this should be 
+    true for all non-legacy models
+    """
+
+    bi_directional_attn: Optional[str] = None
+    """
+    Allow bidirectional attention for some tokens
+    """
 
     moe_num_experts: Optional[int] = 8
     """
@@ -1845,11 +1854,6 @@ class EvalConfig(BaseConfig):
     evaluations: List[DatasetEvaluatorConfig] = field(default_factory=list)
     """
     Inference Evaluation configurations.
-    """
-
-    compile: Optional[CompilerConfig] = None
-    """
-    How to compile the model
     """
 
     load_path: str = "./"

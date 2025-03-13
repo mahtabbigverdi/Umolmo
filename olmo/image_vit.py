@@ -200,13 +200,13 @@ class BlockCollection(nn.Module):
         for r in self.resblocks:
             r.reset_parameters()
 
-    def forward(self, x: torch.Tensor) -> List[torch.Tensor]:
+    def forward(self, x: torch.Tensor, force_eager=False) -> List[torch.Tensor]:
         hidden_states = []
         for r in self.resblocks:
             if self.grad_checkpointing and not torch.jit.is_scripting():
-                x = self._activation_checkpoint_fn(r, x)
+                x = self._activation_checkpoint_fn(r, x, force_eager)
             else:
-                x = r(x)
+                x = r(x, force_eager)
             hidden_states.append(x)
         return hidden_states
 
@@ -265,7 +265,18 @@ class ResidualAttentionBlock(nn.Module):
         self.attention_norm.reset_parameters()
         self.ffn_norm.reset_parameters()
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, force_eager=False) -> torch.Tensor:
+        if force_eager:
+            return self.forward_force_eager(x)
+        else:
+            return self.forward_can_compile(x)
+
+    def forward_force_eager(self, x):
+        x = x + self.attention(self.attention_norm(x))
+        x = x + self.feed_forward(self.ffn_norm(x))
+        return x
+
+    def forward_can_compile(self, x):
         x = x + self.attention(self.attention_norm(x))
         x = x + self.feed_forward(self.ffn_norm(x))
         return x
@@ -378,7 +389,7 @@ class VisionTransformer(nn.Module):
         x = x + torch.cat([cls_emb[None, :, :], pos_emb[None, :, :]], dim=1).to(x.dtype)
         return x
 
-    def forward(self, x: torch.Tensor, patch_num: int = None) -> List[torch.Tensor]:
+    def forward(self, x: torch.Tensor, patch_num: int = None, force_eager=False) -> List[torch.Tensor]:
         """
         : param x: (batch_size, num_patch, n_pixels)
         """
@@ -394,7 +405,7 @@ class VisionTransformer(nn.Module):
 
         x = self.pre_ln(x)
 
-        hidden_states = self.transformer(x)
+        hidden_states = self.transformer(x, force_eager=force_eager)
         return hidden_states
 
 
@@ -454,7 +465,7 @@ class SiglipVisionTransformer(nn.Module):
         x = x + pos_emb[None, :, :].to(x.dtype)
         return x
 
-    def forward(self, x: torch.Tensor, patch_num: int = None) -> List[torch.Tensor]:
+    def forward(self, x: torch.Tensor, patch_num: int = None, force_eager=False) -> List[torch.Tensor]:
         """
         : param x: (batch_size, num_patch, n_pixels)
         """
@@ -467,7 +478,7 @@ class SiglipVisionTransformer(nn.Module):
         # class embeddings and positional embeddings
         x = self.add_pos_emb(x, patch_num)
 
-        hidden_states = self.transformer(x)
+        hidden_states = self.transformer(x, force_eager=force_eager)
         return hidden_states
 
 
@@ -531,7 +542,7 @@ class DinoVisionTransformer(nn.Module):
         x = x + torch.cat([cls_emb[None, :, :], pos_emb[None, :, :]], dim=1).to(x.dtype)
         return x
 
-    def forward(self, x: torch.Tensor, patch_num: int = None) -> List[torch.Tensor]:
+    def forward(self, x: torch.Tensor, patch_num: int = None, force_eager=False) -> List[torch.Tensor]:
         """
         : param x: (batch_size, num_patch, n_pixels)
         """
@@ -545,5 +556,5 @@ class DinoVisionTransformer(nn.Module):
         x = torch.cat([_expand_token(self.class_embedding, x.shape[0]).to(x.dtype), x], dim=1)
         x = self.add_pos_emb(x, patch_num)
 
-        hidden_states = self.transformer(x)
+        hidden_states = self.transformer(x, force_eager=force_eager)
         return hidden_states
