@@ -77,12 +77,6 @@ class VisionBackboneConfig(BaseConfig):
     image_pooling_w: int = 2
     """Pooling patch features width"""
 
-    high_res_token_length_h: Optional[int] = None
-    """If periodic_high_res_frame, use high-res image tokens with this pooling size"""
-
-    high_res_token_length_w: Optional[int] = None
-    """If periodic_high_res_frame, use high-res image tokens with this pooling size"""
-
     image_feature_dropout: float = 0.0
     """Dropout for image patch features"""
 
@@ -91,6 +85,37 @@ class VisionBackboneConfig(BaseConfig):
 
     compile_vit: Optional[str] = "blocks"
     """How to compile the ViT"""
+
+    def __post_init__(self):
+        self.vit_layers = tuple(self.vit_layers)  # type: ignore[assignment]
+
+    @property
+    def image_num_patch(self):
+        return self.vit.image_num_patch
+
+    def llm_patches_per_crop(self):
+        h, w = self.image_num_patch
+        # Round up in case we need to pad the image features for pooling
+        h = (h + self.image_pooling_h - 1) // self.image_pooling_h
+        w = (w + self.image_pooling_w - 1) // self.image_pooling_w
+        return h, w
+
+    def build(self, llm_config, device):
+        return MolmoVisionBackbone(self, llm_config, device)
+
+
+@dataclass
+class VideoVisionBackboneConfig(VisionBackboneConfig):
+    """Vision ViT and the Image/Language Connector"""
+
+    high_res_pooling_h: Optional[int] = None
+    """If periodic_high_res_frame, use high-res image tokens with this pooling size"""
+
+    high_res_pooling_w: Optional[int] = None
+    """If periodic_high_res_frame, use high-res image tokens with this pooling size"""
+
+    periodic_high_res_frame: Optional[int] = None
+    """If set, the frame at this interval will be sampled at a higher resolution"""
 
     def __post_init__(self):
         self.vit_layers = tuple(self.vit_layers)  # type: ignore[assignment]
@@ -110,8 +135,7 @@ class VisionBackboneConfig(BaseConfig):
         return self.llm_patches_per_crop_given_pool_size(self.image_pooling_w, self.image_pooling_h)
 
     def build(self, llm_config, device):
-
-        return MolmoVisionBackbone(self, llm_config, device)
+        return VideoVisionBackbone(self, llm_config, device)
 
 
 class ImageProjectorMLP(nn.Module):
@@ -335,11 +359,7 @@ class MolmoVisionBackbone(nn.Module):
             query = image_features.mean(-2, keepdim=True)
             image_features = self.image_pooling_2d(query, image_features)
         elif cfg.image_pooling_2d not in {ImagePooling2DType.none, ImagePooling2DType.stack}:
-            if self.grad_checkpointing:
-                from torch.utils.checkpoint import checkpoint
-                image_features = checkpoint(self.image_pooling_2d, image_features[:, :1, :], image_features, use_reentrant=False)
-            else:
-                image_features = self.image_pooling_2d(image_features[:, :1, :], image_features)
+            image_features = self.image_pooling_2d(image_features[:, :1, :], image_features)
 
         h, w = cfg.llm_patches_per_crop_given_pool_size(image_pooling_w, image_pooling_h)
         image_features = image_features.reshape(batch_size, num_image, h * w, -1)
@@ -349,11 +369,7 @@ class MolmoVisionBackbone(nn.Module):
             for module in self.image_projector:
                 image_features = module(image_features)
         else:
-            if self.grad_checkpointing:
-                from torch.utils.checkpoint import checkpoint
-                image_features = checkpoint(self.image_projector, image_features, use_reentrant=False)
-            else:
-                image_features = self.image_projector(image_features)
+            image_features = self.image_projector(image_features)
         
         # image_features: (batch_size, num_image, num_patch, d_model)
         return image_features
@@ -395,7 +411,7 @@ class MolmoVisionBackbone(nn.Module):
 
 
 class VideoVisionBackbone(MolmoVisionBackbone):
-    def __init__(self, config: VisionBackboneConfig, llm_config, device=None):
+    def __init__(self, config: VideoVisionBackboneConfig, llm_config, device=None):
         super().__init__(config, llm_config, device)
 
     def forward(self, images: torch.Tensor, image_masks: torch.Tensor) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
@@ -431,9 +447,8 @@ class VideoVisionBackbone(MolmoVisionBackbone):
             )
 
         default_image_features = self.get_features_for_pool(image_features, cfg.image_pooling_h, cfg.image_pooling_w, cfg)
-
         if cfg.periodic_high_res_frame is None:
-            return default_image_features
+            return default_image_features, None
         else:
             high_res_image_features = self.get_features_for_pool(image_features, cfg.high_res_pooling_h, cfg.high_res_pooling_w, cfg)
             return default_image_features, high_res_image_features

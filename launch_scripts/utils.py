@@ -4,12 +4,14 @@ from typing import Dict
 from olmo.models.molmo.data_formatter import DataFormatter
 from olmo.data.data_loader import DataLoaderConfig
 from olmo.models.molmo.model_preprocessor import MultiModalPreprocessorConfig
+from olmo.models.video_olmo.video_olmo import VideoOlmoConfig, MultiModalVideoPreprocessorConfig
 from olmo.eval.inf_evaluator import InfDatasetEvaluatorConfig, EvaluatorConfig
+from olmo.eval.loss_evaluator import LossDatasetEvaluatorConfig
 from olmo.nn.image_vit import VitConfig
 from olmo.nn.llm import LlmConfig, AttentionType, LayerNormType
 from olmo.models.molmo.molmo import MolmoConfig
 from olmo.tokenizer import TokenizerConfig
-from olmo.nn.vision_backbone import VisionBackboneConfig
+from olmo.nn.vision_backbone import VisionBackboneConfig, VideoVisionBackboneConfig
 
 log = logging.getLogger(__name__)
 
@@ -34,6 +36,14 @@ DEBUG_MODEL = MolmoConfig(
     ),
     data_formatter=DataFormatter(),
     mm_preprocessor=MultiModalPreprocessorConfig(crop_mode="resize", max_crops=1)
+)
+
+
+VIDEO_DEBUG_MODEL = VideoOlmoConfig(
+    llm=DEBUG_MODEL.llm,
+    vision_backbone=VideoVisionBackboneConfig(vit=VitConfig(image_num_layers=1)),
+    data_formatter=DEBUG_MODEL.data_formatter,
+    mm_preprocessor=MultiModalVideoPreprocessorConfig(crop_mode="frame_sampling", max_crops=4)
 )
 
 
@@ -88,7 +98,7 @@ def get_evaluator(name) -> EvaluatorConfig:
         raise NotImplementedError(name)
 
 
-def get_evaluation(name, seq_len, max_examples, batch_size=8, for_inference=True,num_workers=2, device_batch_size=None) -> InfDatasetEvaluatorConfig:
+def get_evaluation(name, seq_len, max_examples, for_inference=True, num_workers=2, device_batch_size=None) -> InfDatasetEvaluatorConfig:
     """Gets the default evaluation config for task (or task:split string) `name`"""
     if ":" in name:
         name, split = name.split(":")
@@ -145,22 +155,31 @@ def get_evaluation(name, seq_len, max_examples, batch_size=8, for_inference=True
 
     ds = DataLoaderConfig(
         dataset=task_name, sequence_length=seq_len,
-        for_inference=for_inference,
         split=split, shuffle=True, 
         drop_last=max_examples is not None and max_examples >= 0,
         num_workers=num_workers, pad="to_max", pin_memory=True,
         seed=691203
     )
 
-    return InfDatasetEvaluatorConfig(
-        max_examples=max_examples,
-        device_batch_size=device_batch_size,
-        max_new_tokens=max_new_tokens,
-        evaluator=evaluator,
-        label="ai2_diagram" if "ai2_diagram" in name else name,
-        data=ds,
-        console_log_interval="${console_log_interval}"  # Use log interval in top-level config
-    )
+    if for_inference:
+        return InfDatasetEvaluatorConfig(
+            max_examples=max_examples,
+            device_batch_size=device_batch_size,
+            max_new_tokens=max_new_tokens,
+            evaluator=evaluator,
+            label="ai2_diagram" if "ai2_diagram" in name else name,
+            data=ds,
+            console_log_interval="${console_log_interval}"  # Use log interval in top-level config
+        )
+            
+    else:
+        return LossDatasetEvaluatorConfig(
+            max_examples=max_examples,
+            device_batch_size=device_batch_size,
+            label="ai2_diagram" if "ai2_diagram" in name else name,
+            data=ds,
+            console_log_interval="${console_log_interval}"  # Use log interval in top-level config
+        )
 
 
 DEFAULT_VISION_BACKBONE = VitConfig(

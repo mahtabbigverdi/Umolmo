@@ -211,9 +211,6 @@ class MultiModalVideoPreprocessorConfig(MultiModalPreprocessorConfig):
     candidate_sampling_fps: Tuple[float] = (0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0)
     """Candidate sampling fps to sample the frames from the video"""
 
-    periodic_high_res_frame: Optional[int] = None
-    """If set, the frame at this interval will be sampled at a higher resolution"""
-
     bi_directional_attn: Optional[str] = None
     """Allow bidirectional attention for some tokens"""
 
@@ -233,7 +230,8 @@ class MultiModalVideoPreprocessorConfig(MultiModalPreprocessorConfig):
 
     def build(self, tokenizer, vision_backbone_config: VisionBackboneConfig):
         h, w = vision_backbone_config.llm_patches_per_crop()
-        high_res_pooling_h, high_res_pooling_w = vision_backbone_config.llm_patches_per_crop_given_pool_size(self.high_res_pooling_w, self.high_res_pooling_h)
+        high_res_token_length_h, high_res_token_length_w = vision_backbone_config.llm_patches_per_crop_given_pool_size(
+            vision_backbone_config.high_res_pooling_w, vision_backbone_config.high_res_pooling_h)
         vit = vision_backbone_config.vit
         return MultiModalVideoPreprocessor(
             tokenizer,
@@ -249,9 +247,9 @@ class MultiModalVideoPreprocessorConfig(MultiModalPreprocessorConfig):
             base_image_input_size=vit.image_default_input_size,
             image_pooling_w=vision_backbone_config.image_pooling_w,
             image_pooling_h=vision_backbone_config.image_pooling_h,
-            periodic_high_res_frame=self.periodic_high_res_frame,
-            high_res_token_length_w=high_res_pooling_w,
-            high_res_token_length_h=high_res_pooling_h,
+            periodic_high_res_frame=vision_backbone_config.periodic_high_res_frame,
+            high_res_token_length_w=high_res_token_length_w,
+            high_res_token_length_h=high_res_token_length_h,
             image_token_length_w=w,
             image_token_length_h=h,
             image_patch_size=vit.image_patch_size,
@@ -469,7 +467,6 @@ class VideoPreprocessor:
     for_inference: bool = False
     is_training: bool = False
     frame_sample_mode: str = "fps"
-    shuffle_messages: bool = False
     include_image: bool = False
     max_frames: int = 24
     candidate_sampling_fps: Tuple[float] = (0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0)
@@ -490,7 +487,7 @@ class VideoPreprocessor:
             example["video"] = frames[0]
 
         message_list, formatter_metadata = self.formater(example, self.is_training, self.for_inference, rng)
-        if self.shuffle_messages and isinstance(message_list[0], list):
+        if isinstance(message_list[0], list):
             # If there are multiple conversations for this example, shuffle their order
             # This might matter if we truncate the tokens to a max sequence length
             rng.shuffle(message_list)

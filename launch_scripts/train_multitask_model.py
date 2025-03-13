@@ -178,7 +178,6 @@ if __name__ == "__main__":
 
     # Fine-tuning settings
     model_cfg.llm.residual_dropout = 0.1
-    model_cfg.llm.residual_dropout = 0.1
     model_cfg.llm.response_residual_dropout = 0.0
     model_cfg.data_formatter.prompt_templates = "uber_model"
     model_cfg.data_formatter.message_format = "role"

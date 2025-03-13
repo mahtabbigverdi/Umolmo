@@ -11,10 +11,11 @@ from torch.distributed.fsdp import fully_shard
 
 
 from olmo.config import D
-from olmo.models.molmo.molmo import MolmoConfig, Molmo
+from olmo.models.model import ModelBase
+from olmo.models.molmo.molmo import MolmoConfig
 from olmo.models.molmo.data_formatter import DataFormatter
 
-from olmo.nn.vision_backbone import VideoVisionBackbone, VisionBackboneConfig
+from olmo.nn.vision_backbone import VideoVisionBackbone, VideoVisionBackboneConfig
 
 from olmo.models.video_olmo.video_preprocessor import VideoPreprocessor
 from olmo.models.video_olmo.video_preprocessor import MultiModalVideoPreprocessorConfig
@@ -33,9 +34,10 @@ from olmo.nn.beam_search import BeamSearch, Constraint, FinalSequenceScorer, Sam
 @dataclasses.dataclass
 class VideoOlmoConfig(MolmoConfig):
     """VideoOlmo model configuration"""
-    # _model_name: ClassVar[str]
-
     _model_name: ClassVar[str] = "video_olmo"
+
+    vision_backbone: Optional[VideoVisionBackboneConfig] = field(default_factory=VideoVisionBackboneConfig)
+    """Vision embedding module to get image features"""
 
     mm_preprocessor: MultiModalVideoPreprocessorConfig = field(default_factory=MultiModalVideoPreprocessorConfig)
     """How to crop images and encoding jointly with text"""
@@ -47,7 +49,7 @@ class VideoOlmoConfig(MolmoConfig):
             config = convert_legacy_config(config)
         config.llm = LlmConfig.update_legacy_settings(config.llm)
         if config.vision_backbone is not None:
-            config.vision_backbone = VisionBackboneConfig.update_legacy_settings(config.vision_backbone)
+            config.vision_backbone = VideoVisionBackboneConfig.update_legacy_settings(config.vision_backbone)
         config.data_formatter = DataFormatter.update_legacy_settings(config.data_formatter)
         config.mm_preprocessor = MultiModalVideoPreprocessorConfig.update_legacy_settings(config.mm_preprocessor)
         return config
@@ -71,7 +73,6 @@ class VideoOlmoConfig(MolmoConfig):
             for_inference=for_inference,
             is_training=is_training,
             frame_sample_mode=self.mm_preprocessor.frame_sample_mode,
-            shuffle_messages=self.mm_preprocessor.shuffle_messages,
             max_frames=self.mm_preprocessor.get_max_frames(),
             candidate_sampling_fps=self.mm_preprocessor.candidate_sampling_fps,
         )
@@ -84,10 +85,11 @@ class VideoOlmoConfig(MolmoConfig):
         return self.llm.max_sequence_length
 
 
-class VideoOlmo(Molmo):
+class VideoOlmo(ModelBase):
     """VideoOlmo model"""
 
     def __init__(self, config: VideoOlmoConfig, device=None):
+        super().__init__()
         self.config = config
         self.__cache = BufferCache()
         self.transformer: Llm = self.config.llm.build(self.__cache, device)
@@ -102,6 +104,153 @@ class VideoOlmo(Molmo):
                 tokenizer.DEFAULT_IM_START_TOKEN,
                 tokenizer.DEFAULT_IM_END_TOKEN,
             ]], dtype=torch.long)
+
+    def reset_parameters(self):
+        """Re-initialize the weights from scratch"""
+        self.transformer.reset_parameters()
+        if self.vision_backbone is not None:
+            self.vision_backbone.reset_parameters()
+
+    def reset_with_pretrained_weights(self):
+        """Re-initialize the weights, possibly loading pretrained weights for the LLM and ViT"""
+        self.transformer.reset_with_pretrained_weights()
+        if self.vision_backbone is not None:
+            self.vision_backbone.reset_with_pretrained_weights()
+
+    def apply_activation_checkpointing(self):
+        """Enable activation checkpointing"""
+        self.transformer.apply_activation_checkpointing()
+        if self.vision_backbone is not None:
+            self.vision_backbone.apply_activation_checkpointing()
+
+    def apply_compile(self, **compile_kwargs):
+        """Compile the model with `torch.compile`"""
+        self.transformer.apply_compile(**compile_kwargs)
+        self.vision_backbone.apply_compile(**compile_kwargs)
+
+    def warmup_cache(self, device):
+        """Pre-fill the buffer-cache"""
+        if self.transformer.blocks[0].rotary_emb is not None:
+            self.transformer.blocks[0].rotary_emb.warmup_cache(device)
+
+    def apply_fsdp2(self, **fully_shard_kwargs):
+        """Fully shard this model using `fully_shard`"""
+        if self.vision_backbone is not None:
+            self.vision_backbone.apply_fsdp2(**fully_shard_kwargs)
+        self.transformer.apply_fsdp2(**fully_shard_kwargs)
+        fully_shard(self, **fully_shard_kwargs)
+
+    def get_fsdp_wrap_policy(self, wrap_strategy: Optional[FSDPWrapStrategy] = None):
+        """Get a FSDP1 wrap policy for this model."""
+        if wrap_strategy is None:
+            return None
+
+        # The 'recurse' mode for the wrap function does not behave like you'd expect.
+        # Even if we return False, it may still recurse because PyTorch does what it wants,
+        # not what you want. This causes issues when, for example, we want to wrap 'ff_out' (a linear layer)
+        # but not other linear layers within a block.
+        # So we have to explicitly tell PyTorch which linear layers to wrap, and we also just
+        # return True in 'recurse' mode for simplicity.
+        size_based_module_to_wrap = {self.transformer.wte}
+        if hasattr(self.transformer, "ff_out"):
+            size_based_module_to_wrap.add(self.transformer.ff_out)
+        if hasattr(self.transformer, "ln_f"):
+            size_based_module_to_wrap.add(self.transformer.ln_f)
+        if self.vision_backbone is not None:
+            size_based_module_to_wrap.add(self.vision_backbone.image_pooling_2d)
+            size_based_module_to_wrap.add(self.vision_backbone.image_projector)
+
+        wrap_layer_names = (OLMoBlock, ResidualAttentionBlock, VideoVisionBackbone, VisionTransformer)
+
+        if wrap_strategy == FSDPWrapStrategy.by_block:
+
+            def fsdp_wrap_fn(module, recurse: bool = True, nonwrapped_numel: int = 0):
+                del nonwrapped_numel
+                wrap = isinstance(module, wrap_layer_names)
+                if recurse:
+                    return True
+                else:
+                    return wrap
+
+            return fsdp_wrap_fn
+        elif wrap_strategy == FSDPWrapStrategy.by_block_and_size:
+
+            def fsdp_wrap_fn(module, recurse: bool = True, nonwrapped_numel: int = 0):
+                del nonwrapped_numel
+                wrap = isinstance(module, wrap_layer_names) or module in size_based_module_to_wrap
+                if recurse:
+                    return True
+                else:
+                    return wrap
+
+            return fsdp_wrap_fn
+
+        elif wrap_strategy == FSDPWrapStrategy.size_based:
+            from torch.distributed.fsdp.wrap import size_based_auto_wrap_policy
+
+            return size_based_auto_wrap_policy
+        else:
+            raise NotImplementedError(wrap_strategy)
+
+    def get_connector_parameters(self) -> Iterator[torch.Tensor]:
+        parameters = list(self.vision_backbone.get_connector_parameters())
+        if self.config.llm.additional_vocab_size:
+            parameters.append(self.transformer.wte.new_embedding)
+        return parameters
+
+    def get_vit_parameters(self) -> Iterator[torch.Tensor]:
+        if self.vision_backbone is None:
+            return []
+        else:
+            return self.vision_backbone.image_vit.parameters()
+
+    def get_llm_parameters(self) -> Iterator[torch.Tensor]:
+        if self.config.llm.additional_vocab_size:
+            return (
+                param for param in self.transformer.parameters() if
+                param is not self.transformer.wte.new_embedding
+            )
+        else:
+            return self.llm.parameters()
+
+    def get_non_weight_decay_params(self) -> Iterator[torch.Tensor]:
+        exclude_list = {
+            "wte", "attn_norm", "ff_norm",
+            "pre_attn_norm", "post_attn_norm",
+            "pre_ff_norm", "post_ff_norm",
+            "ln_f",
+            "pre_ln",
+            "attention_norm", "ffn_norm",
+            "lambda1", "lambda2",
+            "positional_embedding", "class_embedding", "patch_embedding",
+        }
+        return (param for name, param in self.named_parameters() if
+                any(part in exclude_list for part in name.split(".")))
+
+    @property
+    def device(self) -> torch.device:
+        return self.transformer.ln_f.weight.device
+
+
+    def num_params(self, include_embedding: bool = True, include_inactive_params: bool = True) -> int:
+        """Get the total number of parameters."""
+        params = (np for np in self.named_parameters())
+        if not include_embedding:
+            params = filter(  # type: ignore
+                lambda np: ".wte." not in np[0] and ".wpe." not in np[0],
+                params,
+            )
+        if not include_inactive_params:
+            # Need to reduce blocks to the number of experts that are selected
+            # If not dropless 'transformer.blocks.0.ffn.experts.mlp.w1' has shape (total_experts, in_dim, out_dim)
+            # change to 'transformer.blocks.0.ffn.experts.mlp.w1' with shape (selected_experts, in_dim, out_dim)
+            # If dropless, the total_experts & out_dim are combined into one dimension
+            idx = self.config.llm.moe_top_k
+            if self.config.llm.moe_dropless:
+                idx *= self.transformer.blocks[1].moe_args.ffn_hidden_size
+            params = [(np[0], np[1][:idx]) if "experts.mlp" in np[0] else np for np in params]  # type: ignore
+        return sum(p.numel() for _, p in params)
+
 
     def forward(
         self,

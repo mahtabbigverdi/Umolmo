@@ -6,7 +6,7 @@ from typing import cast, List
 import omegaconf
 from omegaconf import OmegaConf
 
-from launch_scripts.utils import get_evaluation, DEBUG_MODEL
+from launch_scripts.utils import get_evaluation, VIDEO_DEBUG_MODEL
 from launch_scripts.train_multitask_model import get_training_mixture
 
 from olmo.train.optim import OptimizerType, OptimizerConfig, SchedulerConfig, SchedulerType
@@ -47,7 +47,7 @@ if __name__ == "__main__":
     parser.add_argument("--wandb_run_name", default="multitask_video", type=str)
     parser.add_argument("--seq_len", default=2048, type=int)
     parser.add_argument("--max_eval_examples", default=96, type=int)
-    parser.add_argument("--max_eval_examples_inf", default=5000, type=int)
+    parser.add_argument("--max_eval_examples_inf", default=-1, type=int)
     parser.add_argument("--max_crops", default=10, type=int)
     parser.add_argument("--global_batch_size", default=32, type=int)
     parser.add_argument("--device_eval_batch_size", default=4, type=int)
@@ -99,7 +99,8 @@ if __name__ == "__main__":
 
     debug = args.checkpoint in ["debug"]
     if debug:
-        model_cfg = DEBUG_MODEL
+        checkpoint = None
+        model_cfg = VIDEO_DEBUG_MODEL
         global_batch_size = args.global_batch_size
         model_init = None
         inf_eval_interval = 20000
@@ -131,35 +132,34 @@ if __name__ == "__main__":
         assert eval_subset_batches > 0
         num_workers = args.num_workers
 
-    model_cfg.image_pooling_h = args.image_pooling_h
-    model_cfg.image_pooling_w = args.image_pooling_w
+    model_cfg.vision_backbone.image_pooling_h = args.image_pooling_h
+    model_cfg.vision_backbone.image_pooling_w = args.image_pooling_w
 
-    model_cfg.high_res_pooling_h = args.high_res_pooling_h
-    model_cfg.high_res_pooling_w = args.high_res_pooling_w
-    model_cfg.periodic_high_res_frame = args.periodic_high_res_frame
+    model_cfg.vision_backbone.high_res_pooling_h = args.high_res_pooling_h
+    model_cfg.vision_backbone.high_res_pooling_w = args.high_res_pooling_w
+    model_cfg.vision_backbone.periodic_high_res_frame = args.periodic_high_res_frame
 
     # Setting for the video training
-    model_cfg.crop_mode = "frame_sampling"
-    model_cfg.max_crops = args.max_crops
+    model_cfg.mm_preprocessor.crop_mode = "frame_sampling"
+    model_cfg.mm_preprocessor.max_crops = args.max_crops
 
-    model_cfg.ft_vit = not args.freeze_vit
-
-    # if args.seq_len >= model_cfg.max_sequence_length:
-    if args.seq_len != model_cfg.max_sequence_length:
-        model_cfg.max_sequence_length = args.seq_len
+    if args.seq_len != model_cfg.llm.max_sequence_length:
+        model_cfg.llm.max_sequence_length = args.seq_len
 
     # Fine-tuning settings
-    model_cfg.residual_dropout = 0.1
-    model_cfg.response_residual_dropout = 0.0
-    model_cfg.prompt_type = "uber_model"
-    model_cfg.message_formatting = "role"
-    model_cfg.system_prompt_kind = "demo_or_style"
-    model_cfg.multi_annotation_weighting = "root_subsegments"
+    model_cfg.llm.residual_dropout = 0.1
+    model_cfg.llm.response_residual_dropout = 0.0
+    model_cfg.data_formatter.prompt_templates = "uber_model"
+    model_cfg.data_formatter.message_format = "role"
+    model_cfg.data_formatter.system_prompt = "demo_or_style"
+    model_cfg.mm_preprocessor.loss_token_weighting = "root_subsegments"
 
     root_size_mixture: List[RootSizeMixture] = []
     for name, submixture, rate in tasks:
         submixture = get_training_mixture(submixture)
         root_size_mixture.append(RootSizeMixture(rate, submixture))
+
+    # TODO: find a way to pass for for_inference to the correct config
 
     evaluations = []
     inf_evaluators = []
@@ -169,7 +169,8 @@ if __name__ == "__main__":
             args.seq_len,
             max_examples=max_eval_examples,
             num_workers=num_workers,
-            for_inference=False
+            for_inference=False,
+            device_batch_size=args.device_eval_batch_size,
         )
         evaluation.data.persistent_workers = True
         evaluations.append(evaluation)
@@ -179,7 +180,8 @@ if __name__ == "__main__":
             args.seq_len,
             max_examples=args.max_eval_examples_inf,
             num_workers=num_workers,
-            for_inference=True
+            for_inference=True,
+            device_batch_size=args.device_inf_batch_size,
         )
         inf_evaluation.data.persistent_workers = True
         inf_evaluators.append(inf_evaluation)
@@ -190,7 +192,6 @@ if __name__ == "__main__":
 
     cfg = TrainConfig(
         run_name=args.wandb_run_name,
-        no_pre_train_checkpoint=True,
         save_folder="debug_run" if debug else omegaconf.MISSING,
         seed=6198,
         dry_run=False,
@@ -205,17 +206,14 @@ if __name__ == "__main__":
         allow_resume=True,
         model=model_cfg,
         save_overwrite=debug,
-        save_dataloader_state=False,
         data=DataLoaderConfig(
             root_size_mixture=root_size_mixture,
-            for_inference=False,
             shuffle=True,
             split="train",
             drop_last=True,
             sequence_length=args.seq_len,
             num_workers=num_workers,
             pad="to_max",
-            shuffle_messages=True,
             pin_memory=True,
             seed=50189,
         ),
@@ -255,10 +253,7 @@ if __name__ == "__main__":
         initial_model_checkpoint=checkpoint,
         save_interval=save_interval,
         save_num_checkpoints_to_keep=1,
-        save_interval_unsharded="${max_duration}",
         global_train_batch_size=global_batch_size,
-        device_inf_eval_batch_size=args.device_inf_batch_size,
-        device_eval_batch_size=args.device_eval_batch_size,
         device_train_microbatch_size=args.device_train_batch_size,
         time_limit=None,
         max_duration=duration,
@@ -272,9 +267,9 @@ if __name__ == "__main__":
         softmax_auxiliary_loss_scale=1e-4,
         eval_interval=eval_interval,
         evaluators=evaluations,
-        eval_subset_num_batches=eval_subset_batches,
         inf_eval_interval=inf_eval_interval,
-        inf_evaluators=inf_evaluators
+        inf_evaluators=inf_evaluators,
+        save_final_unsharded_checkpoint=False,
     )
 
     conf = OmegaConf.create(cfg)

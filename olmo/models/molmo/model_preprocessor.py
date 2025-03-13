@@ -416,14 +416,14 @@ class MultiModalPreprocessor:
     def image_to_patches_and_tokens(
         self,
         image: ImageInput,
+        image_token_length_w: int,
+        image_token_length_h: int,
         is_training=False,
         rng=None
     ):
         max_crops = self.max_crops
         overlap_margins = self.overlap_margins
         base_image_input_size = self.base_image_input_size
-        image_token_length_w = self.image_token_length_w
-        image_token_length_h = self.image_token_length_h
         image_patch_size = self.image_patch_size
 
         if isinstance(base_image_input_size, int):
@@ -437,7 +437,7 @@ class MultiModalPreprocessor:
         original_image_h, original_image_w = image.shape[:2]
         crop_size = base_image_input_size[0]
 
-        if self.crop_mode == "resize":
+        if self.crop_mode in ["resize", "frame_sampling"]:
             resized, img_mask = self.resize_image(image, base_image_input_size, is_training, rng)
             resized = self._normalize(resized)
             patches = pixels_to_patches(resized, image_patch_size)
@@ -457,7 +457,8 @@ class MultiModalPreprocessor:
                 [self.image_end_token_id],
             ]
             joint = np.concatenate(joint, 0, dtype=np.int32)
-            return np.expand_dims(patches, 0), joint, None, img_mask
+            return np.expand_dims(patches, 0), joint, None, np.expand_dims(img_mask, 0)
+        
         if self.crop_mode in ["overlap-and-resize-c2", "overlap-and-resize"]:
             # Discard this many patches from the (left/top, right/bottom) of crops
             left_margin, right_margin = overlap_margins
@@ -635,9 +636,11 @@ class MultiModalPreprocessor:
         self,
         image_tokens: np.ndarray,
         patch_order: np.ndarray,
+        image_token_length_w: int,
+        image_token_length_h: int,
     ):
         """Converts `patch_order` into an array mapping patch_id -> token_position"""
-        tokens_per_image = self.image_token_length_w * self.image_token_length_h
+        tokens_per_image = image_token_length_w * image_token_length_h
 
         image_input_idx = image_tokens == self.image_patch_token_id
         image_input_idx = np.nonzero(image_input_idx)[0].astype(np.int32)
@@ -646,7 +649,6 @@ class MultiModalPreprocessor:
 
         if patch_order is not None:
             patch_order = np.reshape(patch_order, [-1])
-            n_patches = patch_order.shape[0]
 
             valid = patch_order >= 0
             n_valid_patches = valid.sum()
@@ -671,7 +673,7 @@ class MultiModalPreprocessor:
         image_input_idx = np.reshape(image_input_idx, [-1, tokens_per_image])
         return image_input_idx
 
-    def preprocess(self, image, is_training: bool, rng=None):
+    def preprocess(self, image, is_training: bool, image_token_length_w: int, image_token_length_h: int, rng=None):
         """Preprocesses a single image
 
         Returns:
@@ -685,10 +687,12 @@ class MultiModalPreprocessor:
                           if the image mask is not being used.
         """
         crops, image_tokens, patch_ordering, img_mask = self.image_to_patches_and_tokens(
-            image, is_training, rng)
+            image, image_token_length_w, image_token_length_h, is_training, rng)
         patch_idx = self.build_image_input_idx(
             image_tokens,
             patch_ordering,
+            image_token_length_w,
+            image_token_length_h,
         )
         return crops, image_tokens, patch_idx, img_mask
 
@@ -811,7 +815,7 @@ class MultiModalPreprocessor:
 
         for ix in range(n):
             token_ix = image_idx[ix]
-            crops, image_tokens, patch_idx, img_mask = self.preprocess(images[ix], is_training, rng)
+            crops, image_tokens, patch_idx, img_mask = self.preprocess(images[ix], is_training, self.image_token_length_w, self.image_token_length_h, rng)
 
             if token_ix == -1:  # -1 is an image inserted at the very start
                 start = 0
