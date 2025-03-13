@@ -22,7 +22,7 @@ from scripts.train import run_trainer
 log = logging.getLogger("train")
 
 
-AUX = [
+AUX_EXCEPT_DOCS = [
     # Supervised datasets we want eval on
     "coco_2014_vqa_multi",
     "text_vqa",
@@ -42,15 +42,33 @@ AUX = [
     "tally_qa",
 
     ("pixmo_clocks", 250000),  # Downsample since it is huge
-    "pixmo_docs_charts",
-    "pixmo_docs_tables",
-    "pixmo_docs_other",
-    "pixmo_docs_diagrams",
 
     # # Other synthetic data, also downsampled since they are huge
     ("dv_qa", 10000),
     ("figure_qa", 10000),
     ("plot_qa", 20000),
+]
+
+
+AUX = AUX_EXCEPT_DOCS + [
+    "pixmo_docs_charts",
+    "pixmo_docs_tables",
+    "pixmo_docs_other",
+    "pixmo_docs_diagrams",
+]
+
+
+AUX_COSYN_V1 = AUX_EXCEPT_DOCS + [
+    "cosyn_chart_exp",
+    "cosyn_chemical_exp",
+    # "cosyn_circuit_exp", # quality not good
+    "cosyn_diagram_exp",
+    "cosyn_document",
+    # "cosyn_graphic_exp", # quality not good
+    "cosyn_math_exp",
+    "cosyn_music_exp",
+    # "cosyn_nutrition_exp", # zero-shot evaluation dataset
+    "cosyn_table_exp",
 ]
 
 
@@ -128,6 +146,37 @@ if __name__ == "__main__":
             ["aux", aux, 0.50],
             ["pointing", [
                 "pixmo_points",
+                "pixmo_count",
+                "pixmo_points_high_freq",
+                "pixmo_points_counting",
+                "pixmo_points_high_freq_counting",
+                "pixmo_count_counting",
+            ], 0.35]
+        ]
+    elif args.mixture in ["3.3-synthetic"]:
+        aux = list(AUX_COSYN_V1)
+        eval_tasks = [
+            "chart_qa",
+            "chart_qa_exp",
+            "info_qa",
+            "doc_qa",
+            "ai2_diagram_v2_mix_transparent",
+            "coco_2014_vqa_multi",
+            "pixmo_clocks",
+            "android_control_ll",
+            "pointing_eval:test",
+        ]
+        tasks = [
+            ["demo", [
+                "pixmo_ask_model_anything",
+                ("pixmo_cap", 50000),
+                "pixmo_cap_qa_as_user_qa",
+                "pixmo_pointing_explanations"
+            ], 0.15],
+            ["aux", aux, 0.50],
+            ["pointing", [
+                "pixmo_points",
+                "cosyn_point",
                 "pixmo_count",
                 "pixmo_points_high_freq",
                 "pixmo_points_counting",

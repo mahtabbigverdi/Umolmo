@@ -54,7 +54,7 @@ def main():
                 "pixmo_count_counting:validation",
                 "pointing_eval:test",
             ]
-        elif task == "high-res":
+        elif task in ["high-res", "high-res-exp"]:
             # high-res validation tasks
             tasks += [
                 "coco_2014_vqa_multi",
@@ -72,6 +72,8 @@ def main():
                 "math_vista_v2",
                 "pixmo_clocks:validation"
             ]
+            if task == "high-res-exp":
+                tasks += ["chart_qa_exp"]
         elif task == "test-high-res":
             # high-res test tasks
             tasks = [
