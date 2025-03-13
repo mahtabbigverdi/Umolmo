@@ -255,14 +255,14 @@ def select_tiling(h, w, patch_size, max_num_crops):
 def pixels_to_patches(array, patch_size):
     """Reshape an image of [h, w, 3] -> [n_patches, pixels_per_patch]"""
     if len(array.shape) == 3:
-        w, h, c = array.shape
+        h, w, c = array.shape
         h_patches = h//patch_size
         w_patches = w//patch_size
         array = np.reshape(array, [h_patches, patch_size, w_patches, patch_size, c])
         array = np.transpose(array, [0, 2, 1, 3, 4])
         array = np.reshape(array, [h_patches*w_patches, patch_size*patch_size*c])
     else:
-        w, h = array.shape
+        h, w = array.shape
         h_patches = h//patch_size
         w_patches = w//patch_size
         array = np.reshape(array, [h_patches, patch_size, w_patches, patch_size])
@@ -274,7 +274,7 @@ def pixels_to_patches(array, patch_size):
 def batch_pixels_to_patches(array, patch_size):
     """Reshape images of [n_images, h, w, 3] -> [n_images, n_patches, pixels_per_patch]"""
     if len(array.shape) == 3:
-        n_crops, w, h = array.shape
+        n_crops, h, w = array.shape
         h_patches = h//patch_size
         w_patches = w//patch_size
         array = np.reshape(array, [n_crops, h_patches, patch_size, w_patches, patch_size])
@@ -282,7 +282,7 @@ def batch_pixels_to_patches(array, patch_size):
         array = np.reshape(array, [n_crops, h_patches*w_patches, patch_size*patch_size])
         return array
     else:
-        n_crops, w, h, c = array.shape
+        n_crops, h, w, c = array.shape
         h_patches = h//patch_size
         w_patches = w//patch_size
         array = np.reshape(array, [n_crops, h_patches, patch_size, w_patches, patch_size, c])
@@ -442,6 +442,7 @@ class MultiModalPreprocessor:
             resized = self._normalize(resized)
             patches = pixels_to_patches(resized, image_patch_size)
             img_mask = pixels_to_patches(img_mask, image_patch_size)
+            img_mask = img_mask.astype(np.float32).mean(axis=-1)
 
             per_row = np.full(
                 (image_token_length_w,),

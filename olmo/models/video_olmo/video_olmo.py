@@ -36,6 +36,10 @@ class VideoOlmoConfig(MolmoConfig):
     """VideoOlmo model configuration"""
     _model_name: ClassVar[str] = "video_olmo"
 
+    @classmethod
+    def get_default_model_name(cls):
+        return "video_olmo"
+
     vision_backbone: Optional[VideoVisionBackboneConfig] = field(default_factory=VideoVisionBackboneConfig)
     """Vision embedding module to get image features"""
 

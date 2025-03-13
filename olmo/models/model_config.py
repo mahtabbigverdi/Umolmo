@@ -16,10 +16,12 @@ def get_model_types() -> Dict[str, Type['BaseModelConfig']]:
     # import here to avoid circular imports
     from olmo.models.he_molmo.he_molmo import HeMolmoConfig
     from olmo.models.molmo.molmo import MolmoConfig
+    from olmo.models.video_olmo.video_olmo import VideoOlmoConfig
 
     return {
         MolmoConfig._model_name: MolmoConfig,
         HeMolmoConfig._model_name: HeMolmoConfig,
+        VideoOlmoConfig._model_name: VideoOlmoConfig,
     }
 
 
@@ -77,6 +79,10 @@ class BaseModelConfig(BaseConfig):
         raise NotImplementedError()
 
     @classmethod
+    def get_default_model_name(cls):
+        return "molmo"
+
+    @classmethod
     def load(
         cls,
         path: PathOrStr,
@@ -90,7 +96,7 @@ class BaseModelConfig(BaseConfig):
             raw = raw[key]
 
         # Manually resolve the correct subclass using `model_name`
-        model_name = raw.get("model_name", "molmo")
+        model_name = raw.get("model_name", cls.get_default_model_name())
         model_types = get_model_types()
         if model_name not in model_types:
             raise ValueError(f"Unknown model type {model_name}")
