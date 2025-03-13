@@ -46,8 +46,10 @@ def get_dataset_by_name(dataset_name, split) -> Dataset:
         return PixMoAskModelAnything(split=split)
 
     # PixMo-CapQa
-    elif dataset_name in ["synthetic_qa_v3_as_user_qa", "pixmo_cap_qa"]:
+    elif dataset_name in ["synthetic_qa_v3", "pixmo_cap_qa"]:
         return PixMoCapQa(split=split)
+    elif dataset_name in ["synthetic_qa_v3_as_user_qa", "pixmo_cap_qa_as_user_qa"]:
+        return PixMoCapQa(split=split, style="user_qa")
 
     # PixMo-Cap
     if dataset_name in ["cockatoo_and_transcript_712k_sept6", "pixmo_cap_with_transcripts"]:

@@ -295,20 +295,21 @@ class PixMoCapQa(Dataset):
         filtered_dataset = filter_and_group_data(ds, filenames, check_sha)
         save_local_dataset(filtered_dataset, local_name, n_procs, n_val=n_val)
 
-    def __init__(self, split, prefix_how_many=True, keep_in_memory=False):
+    def __init__(self, split, prefix_how_many=True, keep_in_memory=False, style="synthetic_qa"):
         if split not in ["train", "validation"]:
             raise ValueError(f"Unknown split {split}")
         self.split = split
         self.prefix_how_many = prefix_how_many
         self.data = datasets.load_from_disk(
             join(PIXMO_DATASETS, "cap-qa"), keep_in_memory=keep_in_memory)[split]
+        self.style = style
 
     def __len__(self):
         return len(self.data)
 
     def get(self, item, rng):
         example = self.data[item]
-        messages = [dict(messages=msg, style="synthetic_qa") for msg in example["messages"]]
+        messages = [dict(messages=msg, style=self.style) for msg in example["messages"]]
 
         ex = dict(
             image=example["image"],
