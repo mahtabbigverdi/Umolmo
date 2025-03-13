@@ -4,44 +4,29 @@ from os.path import join, exists
 from typing import cast, List
 
 import omegaconf
-import torch.distributed as dist
-import torch.multiprocessing as mp
 from omegaconf import OmegaConf
 
 from launch_scripts.utils import get_evaluation, DEBUG_MODEL
 from launch_scripts.train_multitask_model import get_training_mixture
 
-from olmo import TrainConfig
-from olmo.config import DataConfig, \
-    ModelConfig, WandbConfig, OptimizerConfig, OptimizerType, SchedulerConfig, SchedulerType, \
-    BatchDivisor, SpeedMonitorConfig, ActivationCheckpointingStrategy, FSDPConfig, FSDPWrapStrategy, \
-    FSDPPrecision, RootSizeMixture, CompilerConfig
-from olmo.torch_util import get_world_size
-from olmo.util import (
-    add_cached_path_clients,
-    clean_opt,
-    prepare_cli_environment,
+from olmo.train.optim import OptimizerType, OptimizerConfig, SchedulerConfig, SchedulerType
+from olmo.train.trainer_config import (
+    WandbConfig, BatchDivisor, SpeedMonitorConfig,
+    FSDPConfig, FSDPPrecision, CompilerConfig, TrainConfig
 )
-from scripts.train import main as train
+
+from olmo.models.model import FSDPWrapStrategy
+from olmo.models.video_olmo.video_olmo import VideoOlmoConfig
+from olmo.data.data_loader import DataLoaderConfig, RootSizeMixture
+from olmo.torch_util import get_world_size
+from olmo.util import clean_opt, prepare_torchrun_environment, select_checkpoint
+from scripts.train import run_trainer
 
 log = logging.getLogger("train")
 
 
 if __name__ == "__main__":
-    try:
-        mp.set_start_method("spawn", force=True)
-    except RuntimeError as e:
-        print(f"failed to set multiprocessing start method: {e}")
-    log.info(f"Multiprocessing start method set to '{mp.get_start_method()}'")
-
-    # Initialize process group.
-    dist.init_process_group(backend="nccl")
-    log.info("Process group initialized")
-
-    prepare_cli_environment()
-    log.info("CLI environment prepared")
-
-    add_cached_path_clients()
+    prepare_torchrun_environment()
 
     parser = argparse.ArgumentParser(prog="Train a multitask model")
     parser.add_argument("mixture", help="Name of datset mixture to train on")
@@ -106,7 +91,7 @@ if __name__ == "__main__":
 
     debug = args.checkpoint in ["debug"]
     if debug:
-        model_cfg = DEBUG_MODEL
+        model_cfg = VIDEO_DEBUG_MODEL
         global_batch_size = args.global_batch_size
         model_init = None
         inf_eval_interval = 20000
@@ -114,61 +99,55 @@ if __name__ == "__main__":
         save_interval = 500
         log_interval = args.log_interval
         eval_examples = 16
-        max_inf_examples = 16
+        max_eval_examples = 16
         duration = 30000
         eval_subset_batches = 4
         num_workers = 0
     else:
         global_batch_size = args.global_batch_size
-        max_inf_examples = args.max_inf_examples
+        max_eval_examples = args.max_eval_examples
         eval_examples = 256
         log_interval = args.log_interval
         eval_interval = 2000
         save_interval = 2000
         duration = args.duration
         inf_eval_interval = 2000  # Hack - never trigger inf eval
-        model_init = args.checkpoint
+        checkpoint = select_checkpoint(args.checkpoint)
         if exists(join(args.checkpoint, "model.yaml")):
-            model_cfg = ModelConfig.load(join(args.checkpoint, "model.yaml"))
+            model_cfg = VideoOlmoConfig.load(join(checkpoint, "model.yaml"))
         else:
-            model_cfg = ModelConfig.load(join(args.checkpoint, "config.yaml"), key="model")
-
-        eval_subset_batches = eval_examples//(args.device_eval_batch_size*get_world_size())
-        logging.info(f"Setting eval subset batches to {eval_subset_batches}")
-        assert eval_subset_batches > 0
+            model_cfg = VideoOlmoConfig.load(join(checkpoint, "config.yaml"), key="model")
         num_workers = 2
 
     model_cfg.bi_directional_attn = args.bi_directional_attn
     if model_cfg.bi_directional_attn:
         log.info(f"Setting bi-directional attention to {model_cfg.bi_directional_attn}")
 
-    model_cfg.image_pooling_h = args.image_pooling_h
-    model_cfg.image_pooling_w = args.image_pooling_w
-    log.info(f"Setting image pooling to {model_cfg.image_pooling_h}x{model_cfg.image_pooling_w}")
+    model_cfg.vision_backbone.image_pooling_h = args.image_pooling_h
+    model_cfg.vision_backbone.image_pooling_w = args.image_pooling_w
 
-    # Setting for the video training
-    model_cfg.crop_mode = args.crop_mode
-    model_cfg.max_frames = args.max_frames
-    model_cfg.max_crops = args.max_crops
-    model_cfg.frame_sample_mode = args.frame_sample_mode
-    model_cfg.candidate_sampling_fps = args.candidate_sampling_fps
-    max_crops = model_cfg.get_max_crops()
-    log.info(
-        f"Sample_mode: {model_cfg.frame_sample_mode}, max frames: {model_cfg.max_frames}, candidate_fps: {model_cfg.candidate_sampling_fps}, "
-        f"crop_mode: {model_cfg.crop_mode}, max_crops: {max_crops}"
-    )
+    model_cfg.mm_preprocessor.crop_mode = args.crop_mode
+    model_cfg.mm_preprocessor.max_crops = args.max_crops
+    model_cfg.mm_preprocessor.max_frames = args.max_frames
 
-    if args.seq_len >= model_cfg.max_sequence_length:
-        model_cfg.max_sequence_length = args.seq_len
-    log.info(f"Max sequence length to {model_cfg.max_sequence_length}")
+    model_cfg.mm_preprocessor.frame_sample_mode = args.frame_sample_mode
+    model_cfg.mm_preprocessor.candidate_sampling_fps = args.candidate_sampling_fps
+    max_crops = model_cfg.mm_preprocessor.get_max_crops()
+    # log.info(
+    #     f"Sample_mode: {model_cfg.frame_sample_mode}, max frames: {model_cfg.max_frames}, candidate_fps: {model_cfg.candidate_sampling_fps}, "
+    #     f"crop_mode: {model_cfg.crop_mode}, max_crops: {max_crops}"
+    # )
+
+    if args.seq_len != model_cfg.llm.max_sequence_length:
+        model_cfg.llm.max_sequence_length = args.seq_len
 
     # Fine-tuning settings
-    model_cfg.residual_dropout = 0.1
-    model_cfg.response_residual_dropout = 0.0
-    model_cfg.prompt_type = "uber_model"
-    model_cfg.message_formatting = "role"
-    model_cfg.system_prompt_kind = "demo_or_style"
-    model_cfg.multi_annotation_weighting = "root_subsegments"
+    model_cfg.llm.residual_dropout = 0.1
+    model_cfg.llm.response_residual_dropout = 0.0
+    model_cfg.data_formatter.prompt_templates = "uber_model"
+    model_cfg.data_formatter.message_format = "role"
+    model_cfg.data_formatter.system_prompt = "demo_or_style"
+    model_cfg.mm_preprocessor.loss_token_weighting = "root_subsegments"
 
     root_size_mixture: List[RootSizeMixture] = []
     for name, submixture, rate in tasks:
@@ -180,16 +159,13 @@ if __name__ == "__main__":
         evaluation = get_evaluation(
             task,
             args.seq_len,
-            max_examples=max_inf_examples,
+            max_examples=args.max_eval_examples_inf,
             num_workers=num_workers,
             for_inference=True,
+            device_batch_size=args.device_inf_batch_size,
         )
         evaluation.data.persistent_workers = True
         evaluations.append(evaluation)
-
-    # import os
-    # wandb_entity = os.environ.get("WANDB_ENTITY", "prior-ai2")
-    # wandb_project = os.environ.get("WANDB_PROJECT", "video_olmo")
 
     cfg = TrainConfig(
         run_name=args.wandb_run_name,
@@ -209,7 +185,7 @@ if __name__ == "__main__":
         model=model_cfg,
         save_overwrite=debug,
         save_dataloader_state=False,
-        data=DataConfig(
+        data=DataLoaderConfig(
             root_size_mixture=root_size_mixture,
             for_inference=False,
             shuffle=True,
@@ -218,7 +194,6 @@ if __name__ == "__main__":
             sequence_length=args.seq_len,
             num_workers=num_workers,
             pad="to_max",
-            shuffle_messages=True,
             pin_memory=True,
             seed=50189,
         ),
@@ -239,7 +214,6 @@ if __name__ == "__main__":
             connector_eps=1e-6,
             vit_eps=1e-6,
             llm_eps=1e-6,
-            metrics_log_interval=20
         ),
         scheduler=SchedulerConfig(
             name=SchedulerType.multimodal,
@@ -255,13 +229,10 @@ if __name__ == "__main__":
             precision=FSDPPrecision.float
         ),
         load_path=None,
-        initial_model_checkpoint=None if "debug" in args.checkpoint else args.checkpoint,
+        initial_model_checkpoint=checkpoint,
         save_interval=save_interval,
         save_num_checkpoints_to_keep=1,
-        save_interval_unsharded="${max_duration}",
         global_train_batch_size=global_batch_size,
-        device_inf_eval_batch_size=args.device_inf_batch_size,
-        device_eval_batch_size=args.device_eval_batch_size,
         device_train_microbatch_size=args.device_train_batch_size,
         time_limit=None,
         max_duration=duration,
@@ -273,12 +244,11 @@ if __name__ == "__main__":
         speed_monitor=SpeedMonitorConfig(window_size=20),
         softmax_auxiliary_loss=True,
         softmax_auxiliary_loss_scale=1e-4,
-        activation_checkpointing=ActivationCheckpointingStrategy.whole_layer,
         eval_interval=eval_interval,
         inf_eval_interval=inf_eval_interval,
         inf_evaluators=evaluations,
-        eval_subset_num_batches=eval_subset_batches,
         evaluators=[],
+        save_final_unsharded_checkpoint=True,
     )
 
     conf = OmegaConf.create(cfg)
@@ -286,4 +256,4 @@ if __name__ == "__main__":
         overrides = [clean_opt(arg) for arg in other_args]
         conf = OmegaConf.merge(conf, OmegaConf.from_dotlist(overrides))
     cfg = cast(TrainConfig, OmegaConf.to_object(conf))
-    train(cfg)
+    run_trainer(cfg)

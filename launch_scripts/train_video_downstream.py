@@ -22,19 +22,6 @@ from olmo.torch_util import get_world_size
 from olmo.util import clean_opt, prepare_torchrun_environment, select_checkpoint
 from scripts.train import run_trainer
 
-# from olmo import TrainConfig
-# from olmo.config import DataConfig, \
-#     ModelConfig, WandbConfig, OptimizerConfig, OptimizerType, SchedulerConfig, SchedulerType, \
-#     BatchDivisor, SpeedMonitorConfig, ActivationCheckpointingStrategy, FSDPConfig, FSDPWrapStrategy, \
-#     FSDPPrecision, RootSizeMixture, CompilerConfig
-# from olmo.torch_util import get_world_size
-# from olmo.util import (
-#     add_cached_path_clients,
-#     clean_opt,
-#     prepare_cli_environment,
-# )
-# from scripts.train import main as train
-
 log = logging.getLogger("train")
 
 
@@ -110,7 +97,6 @@ if __name__ == "__main__":
         eval_examples = 16
         max_eval_examples = 16
         duration = 30000
-        eval_subset_batches = 4
         num_workers = 0
     else:
         global_batch_size = args.global_batch_size
@@ -126,10 +112,6 @@ if __name__ == "__main__":
             model_cfg = VideoOlmoConfig.load(join(checkpoint, "model.yaml"))
         else:
             model_cfg = VideoOlmoConfig.load(join(checkpoint, "config.yaml"), key="model")
-
-        eval_subset_batches = eval_examples//(args.device_eval_batch_size*get_world_size())
-        logging.info(f"Setting eval subset batches to {eval_subset_batches}")
-        assert eval_subset_batches > 0
         num_workers = args.num_workers
 
     model_cfg.vision_backbone.image_pooling_h = args.image_pooling_h
@@ -158,8 +140,6 @@ if __name__ == "__main__":
     for name, submixture, rate in tasks:
         submixture = get_training_mixture(submixture)
         root_size_mixture.append(RootSizeMixture(rate, submixture))
-
-    # TODO: find a way to pass for for_inference to the correct config
 
     evaluations = []
     inf_evaluators = []
@@ -268,7 +248,7 @@ if __name__ == "__main__":
         evaluators=evaluations,
         inf_eval_interval=inf_eval_interval,
         inf_evaluators=inf_evaluators,
-        save_final_unsharded_checkpoint=False,
+        save_final_unsharded_checkpoint=True,
     )
 
     conf = OmegaConf.create(cfg)
