@@ -74,8 +74,8 @@ def load_image(image_path):
 
 
 def arange_for_pooling(idx_arr, pool_w, pool_h):
-    h_pad = idx_arr.shape[0] % pool_h
-    w_pad = idx_arr.shape[1] % pool_w
+    h_pad = pool_h * ((idx_arr.shape[0] + pool_h - 1) // pool_h) - idx_arr.shape[0]
+    w_pad = pool_w * ((idx_arr.shape[1] + pool_w - 1) // pool_w) - idx_arr.shape[1]
     idx_arr = np.pad(idx_arr, [[h_pad//2, (h_pad+1)//2], [w_pad//2, (w_pad+1)//2]],
                      mode='constant',constant_values=-1)
     return einops.rearrange(
@@ -350,7 +350,7 @@ class MolmoPreprocessor:
     tokenizer: Any
     loss_token_weighting: Optional[str] = None
 
-    legacy_image_mask: bool = True
+    legacy_image_mask: bool = False
 
     # How to crops/resize images
     normalize: str = "openai"
@@ -396,7 +396,7 @@ class MolmoPreprocessor:
         return max_tokens
 
     def compute_num_tokens(self, image_h, image_w) -> int:
-        """Return the max number of pooled image tokens produced for an image of size image_w, image_h"""
+        """Return the number of pooled image tokens produced for an image of size image_w, image_h"""
         image_patch_size = self.image_patch_size
         crop_patch_w = self.base_image_input_size[1] // image_patch_size
         crop_patch_h = self.base_image_input_size[0] // image_patch_size
@@ -462,10 +462,11 @@ class MolmoPreprocessor:
         rng=None,
     ):
         """
-        :return image_tokens, the token IDS for this image
+        :return image_tokens, the token IDS for this image, including special tokens
         :return crops, the image crops to processes with the ViT
         :return mask, the padding mask for each crop
-        :return pooled_patch_idx, the padding mask for each crop
+        :return pooled_patch_idx, for each patch_id tokens in `image_tokens`, the indices of the
+                                  patches in `crops` to pool for that token, masked with -1
         """
         max_crops = self.max_crops
         overlap_margins = self.overlap_margins
@@ -532,8 +533,8 @@ class MolmoPreprocessor:
             )
             src = self._normalize(src)
 
-            # Now we have to split the image into crops, while keeping track of how each patch in the
-            # each crop should be ordered in the global image, this require a lot of tricky booking
+            # Now we have to split the image into crops, and track what patches came from
+            # where in `patch_idx_arr`
             n_crops = tiling[0] * tiling[1]
             crop_arr = np.zeros([n_crops, crop_size, crop_size, 3], dtype=src.dtype)
             mask_arr = np.zeros([n_crops, crop_size, crop_size], dtype=img_mask.dtype)
@@ -572,8 +573,8 @@ class MolmoPreprocessor:
             patch_idx_arr = np.transpose(patch_idx_arr, [0, 2, 1, 3])
             patch_idx_arr = np.reshape(patch_idx_arr, [-1])
 
-            # Now get the non-masked parts, now it should map each patch in `src` to the
-            # correct patch it should come from in `crop_arr`
+            # Now get the parts not in the overlap region, so it should map each patch in `src`
+            # to the correct patch it should come from in `crop_arr`
             patch_idx_arr = patch_idx_arr[patch_idx_arr >= 0].reshape(
                 src.shape[0]//image_patch_size,
                 src.shape[1]//image_patch_size,
