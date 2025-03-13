@@ -117,7 +117,7 @@ def get_evaluation(name, seq_len, max_examples, num_workers=2, device_batch_size
         max_new_tokens = 256
     elif name == "math_vista_demo":
         max_new_tokens = 384
-    elif name in ["chart_qa_scifi", "chart_qa_ex", "chart_qa_prompting_explanation"] or name.endswith("_demo"):
+    elif name in ["chart_qa_scifi", "chart_qa_ex", "chart_qa_exp", "chart_qa_prompting_explanation"] or name.endswith("_demo"):
         max_new_tokens = 256
     elif name.startswith("user_questions_for_elo"):
         max_new_tokens = 768  # Can have counts of 20+ so make sure there is room
