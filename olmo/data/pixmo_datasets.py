@@ -188,7 +188,7 @@ class PixMoPoints(Dataset):
             raise ValueError(kind)
         if split not in ["train", "validation"]:
             raise ValueError(f"Unknown split {split}")
-        mode = "pointing" if counting else "point_count"
+        mode = "point_count" if counting else "pointing"
         self.split = split
         self.kind = kind
         self.mode = mode
