@@ -112,9 +112,14 @@ class HeMolmoConfig(BaseModelConfig):
 
     def build_collator(self, sequence_length, pad_mode: str, include_metadata=True) -> HeMMCollator:
         """Collators for tensors from the preprocessor produces"""
+        h, l = self.mm_preprocessor.get_max_tokens(self.vision_backbone)
+        c = self.mm_preprocessor.get_max_crops()
+        logging.info(f"Building collator, len={sequence_length} max-h={h} "
+                     f"max-l={l}, max-crops={c} pad={pad_mode}")
         return HeMMCollator(
             sequence_length,
-            max_images_tokens=self.mm_preprocessor.get_max_tokens(self.vision_backbone),
+            max_high_res_tokens=h,
+            max_low_res_tokens=l,
             max_crops=self.mm_preprocessor.get_max_crops(),
             include_metadata=include_metadata,
             pad=pad_mode,
@@ -391,7 +396,8 @@ class HeMolmo(ModelBase):
         subsegment_ids: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.Tensor] = None,
 
-        # High-res data for token selection
+        # Data for token selection
+        low_pooled_patches_idx: Optional[torch.Tensor] = None,
         low_to_high: Optional[torch.Tensor] = None,
         high_res_features_weights: Optional[torch.Tensor] = None,
         high_res_patch_pos_ids: Optional[torch.Tensor] = None,
@@ -442,8 +448,6 @@ class HeMolmo(ModelBase):
         x = self.transformer.wte(input_ids) if input_embeddings is None else input_embeddings  # type: ignore
 
         num_image: Optional[int] = None
-
-        n_low_res = 144
 
         # Transform the attention mask into the 4D tensor blocks expect.
         if len(attention_mask.shape) == 2:
@@ -497,11 +501,10 @@ class HeMolmo(ModelBase):
         # Add low res features to x
         ts_cfg = self.config.token_scorer
         if images is not None:
-            image_features, image_feature_mask = self.vision_backbone(images, image_masks, pooled_patches_idx, True)
-            assert torch.all(image_feature_mask[:, :n_low_res])
-            low_image_features = image_features[:, :n_low_res]
-            high_image_features = image_features[:, n_low_res:]
-            high_res_mask = image_feature_mask[:, n_low_res:]
+            image_features = self.vision_backbone(
+                images, image_masks, [low_pooled_patches_idx, pooled_patches_idx])
+            low_image_features, low_image_mask = image_features[0]
+            high_image_features, high_res_mask = image_features[1]
             before_high_res = (image_segment_ids <= 1)
             is_low_res_patch = (input_ids == self._image_patch_id) & before_high_res
             is_high_res_patch = (input_ids == self._image_patch_id) & (~before_high_res)
@@ -513,7 +516,7 @@ class HeMolmo(ModelBase):
                 low_res_end_ixs = torch.argmax((input_ids == self._image_end_token_id).to(torch.int32), dim=-1) + 1
                 low_res_end = torch.max(low_res_end_ixs)
                 x.view(-1, x.shape[-1])[is_low_res_patch.view(-1)] += (
-                    low_image_features.reshape(-1, low_image_features.shape[-1]))
+                    low_image_features.reshape(-1, low_image_features.shape[-1])[low_image_mask.view(-1)])
 
                 low_res_x = x[:, :low_res_end]
                 if not ts_cfg.bp_low_res_embed:
@@ -557,8 +560,7 @@ class HeMolmo(ModelBase):
                 else:
                     low_res_layer_outputs = [low_res_x]
 
-                # Add in high-res image features
-                n_high_res_crops = images.shape[1]-1
+                n_low_res = low_pooled_patches_idx.shape[1]
 
                 # [batch, n_crops, n_patches, 576]
                 # Mask patches (could padding, overlap, or bath-padding) get zero attention
@@ -583,20 +585,23 @@ class HeMolmo(ModelBase):
                     else:
                         low_res_x_features = low_res_x
 
+                    low_res_dim = low_res_x_features.shape[-1]
+                    low_res_features_sparse = low_res_x_features.view(-1, low_res_dim)[is_low_res_patch[:, :low_res_end].flatten()]
+                    low_res_features = torch.zeros(([batch_size, n_low_res, low_res_dim]), device=x.device, dtype=x.dtype)
+                    low_res_features.view(-1, low_res_dim)[low_image_mask.view(-1)] = low_res_features_sparse
                     if ts_cfg.low_res_features_drop:
-                        low_res_x_features = F.dropout(low_res_x_features, ts_cfg.low_res_features_drop, self.training)
-                    low_res_image_features = torch.masked_select(low_res_x_features, is_low_res_patch[:, :low_res_end, None]).reshape(batch_size, n_low_res, -1)
-                    low_res_importance_flat = self.importance_ln(low_res_image_features)
+                        low_res_features = F.dropout(low_res_features, ts_cfg.low_res_features_drop, self.training)
+                    low_res_importance_flat = self.importance_ln(low_res_features)
 
                     # features are for the low-res patches and need to interpolates
                     if not ts_cfg.four_scores_per_low_res_patch:
                         low_res_importance_flat = torch.tile(torch.mean(low_res_importance_flat, dim=-1, keepdim=True), [1, 1, 4])
-                    low_res_importance = einops.rearrange(
-                        low_res_importance_flat, "b (w h) (dw dh) -> b (w dw h dh)",
-                        dh=2, dw=2, w=12, h=12)
+                    # low_res_importance = einops.rearrange(
+                    #     low_res_importance_flat, "b (w h) (dw dh) -> b (w dw h dh)",
+                    #     dh=2, dw=2, w=low_h, h=low_h)
                     high_res_importance = torch.matmul(
-                        torch.unsqueeze(low_res_importance, 1),
-                        low_to_high.transpose(1, 2)
+                        low_res_importance_flat.reshape(batch_size, 1, -1),
+                        low_to_high
                     ).squeeze(1)
 
                 if ts_cfg.selection_model in ["with-vector-query-v1", "with-vector-query-v2"]:

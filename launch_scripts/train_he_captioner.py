@@ -36,7 +36,7 @@ if __name__ == "__main__":
     prepare_torchrun_environment()
     parser = argparse.ArgumentParser(prog="Train a captioner")
     parser.add_argument("llm", choices=["debug", "debug-12crop"] + list(LLMS.keys()))
-    parser.add_argument("--vision_backbone", choices=list(VISION_BACKBONES.keys()), default="metaclip_l14_336")
+    parser.add_argument("--vision_backbone", choices=list(VISION_BACKBONES.keys()), default="siglip")
     parser.add_argument("--global_batch_size", default=256, type=int)
     parser.add_argument("--n_eval_examples", default=2048, type=int)
     parser.add_argument("--num_high_res_features", default=512, type=int)
@@ -133,10 +133,9 @@ if __name__ == "__main__":
         )
     else:
         model_cfg.mm_preprocessor.num_high_res_features = 512
+        seq_len = 832 + model_cfg.mm_preprocessor.num_high_res_features
         if args.vision_backbone == "siglip":
-            seq_len = 768 + 512 + 128
-        else:
-            seq_len = 768 + 512 + 64
+            seq_len += 64  # For the extra low-res tokens
 
     evaluator = LossDatasetEvaluatorConfig(
         label="val",

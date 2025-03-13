@@ -25,9 +25,11 @@ def test_preprocessing(col_tokens: bool=False, max_crops=4, siglip=False):
         resize="metaclip",
         num_high_res_features=n_high_res,
         multi_res_selection=None,
-        multi_res_min=32,
+        multi_res_min=None,
         use_high_res_col_tokens=col_tokens,
     )
+    max_tokens = preprocessor.max_image_tokens()
+    assert max_tokens > 0
     if siglip:
         preprocessor.base_image_input_size = (378, 378)
         preprocessor.image_token_length_h = 14
@@ -102,7 +104,8 @@ def test_preprocessing(col_tokens: bool=False, max_crops=4, siglip=False):
 @pytest.mark.parametrize("siglip", [True, False])
 def test_preprocessor(col_tokens, multi_res_selection, max_crops, siglip):
     test_preprocessing(col_tokens, max_crops=max_crops, siglip=siglip)
+    # FIXME should also with variable res
 
 
 def test_preprocessor2():
-    test_preprocessing(True, max_crops=4, siglip=True)
+    test_preprocessing(False, max_crops=4, siglip=True)
