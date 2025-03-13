@@ -233,6 +233,9 @@ GENERAL_PROMPTS_V1 = {
         "Find all the {label}. How many are there?",
         "Find each {label}. How many are there?",
     ],
+    "chain_of_thought": [
+        "{question} Provide reasoning steps and then give the short answer.",
+    ]
 }
 
 
@@ -291,6 +294,7 @@ def apply_keyword_prompt(prompts, example, rng, keywords=None, dbg=False):
 DEMO_STYLES = [
     "point_count",
     "pointing",
+    "cosyn_point",
     "user_qa",
     "long_caption",
 ]
@@ -504,6 +508,11 @@ class DataFormatter(BaseConfig):
                 # plain text for everything else
                 if style == "long_caption":
                     prompt = apply_keyword_prompt(GENERAL_PROMPTS_V1["long_caption"], example, rng, dbg=self.debug)
+                elif "_exp" in style:
+                    prompt = apply_keyword_prompt(GENERAL_PROMPTS_V1["chain_of_thought"], example, rng, dbg=self.debug)
+                elif style == "cosyn_point":
+                    prompt = example["question"]
+                    output = self.format_points(example)
                 elif style in ["pointing", "point_count"]:
                     # output, prompt, metadata = self.format_points(example)
                     if "question" in example:
@@ -533,6 +542,8 @@ class DataFormatter(BaseConfig):
                 output = example["answer"]
                 if "answer_annotations" in example:
                     output = self.format_annotated_text(output, example["answer_annotations"])
+                elif "explanation" in example:
+                    output = example["explanation"] + " Answer: " + output
             elif "answer_with_points" in example:
                 output = example["answer_with_points"]
             elif "text" in example:
