@@ -168,7 +168,7 @@ class ViTMultiHeadDotProductAttention(nn.Module):
     def _merge_heads(self, hidden_states) -> torch.Tensor:
         return hidden_states.reshape(hidden_states.shape[:2] + (self.embed_dim,))
 
-    def forward(self, inputs_q: torch.Tensor, inputs_kv: Optional[torch.Tensor] = None) -> torch.Tensor:
+    def forward(self, inputs_q: torch.Tensor, inputs_kv: Optional[torch.Tensor] = None, attn_mask=None) -> torch.Tensor:
 
         if inputs_kv is not None:
             inputs_k = inputs_kv
@@ -194,6 +194,7 @@ class ViTMultiHeadDotProductAttention(nn.Module):
             xk = xk.to(torch.float)
 
         if self.config.attention_type == AttentionType.direct:
+            assert attn_mask is None
             attn_weights = torch.einsum("...qhd,...khd->...hqk", xq / math.sqrt(xq.size(-1)), xk)
             attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(xq.dtype)
             if self.attention_dropout is not None:
@@ -205,6 +206,7 @@ class ViTMultiHeadDotProductAttention(nn.Module):
                 xq.transpose(1, 2).contiguous(),
                 xk.transpose(1, 2).contiguous(),
                 xv.transpose(1, 2).contiguous(),
+                attn_mask=attn_mask,
                 is_causal=False,
                 dropout_p=self.config.attention_dropout
             ).transpose(1, 2)
