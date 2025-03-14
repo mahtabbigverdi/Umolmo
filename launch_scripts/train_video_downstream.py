@@ -36,7 +36,7 @@ if __name__ == "__main__":
     parser.add_argument("checkpoint", help="Path to checkpoint to start from")
     parser.add_argument("--wandb_run_name", default="multitask_video", type=str)
     parser.add_argument("--seq_len", default=2048, type=int)
-    parser.add_argument("--max_eval_examples", default=96, type=int)
+    parser.add_argument("--max_eval_examples", default=1024, type=int)
     parser.add_argument("--max_eval_examples_inf", default=-1, type=int)
     parser.add_argument("--max_crops", default=10, type=int)
     parser.add_argument("--global_batch_size", default=32, type=int)
@@ -93,7 +93,7 @@ if __name__ == "__main__":
         model_cfg = VIDEO_DEBUG_MODEL
         global_batch_size = args.global_batch_size
         model_init = None
-        inf_eval_interval = 20000
+        inf_eval_interval = 20
         eval_interval = 20
         save_interval = 500
         log_interval = args.log_interval

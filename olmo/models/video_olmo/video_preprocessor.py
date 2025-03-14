@@ -235,12 +235,16 @@ class MultiModalVideoPreprocessorConfig(MolmoPreprocessorConfig):
         h, w = vit.image_default_input_size
         low_res_tokens = preprocessor.compute_num_tokens(h, w, self.pooling_h, self.pooling_w)
         if self.periodic_high_res_frame:
-            raise NotImplementedError()
+            high_res_tokens = preprocessor.compute_num_tokens(h, w, self.high_res_pooling_h, self.high_res_pooling_w)
+            n_high_res = 1 + (self.max_frames - 1) // self.periodic_high_res_frame
+            n_low_res = self.max_frames - n_high_res
+            padding_lens["low_res_pooled_idx"] = low_res_tokens*n_low_res
+            padding_lens["high_res_pooled_idx"] = high_res_tokens*n_high_res
         else:
             padding_lens["low_res_pooled_idx"] = low_res_tokens*self.max_frames
         return padding_lens
 
-    def build(self, tokenizer, vision_backbone_config: MolmoVisionBackboneConfig):
+    def build(self, tokenizer, vision_backbone_config: MolmoVisionBackboneConfig) -> 'MultiModalVideoPreprocessor':
         vit = vision_backbone_config.vit
         return MultiModalVideoPreprocessor(
             tokenizer,

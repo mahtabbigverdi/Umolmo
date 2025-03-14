@@ -43,7 +43,13 @@ VIDEO_DEBUG_MODEL = VideoOlmoConfig(
     llm=DEBUG_MODEL.llm,
     vision_backbone=MolmoVisionBackboneConfig(vit=VitConfig(image_num_layers=1)),
     data_formatter=DEBUG_MODEL.data_formatter,
-    mm_preprocessor=MultiModalVideoPreprocessorConfig(crop_mode="frame_sampling", max_crops=4)
+    mm_preprocessor=MultiModalVideoPreprocessorConfig(
+        crop_mode="resize",
+        pooling_h=2,
+        pooling_w=2,
+        max_frames=4,
+        max_crops=1
+    )
 )
 
 

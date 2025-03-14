@@ -48,8 +48,8 @@ class HePreprocessorConfig(BaseConfig):
     num_high_res_features: Optional[int] = 512
     """How many high-res features to use"""
 
+    image_pooling_w: Optional[int] = 2
     low_res_from_high: Optional[int] = None
-
     low_res_from_low: Optional[int] = 2
 
     def get_max_crops(self) -> int:
@@ -86,8 +86,8 @@ class HePreprocessorConfig(BaseConfig):
             use_col_tokens=self.use_col_tokens,
             use_high_res_col_tokens=self.use_col_tokens,
             base_image_input_size=vit.image_default_input_size,
-            image_pooling_w=vision_backbone_config.image_pooling_w,
-            image_pooling_h=vision_backbone_config.image_pooling_h,
+            image_pooling_w=self.image_pooling_w,
+            image_pooling_h=self.image_pooling_h,
             image_patch_size=vit.image_patch_size,
             image_padding_mask=vision_backbone_config.image_padding_embed is not None,
             pad_value=vit.pad_value,

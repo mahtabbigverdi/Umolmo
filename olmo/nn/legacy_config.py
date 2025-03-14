@@ -80,6 +80,7 @@ def convert_legacy_config(config):
     data_formater["prompt_templates"] = config.pop("prompt_type")
     data_formater["message_format"] = config.pop("message_formatting")
     llm["init_path"] = config.pop("llm_load_path")
+    preprocessor["loss_token_weighting"] = config.pop("multi_annotation_weighting", None)
 
     # Moved to vision backbone
     vision_backbone: Dict = config.pop("vision_backbone")

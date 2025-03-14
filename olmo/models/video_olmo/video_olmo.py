@@ -373,15 +373,11 @@ class VideoOlmo(ModelBase):
                 is_image_patch = input_ids.view(-1) == self._image_low_res_id
                 x.view(-1, x.shape[-1])[is_image_patch] += image_features
             else:
-                image_features = self.vision_backbone(images, image_masks, [low_res_pooled_idx, high_res_pooled_idx])
-                all_image_features = torch.concatenate([
-                    x.view(-1, x.shape[-1])[mask] for x, mask in image_features
-                ], 0)
-                all_mask = torch.concatenate([
-                    input_ids.view(-1) == self._image_low_res_id,
-                    input_ids.view(-1) == self._image_high_res_id
-                ], 0)
-                x.view(-1, x.shape[-1])[all_mask] += all_image_features
+                all_image_features = self.vision_backbone(images, image_masks, [low_res_pooled_idx, high_res_pooled_idx])
+                for (image_features, mask), input_id in zip(all_image_features, [self._image_low_res_id, self._image_high_res_id]):
+                    is_image_patch = input_ids.view(-1) == input_id
+                    x = x.clone()
+                    x.view(-1, x.shape[-1])[is_image_patch] += image_features.view(-1, image_features.shape[-1])[mask.view(-1)]
 
         if not self.config.llm.rope:
             # Get positional embeddings.
@@ -507,10 +503,12 @@ class VideoOlmo(ModelBase):
         """
         input_ids: torch.LongTensor = batch["input_ids"]
         attention_mask: Optional[torch.Tensor] = batch.get("attention_mask")
-        images: Optional[torch.Tensor] = batch.get("images")
-        image_masks: Optional[torch.Tensor] = batch.get("image_masks")
-        image_input_idx: Optional[torch.Tensor] = batch.get("image_input_idx")
-        high_res_frame_ids: Optional[torch.Tensor] = batch.get("high_res_frame_ids")
+        image_args = dict(
+            images=batch.get("images"),
+            image_masks=batch.get("image_masks"),
+            low_res_pooled_idx=batch.get("low_res_pooled_idx"),
+            high_res_pooled_idx=batch.get("high_res_pooled_idx"),
+        )
 
         llm_cfg = self.config.llm
 
@@ -580,10 +578,8 @@ class VideoOlmo(ModelBase):
         ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
             nonlocal tokens_generated
             nonlocal position_ids
-            nonlocal images
-            nonlocal image_input_idx
+            nonlocal image_args
             nonlocal append_last_valid_logits
-            nonlocal high_res_frame_ids
             attention_mask = state.get("attention_mask")
             attention_bias = state.get("attention_bias")
 
@@ -593,9 +589,6 @@ class VideoOlmo(ModelBase):
                 if not llm_cfg.use_position_ids and attention_mask is not None:
                     group_size = input_ids.shape[0]
                     attention_mask = torch.cat((attention_mask, attention_mask.new_ones((group_size, 1))), dim=-1)
-                _images = None
-                _image_input_idx = None
-                _high_res_frame_ids = None
                 if llm_cfg.use_position_ids:
                     position_ids = position_ids[:, -1:] + 1
                     _, *last_dims = position_ids.size()
@@ -606,15 +599,13 @@ class VideoOlmo(ModelBase):
                     )
                 else:
                     _position_ids = None
-                
-                _append_last_valid_logits = None
 
+                _image_args = {}
+                _append_last_valid_logits = None
             else:
                 past_key_values = None
                 input_ids = state["input_ids"]
-                _images = images
-                _image_input_idx = image_input_idx
-                _high_res_frame_ids = high_res_frame_ids
+                _image_args = image_args
                 _position_ids = position_ids
                 _append_last_valid_logits = append_last_valid_logits
 
@@ -627,15 +618,12 @@ class VideoOlmo(ModelBase):
                 input_ids,
                 attention_mask=attention_mask,
                 attention_bias=attention_bias,
-                images=_images,
-                image_masks=image_masks,
-                image_input_idx=_image_input_idx,
-                high_res_frame_ids=_high_res_frame_ids,
                 position_ids=_position_ids,
                 past_key_values=past_key_values,
                 use_cache=True,
                 last_logits_only=True,
-                append_last_valid_logits=_append_last_valid_logits
+                append_last_valid_logits=_append_last_valid_logits,
+                **_image_args
             )
             log_probs = F.log_softmax(output.logits[:, -1, :], dim=-1)
 
