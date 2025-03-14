@@ -25,6 +25,14 @@ from tqdm import tqdm
 from olmo.data.dataset import DATA_HOME
 from olmo.io import _s3_get_bytes_range
 
+if "PIXMO_IMAGE_DIR" in os.environ:
+    PIXMO_IMAGES = os.environ["PIXMO_IMAGE_DIR"]
+elif DATA_HOME is not None:
+    PIXMO_IMAGES = join(DATA_HOME, "pixmo_images")
+else:
+    PIXMO_IMAGES = None
+"""Where to save downloaded images"""
+
 
 def setup_pil():
     PIL.Image.MAX_IMAGE_PIXELS = None

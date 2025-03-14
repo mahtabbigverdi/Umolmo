@@ -113,7 +113,7 @@ GENERAL_PROMPTS_V1 = {
         "Help me answer this question: \"{question}\", by stating which of the following options is correct\n{options}."
     ],
     "pointing": [
-        "Point to {label}\nPlease say 'This isn't in the image.' if it is not in the image.",
+        "Point to {label}\nPlease say 'There are none.' if it is not in the image.",
         "Point to all occurrences of \"{label}\"",
         "Point to any {label} in the image",
         "Point to any {label} in the image.",
@@ -193,7 +193,7 @@ GENERAL_PROMPTS_V1 = {
         "In all the picture, how many {label} are there?",
         "Point at the {label} and then count them.",
         "Point to all the visible {label} output the total count.",
-        "Point to all the {label} visible and output the total count. \nPlease say 'This isn't in the image.' if it is not in the image.",
+        "Point to all the {label} visible and output the total count. \nPlease say 'There are none.' if it is not in the image.",
         "Point to all occurrences of \"{label}\" and output the total count.",
         "Show me where the {label} are and output the total count.",
         "Where are the {label}? How many are there?",
@@ -213,7 +213,7 @@ GENERAL_PROMPTS_V1 = {
         "Can you count every {label} in the picture?",
         "Can you see any {label} in the image? How many are there?",
         "Are there any {label} in the image? How many are there?",
-        "If you see any {label} in the image, give me the count. Otherwise, say 'This isn't in the image.'",
+        "If you see any {label} in the image, give me the count. Otherwise, say 'There are none.'",
         "Object: {label}\nInstruction: How many are there?",
     ],
     "count_then_point": [
@@ -232,6 +232,9 @@ GENERAL_PROMPTS_V1 = {
         "Find all the {label}. How many are there?",
         "Find each {label}. How many are there?",
     ],
+    "chain_of_thought": [
+        "{question} Provide reasoning steps and then give the short answer.",
+    ]
 }
 
 
@@ -294,6 +297,7 @@ def apply_keyword_prompt(prompts, example, rng, keywords=None, dbg=False):
 DEMO_STYLES = [
     "point_count",
     "pointing",
+    "cosyn_point",
     "user_qa",
     "long_caption",
     "short_caption",
@@ -513,6 +517,11 @@ class DataFormatter(BaseConfig):
                 # plain text for everything else
                 if style in ["long_caption", "short_caption", "video_long_caption", "video_short_caption"] and "question" not in example:
                     prompt = apply_keyword_prompt(GENERAL_PROMPTS_V1[style], example, rng, dbg=self.debug)
+                elif "_exp" in style:
+                    prompt = apply_keyword_prompt(GENERAL_PROMPTS_V1["chain_of_thought"], example, rng, dbg=self.debug)
+                elif style == "cosyn_point":
+                    prompt = example["question"]
+                    output = self.format_points(example)
                 elif style in ["pointing", "point_count"]:
                     # output, prompt, metadata = self.format_points(example)
                     if "question" in example:
@@ -542,6 +551,8 @@ class DataFormatter(BaseConfig):
                 output = example["answer"]
                 if "answer_annotations" in example:
                     output = self.format_annotated_text(output, example["answer_annotations"])
+                elif "explanation" in example:
+                    output = example["explanation"] + " Answer: " + output
             elif "answer_with_points" in example:
                 output = example["answer_with_points"]
             elif "text" in example:

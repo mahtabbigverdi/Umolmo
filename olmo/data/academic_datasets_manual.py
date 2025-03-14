@@ -127,11 +127,12 @@ class DocQa(DatasetBase):
 
 
 class ChartQa(DatasetBase):
-    def __init__(self, split, parts="both", weighted=False):
+    def __init__(self, split, parts="both", weighted=False, use_exp=False):
         self.weighted = weighted
         assert split in ["train", "validation", "test"]
         assert parts in ["human", "augmented", "both"]
         self.parts = parts
+        self.use_exp = use_exp
         super().__init__(split)
 
     def load(self):
@@ -162,7 +163,7 @@ class ChartQa(DatasetBase):
         return examples
 
     def get(self, item, rng):
-        ex = dict(self.data[item], style="chart_qa")
+        ex = dict(self.data[item], style="chart_qa_exp" if self.use_exp else "chart_qa")
         if self.weighted:
             is_human = ex["metadata"]["is_human"]
             # Weight to balanced human/augmented sets

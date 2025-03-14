@@ -10,8 +10,10 @@ from olmo.data.video_datasets import (
 from olmo.data.dataset import Dataset
 from olmo.data.pixmo_datasets import (
     PixMoDocs, PixMoCount, PixMoPoints, PixMoCapQa, PixMoCap, PixMoPointExplanations,
-    PixMoAskModelAnything, PixMoPointsEval, DenseCaptionEval, PixMoClocks
+    PixMoAskModelAnything, PixMoPointsEval, DenseCaptionEval, PixMoClocks,
+    CoSyn, CoSynPoint
 )
+import itertools
 
 
 def get_dataset_by_name(dataset_name, split) -> Dataset:
@@ -49,6 +51,19 @@ def get_dataset_by_name(dataset_name, split) -> Dataset:
     elif dataset_name in ["pixmo_docs_diagrams_flat"]:
         return PixMoDocs("diagrams", split=split, flat=True)
 
+    # CoSyn-400K / CoSyn-point
+    doc_types = [
+        "chart", "chemical", "circuit", "diagram",
+        "document", "graphic", "math", "music",
+        "nutrition", "table"
+    ]
+    cosyn_dataset_names = [f"cosyn_{doc_type}{suffix}" for doc_type, suffix in itertools.product(doc_types, ["", "_exp"])]
+    if dataset_name == "cosyn_point":
+        return CoSynPoint(split=split)
+    elif dataset_name in cosyn_dataset_names:
+        doc_type = dataset_name.split("_")[1]
+        return CoSyn(doc_type, split=split, use_exp=dataset_name.endswith("_exp"))
+
     # PixMo-Pointing
     elif dataset_name in ["pointing_high_freq", "pixmo_points_high_freq"]:
         return PixMoPoints(kind="high_frequency", split=split, counting=False)
@@ -74,8 +89,10 @@ def get_dataset_by_name(dataset_name, split) -> Dataset:
         return PixMoAskModelAnything(split=split)
 
     # PixMo-CapQa
-    elif dataset_name in ["synthetic_qa_v3_as_user_qa", "pixmo_cap_qa"]:
+    elif dataset_name in ["synthetic_qa_v3", "pixmo_cap_qa"]:
         return PixMoCapQa(split=split)
+    elif dataset_name in ["synthetic_qa_v3_as_user_qa", "pixmo_cap_qa_as_user_qa"]:
+        return PixMoCapQa(split=split, style="user_qa")
 
     # PixMo-Cap
     if dataset_name in ["cockatoo_and_transcript_712k_sept6", "pixmo_cap_with_transcripts"]:
@@ -103,6 +120,8 @@ def get_dataset_by_name(dataset_name, split) -> Dataset:
         return AndroidControl(split, mode="ll")
     if dataset_name == "chart_qa":
         return ChartQa(split, weighted=False)
+    if dataset_name == "chart_qa_exp":
+        return ChartQa(split, weighted=False, use_exp=True)
     if dataset_name == "real_world_qa_no_instruction":
         assert split == "test"
         return RealWorldQa("no_instruction")
