@@ -143,10 +143,12 @@ class DataConfig(BaseConfig):
                     for name, as_size in root_size_mixture.mixture.items():
                         log.info(f"Loading train dataset {name}/{self.split}")
                         dataset = get_dataset_by_name(name, self.split)
-                        if as_size is not None:
-                            size = as_size
-                        else:
+                        if as_size is None:
                             size = len(dataset)
+                        elif as_size <= 1:
+                            size = len(dataset) * as_size
+                        else:
+                            size = as_size
                         group_datasets[name] = (dataset, np.sqrt(size))
                     total_rate = sum(x[1] for x in group_datasets.values())
                     mixture.update({name: (ds, r/total_rate*root_size_mixture.rate)
