@@ -42,7 +42,7 @@ class ImageProjectType(StrEnum):
 
 
 @dataclass
-class VisionBackboneConfig(BaseConfig):
+class MolmoVisionBackboneConfig(BaseConfig):
     """Vision ViT and the Image/Language Connector"""
 
     vit: VitConfig = field(default_factory=VitConfig)
@@ -62,12 +62,6 @@ class VisionBackboneConfig(BaseConfig):
     Image padding mode to use to tell the model what parts of the image are padding
     """
 
-    image_pooling_h: int = 2
-    """Pooling patch features height"""
-
-    image_pooling_w: int = 2
-    """Pooling patch features width"""
-
     vit_layers: Tuple = (-1,)
     """What layers to use from the VIT"""
 
@@ -86,10 +80,6 @@ class VisionBackboneConfig(BaseConfig):
     def __post_init__(self):
         self.vit_layers = tuple(self.vit_layers)  # type: ignore[assignment]
 
-    @property
-    def image_num_patch(self):
-        return self.vit.image_num_patch
-
     def build(self, llm_config, device):
         return MolmoVisionBackbone(self, llm_config, device)
 
@@ -98,41 +88,10 @@ class VisionBackboneConfig(BaseConfig):
         if "fix_image_padding" in config:
             assert config.image_padding_embed is None or config.fix_image_padding
             del config["fix_image_padding"]
+        for k in ["image_pooling_h", "image_pooling_w"]:
+            if k in config:
+                assert config.pop(k) == 2
         return config
-
-
-@dataclass
-class VideoVisionBackboneConfig(VisionBackboneConfig):
-    """Vision ViT and the Image/Language Connector"""
-
-    high_res_pooling_h: Optional[int] = None
-    """If periodic_high_res_frame, use high-res image tokens with this pooling size"""
-
-    high_res_pooling_w: Optional[int] = None
-    """If periodic_high_res_frame, use high-res image tokens with this pooling size"""
-
-    periodic_high_res_frame: Optional[int] = None
-    """If set, the frame at this interval will be sampled at a higher resolution"""
-
-    def __post_init__(self):
-        self.vit_layers = tuple(self.vit_layers)  # type: ignore[assignment]
-
-    @property
-    def image_num_patch(self):
-        return self.vit.image_num_patch
-
-    def llm_patches_per_crop_given_pool_size(self, image_pooling_w, image_pooling_h):
-        h, w = self.image_num_patch
-        # Round up in case we need to pad the image features for pooling
-        h = (h + image_pooling_h - 1) // image_pooling_h
-        w = (w + image_pooling_w - 1) // image_pooling_w
-        return h, w
-
-    def llm_patches_per_crop(self):
-        return self.llm_patches_per_crop_given_pool_size(self.image_pooling_w, self.image_pooling_h)
-
-    def build(self, llm_config, device):
-        return VideoVisionBackbone(self, llm_config, device)
 
 
 class ImageProjectorMLP(nn.Module):
@@ -189,7 +148,7 @@ class Residual(nn.Module):
 
 
 class MolmoVisionBackbone(nn.Module):
-    def __init__(self, config: VisionBackboneConfig, llm_config, device=None):
+    def __init__(self, config: MolmoVisionBackboneConfig, llm_config, device=None):
         super().__init__()
         self.config = config
         input_dim: int = None
@@ -266,7 +225,7 @@ class MolmoVisionBackbone(nn.Module):
                 raise ValueError(config.image_padding_embed)
 
     @classmethod
-    def build(cls, config: VisionBackboneConfig, outut_dim, device=None) -> 'MolmoVisionBackbone':
+    def build(cls, config: MolmoVisionBackboneConfig, outut_dim, device=None) -> 'MolmoVisionBackbone':
         return MolmoVisionBackbone(config, outut_dim, device)
 
     def reset_connector_parameters(self):
@@ -333,51 +292,8 @@ class MolmoVisionBackbone(nn.Module):
         image_features = image_features.view(B, T, N, -1)
         return image_features
 
-<<<<<<< HEAD
     def forward(self, images: torch.Tensor, image_masks: torch.Tensor,
                 pooled_patches_idx: torch.Tensor) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
-=======
-    def get_features_for_pool(self, image_features: torch.Tensor, image_pooling_h: int, image_pooling_w: int, cfg: VisionBackboneConfig) -> torch.Tensor:
-        batch_size, num_image = image_features.shape[:2]
-        if cfg.image_num_patch[0] % image_pooling_h != 0 or cfg.image_num_patch[1] % image_pooling_w != 0:
-            pad_h = cfg.image_num_patch[0] % image_pooling_h
-            pad_w = cfg.image_num_patch[1] % image_pooling_w
-            # Pad so we can still pool mxn patches
-            image_features = F.pad(
-                image_features,
-                (0, 0, 0, pad_w, 0, pad_h, 0, 0, 0, 0),
-            )
-
-        # image pooling
-        image_features = einops.rearrange(
-            image_features,
-            'b n (h dh) (w dw) c -> (b n h w) (dh dw) c',
-            dh=image_pooling_h,
-            dw=image_pooling_w,
-        )
-
-        if cfg.image_pooling_2d == ImagePooling2DType.attention_meanq:
-            query = image_features.mean(-2, keepdim=True)
-            image_features = self.image_pooling_2d(query, image_features)
-        elif cfg.image_pooling_2d not in {ImagePooling2DType.none, ImagePooling2DType.stack}:
-            image_features = self.image_pooling_2d(image_features[:, :1, :], image_features)
-
-        h, w = cfg.llm_patches_per_crop_given_pool_size(image_pooling_w, image_pooling_h)
-        image_features = image_features.reshape(batch_size, num_image, h * w, -1)
-
-        # MLP layer to map the feature.
-        if cfg.image_projector == ImageProjectType.mlpx2:
-            for module in self.image_projector:
-                image_features = module(image_features)
-        else:
-            image_features = self.image_projector(image_features)
-        
-        # image_features: (batch_size, num_image, num_patch, d_model)
-        return image_features
-
-
-    def forward(self, images: torch.Tensor, image_masks: torch.Tensor) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
->>>>>>> origin/main-refactor-w-video
         cfg = self.config
 
         # image_features: (batch_size, num_crops(=num_image), num_patch, nximage_emb_dim)
@@ -406,7 +322,6 @@ class MolmoVisionBackbone(nn.Module):
         image_features = self.image_feature_dropout(image_features)
         dim = image_features.shape[-1]
 
-<<<<<<< HEAD
         multiple_pooling = isinstance(pooled_patches_idx, (tuple, list))
         if not multiple_pooling:
             pooled_patches_idxs = [pooled_patches_idx]
@@ -459,55 +374,3 @@ class MolmoVisionBackbone(nn.Module):
         else:
             image_features, valid_token = all_pooled_features[0]
             return image_features.view(-1, image_features.shape[-1])[valid_token.flatten()]
-
-=======
-        image_features = image_features.reshape(
-            (batch_size, num_image) + cfg.image_num_patch + (-1,),
-            )
-
-        return self.get_features_for_pool(image_features, cfg.image_pooling_h, cfg.image_pooling_w, cfg)
-
-
-class VideoVisionBackbone(MolmoVisionBackbone):
-    def __init__(self, config: VideoVisionBackboneConfig, llm_config, device=None):
-        super().__init__(config, llm_config, device)
-
-    def forward(self, images: torch.Tensor, image_masks: torch.Tensor) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
-        cfg = self.config
-
-        # image_features: (batch_size, num_crops(=num_image), num_patch, nximage_emb_dim)
-        batch_size, num_image = images.shape[:2]
-        image_features = self.encode_image(images)
-
-        if cfg.image_padding_embed:
-            assert image_masks is not None
-            if cfg.image_padding_embed == "pad_embed":
-                all_pad = (image_masks == 0).to(dtype=torch.float32)
-                pad_embed = self.pad_embed[None, None, None, :]
-                image_features = image_features + pad_embed * torch.unsqueeze(all_pad, -1)
-            elif cfg.image_padding_embed == "regress":
-                pad_embed = self.pad_embed[None, None, None, :]
-                image_features = image_features + pad_embed * torch.unsqueeze(torch.maximum(image_masks, torch.zeros_like(image_masks)), -1)
-            elif cfg.image_padding_embed == "pad_and_partial_pad":
-                pad_embed = self.pad_embed[:, None, None, None, :]
-                all_pad = image_masks == 0
-                partial_pad = torch.logical_and(image_masks < 1, torch.logical_not(all_pad)).to(dtype=torch.float32)
-                all_pad = all_pad.to(dtype=torch.float32)
-                image_features = image_features + pad_embed[0] * torch.unsqueeze(all_pad, -1)
-                image_features = image_features + pad_embed[1] * torch.unsqueeze(partial_pad, -1)
-            else:
-                raise ValueError(cfg.image_padding_embed)
-
-        image_features = self.image_feature_dropout(image_features)
-
-        image_features = image_features.reshape(
-            (batch_size, num_image) + cfg.image_num_patch + (-1,),
-            )
-
-        default_image_features = self.get_features_for_pool(image_features, cfg.image_pooling_h, cfg.image_pooling_w, cfg)
-        if cfg.periodic_high_res_frame is None:
-            return default_image_features, None
-        else:
-            high_res_image_features = self.get_features_for_pool(image_features, cfg.high_res_pooling_h, cfg.high_res_pooling_w, cfg)
-            return default_image_features, high_res_image_features
->>>>>>> origin/main-refactor-w-video

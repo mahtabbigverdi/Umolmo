@@ -14,7 +14,7 @@ from olmo.config import BaseConfig
 from olmo.data.dataset import DATA_HOME
 from olmo.io import get_bytes_range
 from olmo.tokenizer import get_special_token_ids
-from olmo.nn.vision_backbone import VisionBackboneConfig
+from olmo.nn.vision_backbone import MolmoVisionBackboneConfig
 
 
 def setup_pil():
@@ -291,6 +291,12 @@ class MolmoPreprocessorConfig(BaseConfig):
     max_crops: int = 6
     """Max number of crops to produce per an image"""
 
+    pooling_w: Optional[int] = None
+    """High res pooling w stride"""
+
+    pooling_h: Optional[int] = None
+    """High res pooling h stride"""
+
     overlap_margins: Tuple[int, int] = (4, 4)
     """Overlap margins for overlapping crops modes"""
 
@@ -313,12 +319,21 @@ class MolmoPreprocessorConfig(BaseConfig):
         else:
             return self.max_crops
 
-    def get_max_tokens(self, vision_backbone_config: VisionBackboneConfig):
+    def get_image_padding_lens(self, vision_backbone_config: MolmoVisionBackboneConfig):
         """Max numbers of image tokens can be built for one image"""
+        padding_lens = dict(
+            images=self.get_max_crops()
+        )
+        if vision_backbone_config.image_padding_embed:
+            padding_lens["image_masks"] = self.get_max_crops()
         preprocessor = self.build(None, vision_backbone_config)
-        return preprocessor.max_image_tokens()
+        vit = vision_backbone_config.vit
+        h, w = vit.image_default_input_size
+        max_image_tokens = preprocessor.compute_num_tokens(h, w, self.pooling_h, self.pooling_w)
+        padding_lens["pooled_patches_idx"] = max_image_tokens
+        return padding_lens
 
-    def build(self, tokenizer, vision_backbone_config: VisionBackboneConfig):
+    def build(self, tokenizer, vision_backbone_config: MolmoVisionBackboneConfig):
         vit = vision_backbone_config.vit
         return MolmoPreprocessor(
             tokenizer,
@@ -333,8 +348,8 @@ class MolmoPreprocessorConfig(BaseConfig):
             use_col_tokens=self.use_col_tokens,
 
             base_image_input_size=vit.image_default_input_size,
-            image_pooling_w=vision_backbone_config.image_pooling_w,
-            image_pooling_h=vision_backbone_config.image_pooling_h,
+            image_pooling_w=self.pooling_w,
+            image_pooling_h=self.pooling_h,
             image_patch_size=vit.image_patch_size,
             image_padding_mask=vision_backbone_config.image_padding_embed is not None,
             pad_value=vit.pad_value,
@@ -376,10 +391,11 @@ class MolmoPreprocessor:
     def __post_init__(self):
         if self.tokenizer is not None:
             special_tokens = get_special_token_ids(self.tokenizer)
-            self.image_end_token_id = special_tokens[tokenizer.DEFAULT_IM_END_TOKEN]
-            self.image_start_token_id = special_tokens[tokenizer.DEFAULT_IM_START_TOKEN]
-            self.image_col_token_id = special_tokens[tokenizer.DEFAULT_IM_COL_TOKEN]
-            self.image_patch_token_id = special_tokens[tokenizer.DEFAULT_IMAGE_PATCH_TOKEN]
+            self.image_end_token_id = special_tokens[tokenizer.IM_END_TOKEN]
+            self.image_start_token_id = special_tokens[tokenizer.IM_START_TOKEN]
+            self.image_col_token_id = special_tokens[tokenizer.IM_COL_TOKEN]
+            self.image_patch_token_id = special_tokens[tokenizer.IMAGE_PATCH_TOKEN]
+            self.image_low_res_token_id = special_tokens[tokenizer.IMAGE_LOW_RES_TOKEN]
             self.image_prompt_token_id = special_tokens[tokenizer.IMAGE_PROMPT]
 
     def max_image_tokens(self) -> int:
@@ -392,20 +408,21 @@ class MolmoPreprocessor:
             [base_h, base_w*self.max_crops],
             [base_h*self.max_crops, base_w]
         ]:
-            max_tokens = max(max_tokens, self.compute_num_tokens(h, w))
+            max_tokens = max(max_tokens, self.compute_num_tokens(
+                h, w, self.image_pooling_h, self.image_pooling_w))
         return max_tokens
 
-    def compute_num_tokens(self, image_h, image_w) -> int:
+    def compute_num_tokens(self, image_h, image_w, pool_h, pool_w) -> int:
         """Return the number of pooled image tokens produced for an image of size image_w, image_h"""
         image_patch_size = self.image_patch_size
         crop_patch_w = self.base_image_input_size[1] // image_patch_size
         crop_patch_h = self.base_image_input_size[0] // image_patch_size
 
         resize_idx = np.arange(crop_patch_w*crop_patch_h).reshape([crop_patch_h, crop_patch_w])
-        idx_arr = arange_for_pooling(resize_idx, self.image_pooling_w, self.image_pooling_h)
+        idx_arr = arange_for_pooling(resize_idx, pool_h, pool_w)
         resize_tokens = idx_arr.shape[0] * idx_arr.shape[1]
 
-        if self.crop_mode == "resize":
+        if self.crop_mode in ["resize"]:
             return resize_tokens
 
         margin_patches = sum(self.overlap_margins)
@@ -422,7 +439,7 @@ class MolmoPreprocessor:
         h, w = [tiling[0]*crop_window_size+margin_pixels, tiling[1]*crop_window_size+margin_pixels]
         h, w = h//image_patch_size, w//image_patch_size
         idx_arr = arange_for_pooling(
-            torch.zeros([h, w]), self.image_pooling_h, self.image_pooling_w)
+            torch.zeros([h, w]), pool_h, pool_w)
         overlap_tokens = idx_arr.shape[0] * idx_arr.shape[1]
         if self.crop_mode in ["overlap-and-resize-c2"]:
             return overlap_tokens + resize_tokens
@@ -458,6 +475,9 @@ class MolmoPreprocessor:
     def image_to_patches_and_tokens(
         self,
         image: ImageInput,
+        pooling_h: int,
+        pooling_w: int,
+        patch_id: int,
         is_training=False,
         rng=None,
     ):
@@ -489,13 +509,13 @@ class MolmoPreprocessor:
             resized_mask = np.expand_dims(resized_mask, 0)
             resized = self._normalize(resized)
             resize_idx = np.arange(crop_patch_w*crop_patch_h).reshape([crop_patch_h, crop_patch_w])
-            pooling_idx = arange_for_pooling(resize_idx, self.image_pooling_w, self.image_pooling_h)
+            pooling_idx = arange_for_pooling(resize_idx, pooling_h, pooling_w)
             h, w = pooling_idx.shape[:2]
-            pooling_idx = pooling_idx.reshape([-1, self.image_pooling_w*self.image_pooling_h])
+            pooling_idx = pooling_idx.reshape([-1, pooling_h*pooling_w])
 
             per_row = np.full(
                 (w,),
-                self.image_patch_token_id,
+                patch_id,
                 dtype=np.int32
             )
             if self.use_col_tokens:
@@ -580,9 +600,9 @@ class MolmoPreprocessor:
                 src.shape[1]//image_patch_size,
             )
 
-            pooling_idx = arange_for_pooling(patch_idx_arr, self.image_pooling_w, self.image_pooling_h)
+            pooling_idx = arange_for_pooling(patch_idx_arr, pooling_h, pooling_w)
             h, w = pooling_idx.shape[:2]
-            pooling_idx = pooling_idx.reshape([-1, self.image_pooling_w*self.image_pooling_h])
+            pooling_idx = pooling_idx.reshape([-1, pooling_h*pooling_w])
 
             # Now build the output tokens
             per_row = np.full(w, self.image_patch_token_id, dtype=np.int32)
@@ -611,9 +631,9 @@ class MolmoPreprocessor:
                 mask_arr = np.concatenate([np.expand_dims(resized_mask, 0), mask_arr], 0)
 
             resize_idx = np.arange(crop_patch_h*crop_patch_w).reshape([crop_patch_h, crop_patch_w])
-            resize_idx = arange_for_pooling(resize_idx, self.image_pooling_h, self.image_pooling_w)
+            resize_idx = arange_for_pooling(resize_idx, pooling_h, pooling_w)
             h, w = resize_idx.shape[:2]
-            resize_idx = resize_idx.reshape([-1, self.image_pooling_w*self.image_pooling_h])
+            resize_idx = resize_idx.reshape([-1, pooling_h*pooling_w])
 
             # Global image goes first, so the order of patches in previous crops gets increased
             pooling_idx = np.where(
@@ -625,7 +645,7 @@ class MolmoPreprocessor:
 
             per_row = np.full(
                 (w,),
-                self.image_patch_token_id,
+                patch_id,
                 dtype=np.int32
             )
             if self.use_col_tokens:
@@ -733,7 +753,8 @@ class MolmoPreprocessor:
 
         for ix in range(n):
             token_ix = image_idx[ix]
-            image_tokens, crops, img_mask, pooled_idx = self.image_to_patches_and_tokens(images[ix], is_training, rng)
+            image_tokens, crops, img_mask, pooled_idx = self.image_to_patches_and_tokens(
+                images[ix], self.image_pooling_h, self.image_pooling_w,  self.image_patch_token_id, is_training, rng)
             if token_ix == -1:  # -1 is an image inserted at the very start
                 start = 0
                 token_ix = 0

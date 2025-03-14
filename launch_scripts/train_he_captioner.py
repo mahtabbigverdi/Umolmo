@@ -18,7 +18,7 @@ from olmo.models.molmo.molmo import MolmoConfig
 from olmo.nn.image_vit import VitConfig
 from olmo.nn.llm import LlmConfig
 from olmo.models.model import FSDPWrapStrategy
-from olmo.nn.vision_backbone import VisionBackboneConfig
+from olmo.nn.vision_backbone import MolmoVisionBackboneConfig
 from olmo.tokenizer import TokenizerConfig
 from olmo.torch_util import get_world_size
 from olmo.train.optim import OptimizerType, OptimizerConfig, SchedulerConfig, SchedulerType
@@ -62,7 +62,7 @@ if __name__ == "__main__":
                     identifier="Qwen/Qwen2-7B",
                 )
             ),
-            vision_backbone=VisionBackboneConfig(
+            vision_backbone=MolmoVisionBackboneConfig(
                 vit=VitConfig(image_num_layers=1, resize_mode="metaclip"),
             ),
             token_scorer=TokenScorerConfig(
@@ -110,7 +110,7 @@ if __name__ == "__main__":
                 max_crops=8 if args.vision_backbone == "siglip" else 12,
                 overlap_margins=(4, 4)
             ),
-            vision_backbone=VisionBackboneConfig(
+            vision_backbone=MolmoVisionBackboneConfig(
                 vit_layers=vit_layers,
                 image_padding_embed=None,
                 vit=VISION_BACKBONES[args.vision_backbone]

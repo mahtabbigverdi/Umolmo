@@ -49,10 +49,9 @@ class MMCollator:
     """Converts list of examples from our datasets into a tensor batch"""
 
     TEXT_KEYS = ["input_tokens", "target_tokens", "loss_masks", "subsegment_ids", "position_ids"]
-    IMAGE_KEYS = ["images", "image_masks", "high_res_frame_ids"]
+    IMAGE_KEYS = ["images", "image_masks"]
 
-    def __init__(self, max_sequence_length=None, include_metadata=True, pad=None,
-                 max_crops=None, max_images_tokens=None):
+    def __init__(self, max_sequence_length=None, image_padding_lens=None, include_metadata=True, pad=None):
         """
         :param max_sequence_length: truncate examples longer than this length
         :param include_metadata: whether to include the metadata in the out batch
@@ -60,11 +59,10 @@ class MMCollator:
         :param max_crops: max number of crops to use if padding to the max sequence length
         """
         if pad:
-            assert max_sequence_length is not None and max_crops is not None
+            assert max_sequence_length is not None and image_padding_lens is not None
         self.max_sequence_length = max_sequence_length
-        self.max_crops = max_crops
+        self.image_padding_lens = image_padding_lens
         self.include_metadata = include_metadata
-        self.max_images_tokens=  max_images_tokens
         self.pad = pad
 
     def __call__(self, batch: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -84,14 +82,8 @@ class MMCollator:
                 out[key] = _collate(
                     [ex.get(key) for ex in batch], self.max_sequence_length, dtype, pad=self.pad)
 
-        for key in self.IMAGE_KEYS:
-            if any(key in ex for ex in batch):
-                out[key] = _collate([ex.get(key) for ex in batch], self.max_crops, pad=self.pad, allow_truncate=False)
-
-        out["pooled_patches_idx"] = _collate(
-            [ex["pooled_patches_idx"] for ex in batch],
-            self.max_images_tokens, pad=self.pad, allow_truncate=False
-        )
+        for key, max_len in self.image_padding_lens.items():
+            out[key] = _collate([ex.get(key) for ex in batch], max_len, pad=self.pad, allow_truncate=False)
 
         out["input_ids"] = out.pop("input_tokens")
         if "target_tokens" in out:

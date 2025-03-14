@@ -12,14 +12,14 @@ from omegaconf import omegaconf, OmegaConf
 
 from launch_scripts.utils import DEBUG_MODEL, VISION_BACKBONES, LLMS, \
     get_evaluator, get_evaluation
-from olmo.data.data_loader import RootSizeMixture, DataConfig
+from olmo.data.data_loader import RootSizeMixture, DataLoaderConfig
 from olmo.eval.inf_evaluator import InfDatasetEvaluatorConfig
 from olmo.models.he_molmo.he_data_formater import HeDataFormatter
 from olmo.models.he_molmo.he_molmo import TokenScorerConfig, HeMolmoConfig
 from olmo.models.he_molmo.he_preprocessor import HePreprocessorConfig
 from olmo.models.he_molmo.token_selector import TokenSelectionConfig
 from olmo.models.model import FSDPWrapStrategy
-from olmo.nn.vision_backbone import VisionBackboneConfig
+from olmo.nn.vision_backbone import MolmoVisionBackbone
 from olmo.torch_util import get_world_size
 from olmo.train.optim import OptimizerConfig, OptimizerType, SchedulerConfig, SchedulerType
 from olmo.train.trainer_config import TrainConfig, WandbConfig, FSDPConfig, FSDPPrecision, \
@@ -80,7 +80,7 @@ if __name__ == "__main__":
         debug = True
         model_cfg = HeMolmoConfig(
             replace(LLMS["qwen2.5_3b"], init_path=None, n_layers=8),
-            vision_backbone=VisionBackboneConfig(
+            vision_backbone=MolmoVisionBackbone(
                 vit=replace(VISION_BACKBONES["metaclip_l14_336"], init_path=None, image_num_layers=4),
                 vit_layers=[-3, -1],
                 image_padding_embed=None,
@@ -138,7 +138,7 @@ if __name__ == "__main__":
     multi_res_mixture = None
     evaluators = []
     evals = ["chart_qa"]
-    eval_config = DataConfig(
+    eval_config = DataLoaderConfig(
         dataset="",
         shuffle=False,
         split="validation",
@@ -158,9 +158,9 @@ if __name__ == "__main__":
             pixmo_ask_model_anything_flat=0.50,
             pixmo_cap_qa_flat=0.50
         )
-        if model_cfg.token_selection:
+        if model_cfg.token_selector:
             # model_cfg.token_selection.offset = 0
-            seq_len = 512 + model_cfg.token_selection.num_high_res_features
+            seq_len = 512 + model_cfg.token_selector.num_high_res_features
             model_cfg.max_one_image_query_len = 128
         else:
             seq_len = 2048
@@ -168,7 +168,7 @@ if __name__ == "__main__":
         evaluators.append(InfDatasetEvaluatorConfig(
             label="pixmo_ama",
             max_examples=32 if debug else 2048,
-            data=DataConfig(
+            data=DataLoaderConfig(
                 dataset="pixmo_ask_model_anything_flat",
                 shuffle=False,
                 split="validation",
@@ -182,7 +182,7 @@ if __name__ == "__main__":
         evaluators.append(InfDatasetEvaluatorConfig(
             label="pixmo_cap_qa",
             max_examples=32 if debug else 2048,
-            data=DataConfig(
+            data=DataLoaderConfig(
                 dataset="pixmo_cap_qa_flat",
                 shuffle=False,
                 split="validation",
@@ -233,7 +233,7 @@ if __name__ == "__main__":
     evaluator = InfDatasetEvaluatorConfig(
         label="val",
         subset_num_batches=2048//(8*get_world_size()),
-        data=DataConfig(
+        data=DataLoaderConfig(
             mixture=mixture,
             pad="to_max",
             shuffle=True,
@@ -260,7 +260,7 @@ if __name__ == "__main__":
             log_interval=log_interval
         ),
         model=model_cfg,
-        data=DataConfig(
+        data=DataLoaderConfig(
             mixture=mixture,
             root_size_mixture=root_size_mixture,
             shuffle=True,

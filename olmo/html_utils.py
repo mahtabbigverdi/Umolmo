@@ -126,43 +126,55 @@ def example_to_html_dict(ex, preprocessor, show_patches=False, show_crops=False)
                 max_dim=max_dim
             )
 
-    base_image_input_d = preprocessor.mm_preprocessor.image_patch_size
+    patch_size = preprocessor.mm_preprocessor.image_patch_size
     base_h, base_w = preprocessor.mm_preprocessor.base_image_input_size
     images = einops.rearrange(
         ex["images"], 't (h w) (dh dw c) -> t (h dh) (w dw) c',
-        h=base_h//base_image_input_d,
-        w=base_w//base_image_input_d,
-        dh=base_image_input_d, dw=base_image_input_d, c=3)
+        h=base_h//patch_size,
+        w=base_w//patch_size,
+        dh=patch_size, dw=patch_size, c=3)
     images = unnormalize_image(images)
 
     if show_crops:
-        used_in_output = set(ex["pooled_patches_idx"].ravel())
-        patch_idx = 0
-        for image_ix, image in enumerate(images):
-            patch_id = 0
-            boxes = []
-            for x in range(image.shape[0]//base_image_input_d):
-                for y in range(image.shape[1]//base_image_input_d):
-                    if patch_idx not in used_in_output:
-                        x0 = x * base_image_input_d
-                        y0 = y * base_image_input_d
-                        boxes.append([x0, y0, x0 + base_image_input_d, y0 + base_image_input_d])
-                    patch_idx += 1
+        n_crops = ex["images"].shape[0]
+        crop_h, crop_w = base_h//patch_size, base_w//patch_size
+        boxes_to_show = [[] for _ in range(len(images))]
+        patches_used = []
+        if ex.get("pooled_patches_idx") is not None:
+            patches_used += ex["pooled_patches_idx"].tolist()
+        if ex.get("low_res_pooled_idx") is not None:
+            patches_used += ex["low_res_pooled_idx"].tolist()
+        if ex.get("high_res_pooled_idx") is not None:
+            patches_used += ex["high_res_pooled_idx"].tolist()
+
+        for patch_ids in patches_used:
+            patch_ids = np.array(patch_ids)
+            patch_ids = patch_ids[patch_ids >= 0]
+            if len(patch_ids) == 0:
+                continue
+            crop_ix = patch_ids.max() // (crop_h * crop_w)
+            patch_ids %= (crop_h * crop_w)
+            xs = (patch_ids % crop_h) * patch_size
+            ys = (patch_ids // crop_h) * patch_size
+            boxes_to_show[crop_ix].append([
+                xs.min(), ys.min(), xs.max()+patch_size, ys.max()+patch_size])
+
+        for crop_ix, (crop, boxes) in enumerate(zip(images, boxes_to_show)):
             if len(boxes) > 0:
-                out[f"patch-{image_ix}"] = get_html_image_with_boxes(
-                    build_embedded_image(image), [BoxesToVisualize(np.array(boxes), "red")])
+                out[f"patch-{crop_ix}"] = get_html_image_with_boxes(
+                    build_embedded_image(crop), [BoxesToVisualize(np.array(boxes), "blue")])
             else:
-                out[f"patch-{image_ix}"] = image
+                out[f"patch-{crop_ix}"] = crop
 
     if show_patches:
         pooled_patches_idx = ex["pooled_patches_idx"]
         special_token_to_id = get_special_token_ids(voc)
-        image_patch_id = special_token_to_id[tokenizer.DEFAULT_IMAGE_PATCH_TOKEN]
+        image_patch_id = special_token_to_id[tokenizer.IMAGE_PATCH_TOKEN]
         id_to_special_token = {i: k for i, k in special_token_to_id.items()}
         with_patches = []
         patches = einops.rearrange(images,
             't (h dh) (w dw) c -> (t h w) dh dw c',
-            dh=base_image_input_d, dw=base_image_input_d
+            dh=patch_size, dw=patch_size
         )
         on_pooled_patch = 0
         for token_ix, ix in enumerate(ex["input_tokens"]):

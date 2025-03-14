@@ -27,7 +27,7 @@ from olmo.nn.image_vit import ResidualAttentionBlock, VisionTransformer
 from olmo.nn.legacy_config import convert_legacy_config
 from olmo.nn.llm import LlmConfig, OLMoBlock, Llm
 from olmo.models.model_config import BaseModelConfig
-from olmo.nn.vision_backbone import MolmoVisionBackbone, VisionBackboneConfig
+from olmo.nn.vision_backbone import MolmoVisionBackbone, MolmoVisionBackboneConfig
 from olmo.torch_util import BufferCache, get_default_device
 from torch.distributed.fsdp import fully_shard
 
@@ -45,7 +45,7 @@ class MolmoConfig(BaseModelConfig):
     llm: LlmConfig = field(default_factory=LlmConfig)
     """LLM to use for generation"""
 
-    vision_backbone: Optional[VisionBackboneConfig] = field(default_factory=VisionBackboneConfig)
+    vision_backbone: Optional[MolmoVisionBackboneConfig] = field(default_factory=MolmoVisionBackboneConfig)
     """Vision embedding module to get image features"""
 
     data_formatter: DataFormatter = field(default_factory=DataFormatter)
@@ -64,7 +64,7 @@ class MolmoConfig(BaseModelConfig):
             config = convert_legacy_config(config)
         config.llm = LlmConfig.update_legacy_settings(config.llm)
         if config.vision_backbone is not None:
-            config.vision_backbone = VisionBackboneConfig.update_legacy_settings(config.vision_backbone)
+            config.vision_backbone = MolmoVisionBackboneConfig.update_legacy_settings(config.vision_backbone)
         config.data_formatter = DataFormatter.update_legacy_settings(config.data_formatter)
         config.mm_preprocessor = MolmoPreprocessorConfig.update_legacy_settings(config.mm_preprocessor)
         return config
@@ -91,10 +91,13 @@ class MolmoConfig(BaseModelConfig):
 
     def build_collator(self, sequence_length, pad_mode: str, include_metadata=True) -> MMCollator:
         """Collators for tensors from the preprocessor produces"""
+        padding_lens = self.mm_preprocessor.get_image_padding_lens(self.vision_backbone)
+        if pad_mode:
+            log.info(f"Building collator, pad={pad_mode} seq_len={sequence_length} " +
+                     " ".join(f"{k}={v}" for k, v in padding_lens.items()))
         return MMCollator(
             sequence_length,
-            max_crops=self.mm_preprocessor.get_max_crops(),
-            max_images_tokens=self.mm_preprocessor.get_max_tokens(self.vision_backbone),
+            padding_lens,
             include_metadata=include_metadata,
             pad=pad_mode,
         )
@@ -121,14 +124,14 @@ class Molmo(ModelBase):
         self.special_ids = tokenizer.get_special_token_ids(self.config.build_tokenizer())
         if self.config.bi_directional_attn:
             self.__cache["image_tokens"] = torch.as_tensor([self.special_ids[x] for x in [
-                tokenizer.DEFAULT_IMAGE_PATCH_TOKEN,
-                tokenizer.DEFAULT_IM_COL_TOKEN,
-                tokenizer.DEFAULT_IM_START_TOKEN,
-                tokenizer.DEFAULT_IM_END_TOKEN,
+                tokenizer.IMAGE_PATCH_TOKEN,
+                tokenizer.IM_COL_TOKEN,
+                tokenizer.IM_START_TOKEN,
+                tokenizer.IM_END_TOKEN,
             ]], dtype=torch.long, device=get_default_device())
-        self._image_end_token_id = self.special_ids[tokenizer.DEFAULT_IM_END_TOKEN]
-        self._image_start_token_id = self.special_ids[tokenizer.DEFAULT_IM_START_TOKEN]
-        self._image_patch_id = self.special_ids[tokenizer.DEFAULT_IMAGE_PATCH_TOKEN]
+        self._image_end_token_id = self.special_ids[tokenizer.IM_END_TOKEN]
+        self._image_start_token_id = self.special_ids[tokenizer.IM_START_TOKEN]
+        self._image_patch_id = self.special_ids[tokenizer.IMAGE_PATCH_TOKEN]
 
     def reset_parameters(self):
         """Re-initialize the weights from scratch"""

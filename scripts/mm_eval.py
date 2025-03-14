@@ -14,22 +14,17 @@ import torch
 import wandb
 
 from olmo.config import BaseConfig
-<<<<<<< HEAD
-from olmo.data.data_loader import DataConfig
-from olmo.models.molmo.model_preprocessor import MolmoPreprocessorConfig
-=======
 from olmo.data.data_loader import DataLoaderConfig
-from olmo.models.molmo.model_preprocessor import MultiModalPreprocessorConfig
->>>>>>> origin/main-refactor-w-video
 from olmo.eval.inf_evaluator import InfDatasetEvaluator, EvaluatorConfig, \
     InfDatasetEvaluatorConfig
 from olmo.eval.loss_evaluator import LossDatasetEvaluatorConfig, LossDatasetEvaluator
 from olmo.exceptions import OLMoCliError
 from olmo.io import file_exists, write_file, get_bytes_range, read_file
+from olmo.models.molmo.model_preprocessor import MolmoPreprocessorConfig
 from olmo.nn.image_vit import VitConfig
 from olmo.nn.llm import LlmConfig
 from olmo.models.molmo.molmo import Molmo, MolmoConfig
-from olmo.nn.vision_backbone import VisionBackboneConfig
+from olmo.nn.vision_backbone import MolmoVisionBackboneConfig
 from olmo.tokenizer import TokenizerConfig
 from olmo.torch_util import (
     barrier,
@@ -253,7 +248,7 @@ class ModelEvaluator:
                         identifier='allenai/OLMoE-1B-7B-0924'
                     )
                 ),
-                vision_backbone=VisionBackboneConfig(
+                vision_backbone=MolmoVisionBackboneConfig(
                     vit=VitConfig(
                         image_num_layers=1, image_emb_dim=128,
                         image_num_heads=2, image_head_dim=64,

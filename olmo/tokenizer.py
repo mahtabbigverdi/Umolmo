@@ -17,14 +17,15 @@ except ImportError:
     from functools import lru_cache as cache
 
 # Special tokens, these should be present in any tokenizer we use since the preprocessor uses them
-DEFAULT_IMAGE_PATCH_TOKEN = f"<im_patch>"
-DEFAULT_IM_START_TOKEN = f"<im_start>"
-DEFAULT_IM_END_TOKEN = f"<im_end>"
-DEFAULT_IM_COL_TOKEN = f"<im_col>"
+IMAGE_PATCH_TOKEN = f"<im_patch>"  # Where to insert high-res tokens
+IMAGE_LOW_RES_TOKEN = f"<im_l>"  # Where to insert low-res tokens
+IM_START_TOKEN = f"<img_start>"
+IM_END_TOKEN = f"<im_end>"
+IM_COL_TOKEN = f"<im_col>"
 IMAGE_PROMPT = "<|image|>"
 
-EXTRA_TOKENS = (DEFAULT_IM_START_TOKEN, DEFAULT_IM_END_TOKEN, DEFAULT_IMAGE_PATCH_TOKEN,
-                DEFAULT_IM_COL_TOKEN, IMAGE_PROMPT)
+EXTRA_TOKENS = (IM_START_TOKEN, IM_END_TOKEN, IMAGE_PATCH_TOKEN,
+                IM_COL_TOKEN, IMAGE_PROMPT, IMAGE_LOW_RES_TOKEN)
 
 
 class HfTokenizerWrapper:

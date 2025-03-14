@@ -13,7 +13,7 @@ from olmo.eval.loss_evaluator import LossDatasetEvaluatorConfig
 from olmo.models.molmo.molmo import MolmoConfig
 from olmo.models.model import FSDPWrapStrategy
 from olmo.train.optim import OptimizerConfig, OptimizerType, SchedulerConfig, SchedulerType
-from olmo.nn.vision_backbone import VisionBackboneConfig, ImagePaddingEmbed
+from olmo.nn.vision_backbone import MolmoVisionBackboneConfig, ImagePaddingEmbed
 from scripts.train import run_trainer
 
 from olmo.data.data_loader import DataLoaderConfig
@@ -70,7 +70,7 @@ if __name__ == "__main__":
                 response_residual_dropout=0.1,
                 additional_vocab_size=128,
             ),
-            vision_backbone=VisionBackboneConfig(
+            vision_backbone=MolmoVisionBackboneConfig(
                 vit=VISION_BACKBONES[args.vision_backbone],
                 vit_layers=vit_layers,
                 image_padding_embed=ImagePaddingEmbed.pad_and_partial_pad if args.vision_backbone == "openai" else None

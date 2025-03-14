@@ -6,7 +6,7 @@ from olmo.models.molmo.data_formatter import DataFormatter
 from olmo.models.molmo.model_preprocessor import MolmoPreprocessorConfig
 from olmo.nn.image_vit import VitConfig
 from olmo.nn.llm import LlmConfig
-from olmo.nn.vision_backbone import VisionBackboneConfig
+from olmo.nn.vision_backbone import MolmoVisionBackboneConfig
 
 
 IGNORE = object()
@@ -44,7 +44,7 @@ REMOVED = dict(
 )
 
 
-def convert_vision_backbone(config) -> VisionBackboneConfig:
+def convert_vision_backbone(config) -> MolmoVisionBackboneConfig:
     image_vit = {k: MISSING for k in VitConfig().asdict()}
     vision_backbone = {}
     for key, value in config.items():
@@ -72,7 +72,7 @@ def convert_legacy_config(config):
     preprocessor = {k: MISSING for k in MolmoPreprocessorConfig().asdict()}
     data_formater = {k: MISSING for k in DataFormatter().asdict()}
     image_vit_keys = {k: MISSING for k in VitConfig().asdict()}
-    vision_backbone = {k: MISSING for k in VisionBackboneConfig().asdict()}
+    vision_backbone = {k: MISSING for k in MolmoVisionBackboneConfig().asdict()}
     llm_args = {}
 
     # Renamed
@@ -80,6 +80,7 @@ def convert_legacy_config(config):
     data_formater["prompt_templates"] = config.pop("prompt_type")
     data_formater["message_format"] = config.pop("message_formatting")
     llm["init_path"] = config.pop("llm_load_path")
+    preprocessor["loss_token_weighting"] = config.pop("multi_annotation_weighting", None)
 
     # Moved to vision backbone
     vision_backbone: Dict = config.pop("vision_backbone")
