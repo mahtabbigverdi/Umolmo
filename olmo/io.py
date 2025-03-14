@@ -305,6 +305,13 @@ def copy_dir(
         deque(as_completed(futures), maxlen=0)
 
 
+def is_dir(path: PathOrStr) -> bool:
+    if is_url(path):
+        return not dir_is_empty(path)
+    else:
+        return Path(path).is_dir()
+
+
 def dir_is_empty(dir: PathOrStr) -> bool:
     """
     Check if a local or remote directory is empty.
