@@ -11,7 +11,7 @@ from transformers.image_utils import ImageInput
 from olmo.config import BaseConfig
 from olmo.models.molmo.model_preprocessor import select_tiling, batch_pixels_to_patches, \
     MolmoPreprocessor, arange_for_pooling
-from olmo.nn.vision_backbone import VisionBackboneConfig
+from olmo.nn.vision_backbone import MolmoVisionBackboneConfig
 
 
 def build_pos_ids(subsegment_ids):
@@ -65,13 +65,13 @@ class HePreprocessorConfig(BaseConfig):
         else:
             return self.max_crops
 
-    def get_max_tokens(self, vision_backbone_config: VisionBackboneConfig):
+    def get_max_tokens(self, vision_backbone_config: MolmoVisionBackboneConfig):
         """Max numbers of image tokens can be built for one image"""
         preprocessor = self.build(None, vision_backbone_config)
         return preprocessor.max_image_tokens()
 
     def build(
-        self, tokenizer, vision_backbone_config: VisionBackboneConfig):
+        self, tokenizer, vision_backbone_config: MolmoVisionBackboneConfig):
         vit = vision_backbone_config.vit
 
         return HeMultiModalPreprocessor(

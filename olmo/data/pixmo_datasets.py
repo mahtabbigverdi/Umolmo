@@ -141,21 +141,50 @@ class PixMoDocs(Dataset):
         for name in ["other", "charts", "diagrams", "tables"]:
             datasets.load_dataset_builder("allenai/pixmo-docs", name=name).download_and_prepare()
 
-    def __init__(self, doc_type, split, sample=None, keep_in_memory=False, v1_style=False):
+    def __init__(self, doc_type, split, sample=None, keep_in_memory=False, v1_style=False,
+                 flat=False, use_image_files=False):
         assert doc_type in ["other", "charts", "diagrams", "tables"]
         assert split in ["train", "validation", "test"]
         self.doc_type = doc_type
         self.v1_style = v1_style
         self.dataset = datasets.load_dataset(
             "allenai/pixmo-docs", name=doc_type, split=split, keep_in_memory=keep_in_memory)
+        self.flat = flat
+        self.use_image_files = use_image_files
+        if flat:
+            # Use an index so we don't have to load the images into memory if `keep_in_memory=False`
+            logging.info("Building flat index")
+            offset = 0
+            n_questions = [len(x["question"]) for x in self.dataset["questions"]]
+            image_index = np.repeat(np.arange(len(self.dataset), dtype=np.int32), n_questions)
+            question_index = np.concatenate([np.arange(x, dtype=np.int32) for x in n_questions], 0)
+            self.flat_index = np.stack([image_index, question_index], 1)
+            logging.info("Done")
+        else:
+            self.flat_index = None
 
     def __len__(self):
-        return len(self.dataset)
+        return len(self.flat_index) if self.flat else len(self.dataset)
 
     def get(self, item, rng):
         style = f"pixmo_docs_{self.doc_type}"
         if self.v1_style:
             style = self.V1_STYLE[style]
+        if self.flat:
+            image_ix, question_ix = self.flat_index[item]
+            example = self.dataset[int(image_ix)]
+            if self.use_image_files:
+                example["image"] = join(DATA_HOME, "pixmo_docs_images", example["image"])
+            qas = example["questions"]
+            return dict(
+                image=example["image"],
+                question=qas["question"][question_ix],
+                answer=qas["answer"][question_ix],
+                style=style,
+                metadata=dict(
+                    image_id=example["image_id"]
+                )
+            )
         example = self.dataset[item]
         qas = example["questions"]
         return dict(

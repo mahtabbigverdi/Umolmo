@@ -8,6 +8,9 @@ from omegaconf import OmegaConf
 
 from launch_scripts.utils import get_evaluation, VIDEO_DEBUG_MODEL
 from launch_scripts.train_multitask_model import get_training_mixture
+from olmo.models.molmo.molmo import MolmoConfig
+from olmo.models.video_olmo.video_preprocessor import MultiModalVideoPreprocessorConfig
+from olmo.nn.image_vit import VitConfig
 
 from olmo.train.optim import OptimizerType, OptimizerConfig, SchedulerConfig, SchedulerType
 from olmo.train.trainer_config import (
@@ -109,21 +112,29 @@ if __name__ == "__main__":
         inf_eval_interval = duration
         checkpoint = select_checkpoint(args.checkpoint)
         if exists(join(args.checkpoint, "model.yaml")):
-            model_cfg = VideoOlmoConfig.load(join(checkpoint, "model.yaml"))
+            model_cfg = MolmoConfig.load(join(checkpoint, "model.yaml"))
         else:
-            model_cfg = VideoOlmoConfig.load(join(checkpoint, "config.yaml"), key="model")
+            model_cfg = MolmoConfig.load(join(checkpoint, "config.yaml"), key="model")
+        model_cfg = VideoOlmoConfig(
+            llm=model_cfg.llm,
+            vision_backbone=model_cfg.vision_backbone,
+            data_formatter=model_cfg.data_formatter,
+            mm_preprocessor=MultiModalVideoPreprocessorConfig(
+                high_res_pooling_h=args.high_res_pooling_h,
+                high_res_pooling_w=args.high_res_pooling_w,
+                periodic_high_res_frame=args.periodic_high_res_frame,
+                max_frames=args.max_crops,
+                **dict(
+                    model_cfg.mm_preprocessor.asdict(),
+                    crop_mode="resize",
+                    max_crops=args.max_crops,
+                    pooling_h=args.image_pooling_h,
+                    pooling_w=args.image_pooling_w,
+                )
+            ),
+            bi_directional_attn=None
+        )
         num_workers = args.num_workers
-
-    model_cfg.vision_backbone.image_pooling_h = args.image_pooling_h
-    model_cfg.vision_backbone.image_pooling_w = args.image_pooling_w
-
-    model_cfg.vision_backbone.high_res_pooling_h = args.high_res_pooling_h
-    model_cfg.vision_backbone.high_res_pooling_w = args.high_res_pooling_w
-    model_cfg.vision_backbone.periodic_high_res_frame = args.periodic_high_res_frame
-
-    # Setting for the video training
-    model_cfg.mm_preprocessor.crop_mode = "frame_sampling"
-    model_cfg.mm_preprocessor.max_crops = args.max_crops
 
     if args.seq_len != model_cfg.llm.max_sequence_length:
         model_cfg.llm.max_sequence_length = args.seq_len

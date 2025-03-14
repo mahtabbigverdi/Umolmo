@@ -4,8 +4,8 @@ import numpy as np
 import pytest
 
 from olmo.models.he_molmo.he_preprocessor import HeMultiModalPreprocessor
-from olmo.tokenizer import build_tokenizer, get_special_token_ids, DEFAULT_IM_START_TOKEN, \
-    IMAGE_PROMPT, DEFAULT_IM_END_TOKEN, DEFAULT_IM_COL_TOKEN, DEFAULT_IMAGE_PATCH_TOKEN
+from olmo.tokenizer import build_tokenizer, get_special_token_ids, IM_START_TOKEN, \
+    IMAGE_PROMPT, IM_END_TOKEN, IM_COL_TOKEN, IMAGE_PATCH_TOKEN
 
 
 def test_preprocessing(col_tokens: bool=False, max_crops=4, siglip=False):
@@ -13,10 +13,10 @@ def test_preprocessing(col_tokens: bool=False, max_crops=4, siglip=False):
     n_high_res = 256
 
     special_token_ids = get_special_token_ids(tokenizer)
-    start_token_id = special_token_ids[DEFAULT_IM_START_TOKEN]
-    end_token_id = special_token_ids[DEFAULT_IM_END_TOKEN]
-    col_token_id = special_token_ids[DEFAULT_IM_COL_TOKEN]
-    patch_token_id = special_token_ids[DEFAULT_IMAGE_PATCH_TOKEN]
+    start_token_id = special_token_ids[IM_START_TOKEN]
+    end_token_id = special_token_ids[IM_END_TOKEN]
+    col_token_id = special_token_ids[IM_COL_TOKEN]
+    patch_token_id = special_token_ids[IMAGE_PATCH_TOKEN]
 
     preprocessor = HeMultiModalPreprocessor(
         tokenizer=tokenizer,

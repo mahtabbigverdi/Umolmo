@@ -15,9 +15,9 @@ from decord import VideoReader, cpu
 import concurrent.futures
 
 from olmo.models.molmo.data_formatter import DataFormatter
-from olmo.models.molmo.model_preprocessor import MultiModalPreprocessor, MultiModalPreprocessorConfig
+from olmo.models.molmo.model_preprocessor import MolmoPreprocessor, MolmoPreprocessorConfig
 
-from olmo.nn.vision_backbone import VisionBackboneConfig
+from olmo.nn.vision_backbone import MolmoVisionBackboneConfig
 
 
 def get_sampling_fps(
@@ -198,7 +198,7 @@ def get_image_collage(frames: np.ndarray, frame_size: int = 128) -> np.ndarray:
 
 
 @dataclass
-class MultiModalVideoPreprocessorConfig(MultiModalPreprocessorConfig):
+class MultiModalVideoPreprocessorConfig(MolmoPreprocessorConfig):
     crop_mode: str = "frame_sampling"
     """How to divide the images into crops"""
 
@@ -208,30 +208,39 @@ class MultiModalVideoPreprocessorConfig(MultiModalPreprocessorConfig):
     frame_sample_mode: str = "fps"
     """How to sample the frames from the video"""
 
+    periodic_high_res_frame: Optional[int] = None
+    """Periodic high resolution frame rate"""
+
+    high_res_pooling_w: Optional[int] = None
+    """High res pooling w stride"""
+
+    high_res_pooling_h: Optional[int] = None
+    """High res pooling h stride"""
+
     candidate_sampling_fps: Tuple[float] = (0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0)
     """Candidate sampling fps to sample the frames from the video"""
 
     bi_directional_attn: Optional[str] = None
     """Allow bidirectional attention for some tokens"""
 
-    def get_max_frames(self) -> int:
-        """Max numbers of frames to sample from a video"""
-        return self.max_frames or self.max_crops
-
-    def get_max_crops(self) -> int:
-        """Max numbers of that can be built for one image"""
-        max_frames = self.get_max_frames()
-        if self.crop_mode in ["resize", "frame_sampling"]:
-            return max_frames * 1
-        elif "resize" in self.crop_mode:
-            return max_frames * (1 + self.max_crops)
+    def get_image_padding_lens(self, vision_backbone_config: MolmoVisionBackboneConfig):
+        """Max numbers of image tokens can be built for one image"""
+        padding_lens = dict(
+            images=self.get_max_crops()*self.max_frames
+        )
+        if vision_backbone_config.image_padding_embed:
+            padding_lens["image_masks"] = self.get_max_crops()*self.max_frames
+        preprocessor = self.build(None, vision_backbone_config)
+        vit = vision_backbone_config.vit
+        h, w = vit.image_default_input_size
+        low_res_tokens = preprocessor.compute_num_tokens(h, w, self.pooling_h, self.pooling_w)
+        if self.periodic_high_res_frame:
+            raise NotImplementedError()
         else:
-            return max_frames * self.max_crops
+            padding_lens["low_res_pooled_idx"] = low_res_tokens*self.max_frames
+        return padding_lens
 
-    def build(self, tokenizer, vision_backbone_config: VisionBackboneConfig):
-        h, w = vision_backbone_config.llm_patches_per_crop()
-        high_res_token_length_h, high_res_token_length_w = vision_backbone_config.llm_patches_per_crop_given_pool_size(
-            vision_backbone_config.high_res_pooling_w, vision_backbone_config.high_res_pooling_h)
+    def build(self, tokenizer, vision_backbone_config: MolmoVisionBackboneConfig):
         vit = vision_backbone_config.vit
         return MultiModalVideoPreprocessor(
             tokenizer,
@@ -245,13 +254,11 @@ class MultiModalVideoPreprocessorConfig(MultiModalPreprocessorConfig):
             use_col_tokens=self.use_col_tokens,
 
             base_image_input_size=vit.image_default_input_size,
-            image_pooling_w=vision_backbone_config.image_pooling_w,
-            image_pooling_h=vision_backbone_config.image_pooling_h,
-            periodic_high_res_frame=vision_backbone_config.periodic_high_res_frame,
-            high_res_token_length_w=high_res_token_length_w,
-            high_res_token_length_h=high_res_token_length_h,
-            image_token_length_w=w,
-            image_token_length_h=h,
+            image_pooling_w=self.pooling_w,
+            image_pooling_h=self.pooling_h,
+            high_res_pooling_w=self.high_res_pooling_h,
+            high_res_pooling_h=self.high_res_pooling_w,
+            periodic_high_res_frame=self.periodic_high_res_frame,
             image_patch_size=vit.image_patch_size,
             image_padding_mask=vision_backbone_config.image_padding_embed is not None,
             pad_value=vit.pad_value,
@@ -263,7 +270,7 @@ class MultiModalVideoPreprocessorConfig(MultiModalPreprocessorConfig):
 
 
 @dataclass
-class MultiModalVideoPreprocessor(MultiModalPreprocessor):
+class MultiModalVideoPreprocessor(MolmoPreprocessor):
     """
     Converts video/text inputs into tensors that can be used in the forward method
     for the a model
@@ -271,12 +278,12 @@ class MultiModalVideoPreprocessor(MultiModalPreprocessor):
     subsegment_video_value: int = 10000
     max_text_tokens: int = 750
     periodic_high_res_frame: Optional[int] = None
-    high_res_token_length_h: Optional[int] = None
-    high_res_token_length_w: Optional[int] = None
+    high_res_pooling_h: Optional[int] = None
+    high_res_pooling_w: Optional[int] = None
 
     def __post_init__(self):
         super().__post_init__()
-    
+
     def __call__(
         self,
         frames,
@@ -342,80 +349,68 @@ class MultiModalVideoPreprocessor(MultiModalPreprocessor):
             frame_id_token_ids.append(self.tokenizer.encode(frame_id))
 
         all_frame_patches = []
-        frame_position_id_list = []
-        all_crop_masks = []
-        combined_position_tokens = np.array([], dtype=np.int32)
+        low_res_pooled_idx = []
+        high_res_pooled_idx = []
+        video_masks = []
+        video_tokens = []
 
         for frame_idx, frame in enumerate(frames):
-            frame_token_length_w = self.image_token_length_w
-            frame_token_length_h = self.image_token_length_h
-            if self.periodic_high_res_frame is not None and frame_idx % self.periodic_high_res_frame == 0:
+            frame_pooling_w = self.image_pooling_w
+            frame_pooling_h = self.image_pooling_h
+            patch_id = self.image_low_res_token_id
+            is_high_res = self.periodic_high_res_frame is not None and frame_idx % self.periodic_high_res_frame == 0
+            if is_high_res:
                 # If the frame is a high res frame, use the high res token length
-                frame_token_length_w = self.high_res_token_length_w
-                frame_token_length_h = self.high_res_token_length_h
-                high_res_tokens_per_image = self.high_res_token_length_w * self.high_res_token_length_h
+                frame_pooling_w = self.high_res_pooling_w
+                frame_pooling_h = self.high_res_pooling_h
+                patch_id = self.image_patch_token_id
 
-            image_patches, img_position_token_ids, patch_ordering, img_mask = self.image_to_patches_and_tokens(
-                                                frame, frame_token_length_w, frame_token_length_h, is_training, rng)
-            image_position_idx = self.build_image_input_idx(
-                img_position_token_ids,
-                patch_ordering,
-                frame_token_length_w,
-                frame_token_length_h,
+            frame_tokens, frame_patches, frame_masks, pooled_idx = self.image_to_patches_and_tokens(
+                                                frame, frame_pooling_w, frame_pooling_h, patch_id, is_training, rng)
+            offset = sum(np.prod(x.shape[:2]) for x in all_frame_patches)
+            pooled_idx = np.where(
+                pooled_idx >= 0,
+                pooled_idx + offset,
+                pooled_idx
             )
-
-            # Add position padding that allows low res and high res to be concatenated and used in the same forward pass
-            if self.periodic_high_res_frame is not None:
-                if image_position_idx.shape[-1] < high_res_tokens_per_image:
-                    image_position_idx = np.pad(image_position_idx, [[0, 0], [0, high_res_tokens_per_image - image_position_idx.shape[-1]]], mode="constant", constant_values=-1)
-
-            combined_position_tokens = np.concatenate((combined_position_tokens, np.array(frame_id_token_ids[frame_idx], dtype=np.int32)), axis=0)
-            # Add the offset when adding to the global position token ids
-            image_position_idx = np.where(
-                image_position_idx >= 0,
-                image_position_idx + len(combined_position_tokens),
-                image_position_idx
-            )
-            combined_position_tokens = np.concatenate((combined_position_tokens, img_position_token_ids ), axis=0)
-
-            frame_position_id_list.append(image_position_idx)
-            all_frame_patches.append(image_patches)
+            if is_high_res:
+                high_res_pooled_idx.append(pooled_idx)
+            else:
+                low_res_pooled_idx.append(pooled_idx)
+            all_frame_patches.append(frame_patches)
             if self.image_padding_mask:
-                all_crop_masks.append(img_mask)
+                video_masks.append(frame_masks)
+            video_tokens.append(np.array(frame_id_token_ids[frame_idx], dtype=np.int32))
+            video_tokens.append(frame_tokens)
 
         all_frame_patches = np.concatenate(all_frame_patches, 0)
+        video_tokens = np.concatenate(video_tokens, 0)
 
         if text_subsegments is not None:
             text_subsegments = np.concatenate(text_subsegments, dtype=np.int32)
             video_text_subsegments = np.concatenate([
-                np.full(len(combined_position_tokens), self.subsegment_video_value, np.int32),
+                np.full(len(video_tokens), self.subsegment_video_value, np.int32),
                 text_subsegments
             ], axis=0)
         else:
             video_text_subsegments = None
 
         # add 0 loss for the frame tokens
-        token_position_loss_mask = np.zeros_like(combined_position_tokens)
-        combined_loss_masks = np.concatenate((token_position_loss_mask, text_loss_masks), axis=0)
+        video_loss_mask = np.zeros_like(video_tokens)
+        combined_loss_masks = np.concatenate((video_loss_mask, text_loss_masks), axis=0)
 
-        combined_position_tokens = np.concatenate((combined_position_tokens, text_token_ids), axis=0)
-
-        # build the target token ids
-        target_tokens = combined_position_tokens
-
-        frame_position_id_list = np.concatenate(frame_position_id_list, axis=0)
-        # Move by one position where the values are greater than 0 since the bos_token_id will be included
-        frame_position_id_list = np.where(frame_position_id_list < 0, frame_position_id_list, frame_position_id_list + 1)
+        input_tokens = np.concatenate((video_tokens, text_token_ids), axis=0)
+        target_tokens = input_tokens
 
         # Process the input tokens
-        ends_with_eos = combined_position_tokens[-1] == self.tokenizer.eos_token_id
+        ends_with_eos = target_tokens[-1] == self.tokenizer.eos_token_id
         if not ends_with_eos and combined_loss_masks[-1]:
             raise RuntimeError("EOS should not be masked")
 
         bos = self.tokenizer.bos_token_id or self.tokenizer.eos_token_id
-        combined_position_tokens = np.pad(combined_position_tokens, [[1, 0]], constant_values=bos)
+        input_tokens = np.pad(input_tokens, [[1, 0]], constant_values=bos)
         if ends_with_eos:
-            combined_position_tokens = combined_position_tokens[:-1]
+            input_tokens = input_tokens[:-1]
         else:
             # We are presumably doing inference since the messages end with user response instead
             # of a target response, so these fields should not be used, but pad them anyway
@@ -425,13 +420,22 @@ class MultiModalVideoPreprocessor(MultiModalPreprocessor):
 
         out = {
             "images": all_frame_patches,
-            "input_tokens": combined_position_tokens,
-            "image_input_idx": frame_position_id_list,
+            "input_tokens": input_tokens,
             "loss_masks": combined_loss_masks,
             "target_tokens": target_tokens,
         }
+        if low_res_pooled_idx:
+            out["low_res_pooled_idx"] = np.concatenate(low_res_pooled_idx, 0)
+        else:
+            raise NotImplementedError()
+        if self.periodic_high_res_frame:
+            if high_res_pooled_idx:
+                out["high_res_pooled_idx"] = np.concatenate(high_res_pooled_idx, 0)
+            else:
+                raise NotImplementedError()
+
         if self.image_padding_mask:
-            out["image_masks"] = np.concatenate(all_crop_masks, 0)
+            out["image_masks"] = np.concatenate(video_masks, 0)
 
         if video_text_subsegments is not None:
             # Add a position holder for bos, since all text segments should look at bos. Make it the same as video
@@ -447,13 +451,7 @@ class MultiModalVideoPreprocessor(MultiModalPreprocessor):
                 position_ids = np.where(video_text_subsegments == subsegment_id, segment_position_ids, position_ids)
             out["position_ids"] = position_ids
         else:
-            out["position_ids"] = np.arange(len(combined_position_tokens), dtype=np.int64)
-
-        if self.periodic_high_res_frame is not None:
-            high_res_frame_list = np.zeros(len(frames), dtype=np.int32)
-            high_res_frame_list[::self.periodic_high_res_frame] = 1
-            out["high_res_frame_ids"] = high_res_frame_list
-
+            out["position_ids"] = np.arange(len(video_tokens), dtype=np.int64)
         return out
 
 

@@ -11,7 +11,7 @@ from olmo.nn.image_vit import VitConfig
 from olmo.nn.llm import LlmConfig, AttentionType, LayerNormType
 from olmo.models.molmo.molmo import MolmoConfig
 from olmo.tokenizer import TokenizerConfig
-from olmo.nn.vision_backbone import VisionBackboneConfig, VideoVisionBackboneConfig
+from olmo.nn.vision_backbone import MolmoVisionBackboneConfig
 
 log = logging.getLogger(__name__)
 
@@ -31,7 +31,7 @@ DEBUG_MODEL = MolmoConfig(
             identifier="Qwen/Qwen2-7B",
         )
     ),
-    vision_backbone=VisionBackboneConfig(
+    vision_backbone=MolmoVisionBackboneConfig(
         vit=VitConfig(image_num_layers=1)
     ),
     data_formatter=DataFormatter(),
@@ -41,7 +41,7 @@ DEBUG_MODEL = MolmoConfig(
 
 VIDEO_DEBUG_MODEL = VideoOlmoConfig(
     llm=DEBUG_MODEL.llm,
-    vision_backbone=VideoVisionBackboneConfig(vit=VitConfig(image_num_layers=1)),
+    vision_backbone=MolmoVisionBackboneConfig(vit=VitConfig(image_num_layers=1)),
     data_formatter=DEBUG_MODEL.data_formatter,
     mm_preprocessor=MultiModalVideoPreprocessorConfig(crop_mode="frame_sampling", max_crops=4)
 )
@@ -98,7 +98,8 @@ def get_evaluator(name) -> EvaluatorConfig:
         raise NotImplementedError(name)
 
 
-def get_evaluation(name, seq_len, max_examples, for_inference=True, num_workers=2, device_batch_size=None) -> InfDatasetEvaluatorConfig:
+def get_evaluation(name, seq_len, max_examples, for_inference=True,
+                   num_workers=2, device_batch_size=None, persistent_workers=False) -> InfDatasetEvaluatorConfig:
     """Gets the default evaluation config for task (or task:split string) `name`"""
     if ":" in name:
         name, split = name.split(":")
@@ -158,7 +159,8 @@ def get_evaluation(name, seq_len, max_examples, for_inference=True, num_workers=
         split=split, shuffle=True, 
         drop_last=max_examples is not None and max_examples >= 0,
         num_workers=num_workers, pad="to_max", pin_memory=True,
-        seed=691203
+        seed=691203,
+        persistent_workers=persistent_workers
     )
 
     if for_inference:

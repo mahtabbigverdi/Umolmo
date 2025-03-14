@@ -109,7 +109,11 @@ def main():
                 tokenizer=build_tokenizer(args.tokenizer),
                 crop_mode=args.crop_mode,
                 max_crops=args.max_crops,
-                
+                periodic_high_res_frame=2,
+                image_pooling_w=4,
+                image_pooling_h=4,
+                high_res_pooling_h=2,
+                high_res_pooling_w=2
             ),
             for_inference=args.inference,
             frame_sample_mode=args.frame_sample_mode,

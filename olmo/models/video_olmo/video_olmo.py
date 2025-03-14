@@ -12,10 +12,9 @@ from torch.distributed.fsdp import fully_shard
 
 from olmo.config import D
 from olmo.models.model import ModelBase
+from olmo.models.molmo.collator import MMCollator
 from olmo.models.molmo.molmo import MolmoConfig
 from olmo.models.molmo.data_formatter import DataFormatter
-
-from olmo.nn.vision_backbone import VideoVisionBackbone, VideoVisionBackboneConfig
 
 from olmo.models.video_olmo.video_preprocessor import VideoPreprocessor
 from olmo.models.video_olmo.video_preprocessor import MultiModalVideoPreprocessorConfig
@@ -24,6 +23,7 @@ from olmo import tokenizer
 from olmo.nn.llm import LlmConfig, Llm, OLMoBlock
 from olmo.nn.legacy_config import convert_legacy_config
 from olmo.nn.image_vit import ResidualAttentionBlock, VisionTransformer
+from olmo.nn.vision_backbone import MolmoVisionBackbone, MolmoVisionBackboneConfig
 
 from olmo.torch_util import BufferCache
 from olmo.models.model import FSDPWrapStrategy, OLMoOutput, OLMoGenerateOutput, ModelBase
@@ -40,11 +40,13 @@ class VideoOlmoConfig(MolmoConfig):
     def get_default_model_name(cls):
         return "video_olmo"
 
-    vision_backbone: Optional[VideoVisionBackboneConfig] = field(default_factory=VideoVisionBackboneConfig)
+    vision_backbone: Optional[MolmoVisionBackboneConfig] = field(default_factory=MolmoVisionBackbone)
     """Vision embedding module to get image features"""
 
     mm_preprocessor: MultiModalVideoPreprocessorConfig = field(default_factory=MultiModalVideoPreprocessorConfig)
     """How to crop images and encoding jointly with text"""
+
+    shared_low_high_embedding: bool = True
 
     @classmethod
     def update_legacy_settings(cls, config: D) -> D:
@@ -53,11 +55,10 @@ class VideoOlmoConfig(MolmoConfig):
             config = convert_legacy_config(config)
         config.llm = LlmConfig.update_legacy_settings(config.llm)
         if config.vision_backbone is not None:
-            config.vision_backbone = VideoVisionBackboneConfig.update_legacy_settings(config.vision_backbone)
+            config.vision_backbone = MolmoVisionBackboneConfig.update_legacy_settings(config.vision_backbone)
         config.data_formatter = DataFormatter.update_legacy_settings(config.data_formatter)
         config.mm_preprocessor = MultiModalVideoPreprocessorConfig.update_legacy_settings(config.mm_preprocessor)
         return config
-
 
     def build_preprocessor(
         self,
@@ -69,15 +70,13 @@ class VideoOlmoConfig(MolmoConfig):
         inputs/targets that can be passed to the model's forward/generate methods
         """
 
-        # How to get mm_preprocessor.include_image?
-
         return VideoPreprocessor(
             self.data_formatter,
             self.mm_preprocessor.build(self.build_tokenizer(), self.vision_backbone),
             for_inference=for_inference,
             is_training=is_training,
             frame_sample_mode=self.mm_preprocessor.frame_sample_mode,
-            max_frames=self.mm_preprocessor.get_max_frames(),
+            max_frames=self.mm_preprocessor.max_frames,
             candidate_sampling_fps=self.mm_preprocessor.candidate_sampling_fps,
         )
 
@@ -97,17 +96,22 @@ class VideoOlmo(ModelBase):
         self.config = config
         self.__cache = BufferCache()
         self.transformer: Llm = self.config.llm.build(self.__cache, device)
-        self.vision_backbone: Optional[VideoVisionBackbone] = None
+        self.vision_backbone: Optional[MolmoVisionBackbone] = None
         if self.config.vision_backbone is not None:
             self.vision_backbone = self.config.vision_backbone.build(self.config.llm, device)
+        self.special_ids = tokenizer.get_special_token_ids(self.config.build_tokenizer())
         if self.config.bi_directional_attn == "image_tokens":
-            special_ids = tokenizer.get_special_token_ids(self.config.build_tokenizer())
-            self.__cache["image_tokens"] = torch.as_tensor([special_ids[x] for x in [
-                tokenizer.DEFAULT_IMAGE_PATCH_TOKEN,
-                tokenizer.DEFAULT_IM_COL_TOKEN,
-                tokenizer.DEFAULT_IM_START_TOKEN,
-                tokenizer.DEFAULT_IM_END_TOKEN,
+            self.__cache["image_tokens"] = torch.as_tensor([self.special_ids[x] for x in [
+                tokenizer.IMAGE_PATCH_TOKEN,
+                tokenizer.IM_COL_TOKEN,
+                tokenizer.IM_START_TOKEN,
+                tokenizer.IM_END_TOKEN,
+                tokenizer.IMAGE_LOW_RES_TOKEN,
             ]], dtype=torch.long)
+        self._image_end_token_id = self.special_ids[tokenizer.IM_END_TOKEN]
+        self._image_start_token_id = self.special_ids[tokenizer.IM_START_TOKEN]
+        self._image_low_res_id = self.special_ids[tokenizer.IMAGE_LOW_RES_TOKEN]
+        self._image_high_res_id = self.special_ids[tokenizer.IMAGE_PATCH_TOKEN]
 
     def reset_parameters(self):
         """Re-initialize the weights from scratch"""
@@ -164,7 +168,7 @@ class VideoOlmo(ModelBase):
             size_based_module_to_wrap.add(self.vision_backbone.image_pooling_2d)
             size_based_module_to_wrap.add(self.vision_backbone.image_projector)
 
-        wrap_layer_names = (OLMoBlock, ResidualAttentionBlock, VideoVisionBackbone, VisionTransformer)
+        wrap_layer_names = (OLMoBlock, ResidualAttentionBlock, MolmoVisionBackbone, VisionTransformer)
 
         if wrap_strategy == FSDPWrapStrategy.by_block:
 
@@ -263,12 +267,15 @@ class VideoOlmo(ModelBase):
         attention_mask: Optional[torch.Tensor] = None,
         attention_bias: Optional[torch.Tensor] = None,
         response_mask: Optional[torch.Tensor] = None,
-        images: Optional[torch.Tensor] = None,
-        image_masks: Optional[torch.Tensor] = None,
-        image_input_idx: Optional[torch.Tensor] = None,
-        high_res_frame_ids: Optional[torch.Tensor] = None,
         subsegment_ids: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.Tensor] = None,
+
+        # Image data
+        images: Optional[torch.Tensor] = None,
+        image_masks: Optional[torch.Tensor] = None,
+        low_res_pooled_idx: Optional[torch.Tensor] = None,
+        high_res_pooled_idx: Optional[torch.Tensor] = None,
+
         past_key_values: Optional[Sequence[Tuple[torch.Tensor, torch.Tensor]]] = None,
         use_cache: bool = False,
         last_logits_only: bool = False,
@@ -351,47 +358,30 @@ class VideoOlmo(ModelBase):
         # shape: (batch_size, seq_len, d_model)
         if input_ids is not None:
             input_ids = input_ids * (input_ids != -1).to(input_ids.dtype)
-        x = self.transformer.wte(input_ids) if input_embeddings is None else input_embeddings  # type: ignore
+
+        if input_embeddings is not None:
+            x = input_embeddings
+        elif self.config.shared_low_high_embedding:
+            x = self.transformer.wte(torch.where(input_ids == self._image_low_res_id, self._image_high_res_id, input_ids))
+        else:
+            x = self.transformer.wte(input_ids)
 
         num_image: Optional[int] = None
         if images is not None:
-            image_features, high_res_image_features = self.vision_backbone(images, image_masks)
-
-            if high_res_image_features is None:
-                num_image, num_patch = image_features.shape[1:3]
-                assert image_input_idx.shape == (batch_size, num_image, num_patch)
-                image_features = image_features.view(batch_size, num_image * num_patch, -1)
-
-                image_input_idx = image_input_idx.view(batch_size, num_image * num_patch)
-
-                valid = image_input_idx >= 0
-                batch_idx = torch.arange(batch_size, device=x.device)
-                batch_idx = torch.tile(batch_idx[:, None], [1, image_features.shape[1]])
-
-                # For hf demo/endpoint
-                image_features = image_features.to(x.device)
-                x[batch_idx[valid], image_input_idx[valid]] += image_features[valid]
-
+            if high_res_pooled_idx is None:
+                image_features = self.vision_backbone(images, image_masks, low_res_pooled_idx)
+                is_image_patch = input_ids.view(-1) == self._image_low_res_id
+                x.view(-1, x.shape[-1])[is_image_patch] += image_features
             else:
-                assert high_res_frame_ids is not None
-                num_image, num_patch_high_res = high_res_image_features.shape[1:3]
-                assert image_input_idx.shape == (batch_size, num_image, num_patch_high_res)
-
-                padded_image_features = torch.ones(high_res_image_features.shape, device=image_features.device) * -1
-                padded_image_features[:, :, :image_features.shape[2]] = image_features
-
-                combined_image_features = torch.where(high_res_frame_ids[:, :, None, None] == 1, high_res_image_features, padded_image_features)
-
-                combined_image_features = combined_image_features.view(batch_size, num_image * num_patch_high_res, -1)
-                image_input_idx = image_input_idx.view(batch_size, num_image * num_patch_high_res)
-
-                valid = image_input_idx >= 0
-                batch_idx = torch.arange(batch_size, device=x.device)
-                batch_idx = torch.tile(batch_idx[:, None], [1, combined_image_features.shape[1]])
-
-                # For hf demo/endpoint
-                combined_image_features = combined_image_features.to(x.device)
-                x[batch_idx[valid], image_input_idx[valid]] += combined_image_features[valid]
+                image_features = self.vision_backbone(images, image_masks, [low_res_pooled_idx, high_res_pooled_idx])
+                all_image_features = torch.concatenate([
+                    x.view(-1, x.shape[-1])[mask] for x, mask in image_features
+                ], 0)
+                all_mask = torch.concatenate([
+                    input_ids.view(-1) == self._image_low_res_id,
+                    input_ids.view(-1) == self._image_high_res_id
+                ], 0)
+                x.view(-1, x.shape[-1])[all_mask] += all_image_features
 
         if not self.config.llm.rope:
             # Get positional embeddings.
