@@ -21,7 +21,7 @@ from openai import OpenAI, BadRequestError
 from torchvision.datasets.utils import list_dir
 from tqdm import tqdm
 
-from olmo.io import read_json, is_url, write_json, file_exists, dir_is_empty, list_directory
+from olmo.io import read_json, is_url, write_json, file_exists, dir_is_empty, list_directory, is_dir
 from olmo.util import prepare_cli_environment
 
 METRIC_ORDER = ["name", "wandb", "step", "checkpoint", "src", "num_statements", "is_repeating",
@@ -661,7 +661,7 @@ def main():
 
     resolved_targets = []
     for name, file in target_files:
-        if not dir_is_empty(file):
+        if is_dir(file):
             candidates = [x for x in list_directory(file) if "dense_caption_eval-test" in x]
             if len(candidates) == 1:
                 logging.info(f"Selecting {candidates[0]} for {file}")
