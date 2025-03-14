@@ -327,10 +327,7 @@ class MolmoPreprocessorConfig(BaseConfig):
         if vision_backbone_config.image_padding_embed:
             padding_lens["image_masks"] = self.get_max_crops()
         preprocessor = self.build(None, vision_backbone_config)
-        vit = vision_backbone_config.vit
-        h, w = vit.image_default_input_size
-        max_image_tokens = preprocessor.compute_num_tokens(h, w, self.pooling_h, self.pooling_w)
-        padding_lens["pooled_patches_idx"] = max_image_tokens
+        padding_lens["pooled_patches_idx"] = preprocessor.max_image_tokens()
         return padding_lens
 
     def build(self, tokenizer, vision_backbone_config: MolmoVisionBackboneConfig):
