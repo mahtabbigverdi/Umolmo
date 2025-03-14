@@ -297,7 +297,7 @@ def run_trainer(cfg: TrainConfig) -> None:
             else:
                 if reset_train and reset_opt:
                     log.info(f"Loading model from {start_from}")
-                if not reset_opt and not reset_train:
+                elif not reset_opt and not reset_train:
                     log.info(f"Resuming from checkpoint {start_from}")
                 else:
                     log.info(f"Restoring checkpoint {start_from}, but resetting "
