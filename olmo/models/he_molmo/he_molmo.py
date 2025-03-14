@@ -515,6 +515,7 @@ class HeMolmo(ModelBase):
             else:
                 low_res_end_ixs = torch.argmax((input_ids == self._image_end_token_id).to(torch.int32), dim=-1) + 1
                 low_res_end = torch.max(low_res_end_ixs)
+                x = x.clone()
                 x.view(-1, x.shape[-1])[is_low_res_patch.view(-1)] += (
                     low_image_features.reshape(-1, low_image_features.shape[-1])[low_image_mask.view(-1)])
 
@@ -665,6 +666,7 @@ class HeMolmo(ModelBase):
             selection_valid = (high_res_features_weights > 0).flatten()
             valid_selected_features = selected_features.reshape([-1, dim])[selection_valid]
 
+            x = x.clone()
             x.view(-1, dim)[is_high_res_patch.view(-1)] += valid_selected_features
             selected_pos_ids = high_res_patch_pos_ids[batch_idx, selection]
             position_ids.view(-1)[is_high_res_patch.view(-1)] += selected_pos_ids.view(-1)[selection_valid]
@@ -802,12 +804,18 @@ class HeMolmo(ModelBase):
 
         input_ids: torch.LongTensor = batch["input_ids"]
         attention_mask: Optional[torch.Tensor] = batch.get("attention_mask")
-        images: Optional[torch.Tensor] = batch.get("images")
         prefill_output = []
-        image_masks: Optional[torch.Tensor] = batch.get("image_masks")
-        image_input_idx: Optional[torch.Tensor] = batch.get("image_input_idx")
-        high_res_patch_data: Optional[torch.Tensor] = batch["high_res_patch_data"]
         position_ids: Optional[torch.Tensor] = batch.get("position_ids")
+
+        image_data = dict(
+            images=batch.get("images"),
+            image_masks=batch.get("image_masks"),
+            low_pooled_patches_idx=batch.get("low_pooled_patches_idx"),
+            pooled_patches_idx=batch.get("pooled_patches_idx"),
+            low_to_high=batch.get("low_to_high"),
+            high_res_features_weights=batch.get("high_res_features_weights"),
+            high_res_patch_pos_ids=batch.get("high_res_patch_pos_ids"),
+        )
 
         batch_size, seq_len = input_ids.shape
         mask_len = seq_len + max_steps
@@ -857,8 +865,7 @@ class HeMolmo(ModelBase):
         ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
             nonlocal tokens_generated
             nonlocal position_ids
-            nonlocal images
-            nonlocal image_input_idx
+            nonlocal image_data
             nonlocal append_last_valid_logits
             nonlocal prefill_output
 
@@ -875,18 +882,15 @@ class HeMolmo(ModelBase):
                     .expand(batch_size, beam_size, *last_dims)
                     .reshape(batch_size * beam_size, *last_dims)
                     )
-                _images = None
-                _image_input_idx = None
+                _image_data = {}
                 _append_last_valid_logits = None
                 _high_res_patch_data = None
             else:
                 past_key_values = None
                 input_ids = state["input_ids"]
-                _images = images
-                _image_input_idx = image_input_idx
+                _image_data = image_data
                 _position_ids = position_ids
                 _append_last_valid_logits = append_last_valid_logits
-                _high_res_patch_data = high_res_patch_data
 
             tokens_generated += 1
 
@@ -895,15 +899,12 @@ class HeMolmo(ModelBase):
                 input_ids,
                 attention_mask=attention_mask,
                 attention_bias=attention_bias,
-                images=_images,
-                high_res_patch_data=_high_res_patch_data,
-                image_masks=image_masks,
-                image_input_idx=_image_input_idx,
                 position_ids=_position_ids,
                 past_key_values=past_key_values,
                 use_cache=True,
                 last_logits_only=True,
                 append_last_valid_logits=_append_last_valid_logits,
+                **_image_data
             )
             if tokens_generated == 1 and return_prefill_output:
                 prefill_output.append(output)
