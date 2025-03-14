@@ -49,6 +49,7 @@ class HePreprocessorConfig(BaseConfig):
     """How many high-res features to use"""
 
     image_pooling_w: Optional[int] = 2
+    image_pooling_h: Optional[int] = 2
     low_res_from_high: Optional[int] = None
     low_res_from_low: Optional[int] = 2
 
