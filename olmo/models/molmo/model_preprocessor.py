@@ -291,11 +291,11 @@ class MolmoPreprocessorConfig(BaseConfig):
     max_crops: int = 6
     """Max number of crops to produce per an image"""
 
-    pooling_w: Optional[int] = None
-    """High res pooling w stride"""
+    pooling_w: int = 2
+    """Patch pooling w stride"""
 
-    pooling_h: Optional[int] = None
-    """High res pooling h stride"""
+    pooling_h: int = 2
+    """Patch pooling h stride"""
 
     overlap_margins: Tuple[int, int] = (4, 4)
     """Overlap margins for overlapping crops modes"""
