@@ -250,7 +250,7 @@ For example, you could use:
 ### GCP
 Augusta machines start with access to some google cloud buckets (including `gs://mm-olmo/`), so you
 you should not include your own GCP credentials, however if you want to write to a new bucket you will have to
-give permission for the GCP service account used by augusta to write to that bucket.
+give permission for the GCP service account used by augusta to write to that bucket (acount 728032525089-compute@developer.gserviceaccount.com)
 
 On other machines credentials can be passed in through a ENV variable `GOOGLE_APPLICATION_CREDENTIALS_JSON`
 so it can be set with a beaker-secret. It should contain a raw JSON google 
