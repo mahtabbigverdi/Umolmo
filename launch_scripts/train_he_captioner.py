@@ -13,6 +13,7 @@ from olmo.models.he_molmo.he_data_formater import HeDataFormatter
 from olmo.models.he_molmo.he_molmo import TokenScorerConfig, HeMolmoConfig
 from olmo.models.he_molmo.he_preprocessor import HePreprocessorConfig
 from olmo.models.he_molmo.token_selector import TokenSelectionConfig
+from olmo.models.molmo.data_formatter import DataFormatter
 from olmo.models.molmo.model_preprocessor import MolmoPreprocessorConfig
 from olmo.models.molmo.molmo import MolmoConfig
 from olmo.nn.image_vit import VitConfig
@@ -66,10 +67,10 @@ if __name__ == "__main__":
                 vit=VitConfig(image_num_layers=1, resize_mode="metaclip"),
             ),
             token_scorer=TokenScorerConfig(
-              source="all-layers"
+              source="all_layers"
             ),
             token_selector=TokenSelectionConfig(loss="batch-mean"),
-            data_formatter=HeDataFormatter(),
+            data_formatter=HeDataFormatter(system_prompt="style_and_length_v2"),
             mm_preprocessor=HePreprocessorConfig(crop_mode="overlap-and-resize-c2", max_crops=6)
         )
 
@@ -122,7 +123,7 @@ if __name__ == "__main__":
         seq_len = 2048
         model_cfg = MolmoConfig(
             llm=model_cfg.llm,
-            data_formatter=model_cfg.data_formatter,
+            data_formatter=DataFormatter(**model_cfg.data_formatter.asdict()),
             mm_preprocessor=MolmoPreprocessorConfig(
                 crop_mode="overlap-and-resize-c2",
                 max_crops=8 if args.vision_backbone == "siglip" else 12,
