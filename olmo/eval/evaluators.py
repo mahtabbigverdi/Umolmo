@@ -202,7 +202,7 @@ class SavePredictions(Evaluator):
                 log.info("*"*30)
                 if "example_id" in metadata:
                     log.info(metadata['example_id'])
-                log.info(' '.join((prompt_text + sep + text).split()))
+                log.info(' '.join((prompt_text + sep + text.replace("\n", "\\n")).split()))
             json_row.update({k: v for k, v in metadata.items() if isinstance(v, (str, float, int))})
             json_data.append(json_row)
 
