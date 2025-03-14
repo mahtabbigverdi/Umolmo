@@ -76,8 +76,7 @@ class DataLoaderConfig(BaseConfig):
 
         dataset = get_dataset_by_name(self.dataset, self.split)
         n_pad = 0
-        if pad_batches:
-            assert not self.drop_last
+        if pad_batches and not self.drop_last:
             global_batch_size = batch_size*get_world_size()
             n_steps = (len(dataset) + global_batch_size - 1) // global_batch_size
             if max_steps_for_padding:
