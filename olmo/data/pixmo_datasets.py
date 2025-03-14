@@ -391,7 +391,7 @@ class PixMoCapQa(Dataset):
                 for user_question_ix in range(0, len(messages), 2):
                     if re.fullmatch("how many.*", messages[user_question_ix].lower()):
                         prefix = NO_POINT_PREFIX[rng.randint(0, len(NO_POINT_PREFIX))]
-                        messages[user_question_ix] = prefix + messages[0]
+                        messages[user_question_ix] = prefix + messages[user_question_ix]
         return ex
 
 

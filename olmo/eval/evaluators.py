@@ -22,6 +22,7 @@ from torchmetrics import MeanMetric
 
 from .vqa import vqa_score, anls_metric, relaxed_correctness, \
     a_okvqa_score, select_mc_option, mmmu_score, real_world_qa_score, math_vista_score
+from .temp_compass_utils import temp_compass_score
 from ..html_utils import build_html_table, postprocess_prompt, BoxesToVisualize, \
     get_html_image_with_boxes
 from ..io import write_file
@@ -87,16 +88,23 @@ def gather_examples_as_html(
         pred_seq = new_tokens[ix]
         pred_txt = voc.decode(pred_seq[pred_seq >= 0])
 
-        row = dict()
         image_src = None
         if "image_url" in metadata:
             image_src = metadata['image_url']
+        elif "image" in metadata and isinstance(metadata["image"], np.ndarray):
+            img = Image.fromarray(metadata["image"])
+            image_data = io.BytesIO()
+            img.save(image_data, format='JPEG')
+            image_data = image_data.getvalue()
+            image_src = f'data:image/jpeg;base64,{base64.b64encode(image_data).decode()}'
         elif "image" in metadata:
             with Image.open(metadata["image"]) as img:
                 image_data = io.BytesIO()
                 img.save(image_data, format='JPEG')
                 image_data = image_data.getvalue()
             image_src = f'data:image/jpeg;base64,{base64.b64encode(image_data).decode()}'
+
+        row = dict()        
         if image_src is not None:
             ex_pred_points, gt_pred_points = None, None
             if pred_points is not None:
@@ -124,7 +132,10 @@ def gather_examples_as_html(
         else:
             gt = None
         if gt is not None:
-            gt = "<br>".join(html_escape(x) for x in gt)
+            if isinstance(gt, list):
+                gt = "<br>".join(html_escape(x) for x in gt)
+            else:
+                gt = html_escape(gt)
             row["gt"] = gt
         if scores is not None:
             if isinstance(scores[ix], dict):
@@ -162,11 +173,12 @@ class SavePredictions(Evaluator):
         return filename
 
     def __init__(self, output_dir, json=True, save_tokens=True,
-                 log_examples=10):
+                 log_examples=10, table=True):
         self.save_tokens = save_tokens
         self.output_dir = output_dir
         self.log_examples = log_examples
         self.json = json
+        self.table = table
 
     def __call__(self, metadatas, predictions, tokenizer,
                  step=None, scores=None):
@@ -205,6 +217,7 @@ class SavePredictions(Evaluator):
                 log.info(' '.join((prompt_text + sep + text.replace("\n", "\\n")).split()))
             json_row.update({k: v for k, v in metadata.items() if isinstance(v, (str, float, int))})
             json_data.append(json_row)
+        html_data = gather_examples_as_html(self.log_examples, tokenizer, metadatas, predictions)
 
         json_file = None
         html_file = None
@@ -228,6 +241,14 @@ class SavePredictions(Evaluator):
                     save_overwrite=True
                 )
                 log.info("done saving json")
+
+                if self.table:
+                    html_file = os.path.join(self.output_dir, self.get_file_name(step, None) + ".html")
+                    html_data = gather_examples_as_html(None, tokenizer, metadatas, predictions)
+                    with open(html_file, "w") as f:
+                        f.write(html_data.get_html())
+                    log.info("done saving html table for rank 0")
+
         return metrics
 
 
@@ -668,6 +689,16 @@ class VqaEval(Evaluator):
                     score = a_okvqa_score(answers, pred)
                 elif metric == "em":
                     score = pred.lower() in [x.lower() for x in answers]
+                elif metric == "em_start":
+                    pred = pred.lower()
+                    pred = pred.strip().lstrip()  # deal with " B. ped"
+
+                    answer = answers[0].lower().strip().lstrip()  # match "B." to even "B)" or "B"
+                    answer = answer[0]
+
+                    # Limitation - might match even if pred is "A ball is seen" and GT is A.
+                    score = pred.startswith(answer)
+
                 elif metric == "mc":
                     options = metadata["option_names"]
                     get_answer_idx = select_mc_option(pred, options)
@@ -982,4 +1013,64 @@ class RefExpEval:
         for k in scores[0]:
             vals = [x[k] for x in scores if k in x]
             out[k] = mean_metric(vals)
+        return out
+
+TEMPORAL_ASPECTS = [
+    "action",
+    "direction",
+    "speed",
+    "order",
+    "attribute_change",
+]
+
+
+FINE_GRAINED_TEMPORAL_ASPECTS = [
+    "fine-grained action",
+    "coarse-grained action",
+    "object motion",
+    "camera motion",
+    "absolute speed",
+    "relative speed",
+    "order",
+    "color & light change",
+    "size & shape change",
+    "combined change",
+    "other change",
+]
+
+TEMP_COMPASS_TASKS = ["multi-choice", "yes_no", "caption_matching", "captioning"]
+
+
+class TempCompassEval(Evaluator):
+
+    def __init__(self, task="all", disable_api=False, n_to_log=None):
+        self.tasks = TEMP_COMPASS_TASKS if task == "all" else [task]
+        self.disable_api = disable_api
+        self.n_to_log = n_to_log
+    
+    def __call__(self, metadatas, predictions, tokenizer, step=None):
+        new_tokens = predictions["predictions"]
+        prompt_tokens = predictions["prompts"]
+        vocab = tokenizer
+        score_lists = defaultdict(list)
+
+        for ex_ix, pred_seq in enumerate(new_tokens):
+            metadata = metadatas[ex_ix]
+            task = metadata["task"]
+            pred = vocab.decode(pred_seq[pred_seq >= 0]).strip()
+            score = temp_compass_score(
+                pred, metadata, get_openai_key(), use_api=not self.disable_api,
+            )
+            score_lists[task].append(score)
+            score_lists["all"].append(score)
+    
+        out = {}
+        for k in self.tasks:
+            out[k] = mean_metric(score_lists[k])
+        out["all"] = mean_metric(score_lists["all"])
+
+        if self.n_to_log:
+            out["predictions"] = gather_examples_as_html(
+                self.n_to_log, vocab, metadatas, predictions, score_lists["all"]
+            )
         return out

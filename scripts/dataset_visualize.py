@@ -9,10 +9,11 @@ from olmo.data.get_dataset import get_dataset_by_name
 from olmo.html_utils import example_to_html_dict, build_html_table
 from olmo.models.molmo.data_formatter import DataFormatter
 from olmo.data.dataset import DeterministicDataset
-from olmo.models.molmo.model_preprocessor import Preprocessor
-from olmo.models.molmo.model_preprocessor import MultiModalPreprocessor as TorchMultiModalPreprocessor
-from olmo.models.molmo_dev.model_preprocessor import MolmoPreprocessor
+from olmo.models.molmo.model_preprocessor import Preprocessor, MolmoPreprocessor
 from olmo.tokenizer import build_tokenizer
+
+from olmo.models.video_olmo.video_preprocessor import VideoPreprocessor
+from olmo.models.video_olmo.video_preprocessor import MultiModalVideoPreprocessor
 
 
 def build_qualitative_table(name, split, n, preprocessor, is_training=None, for_inference=False, shuffle=True,
@@ -81,8 +82,14 @@ def main():
                         help="How to build crops")
     parser.add_argument("--tokenizer", default="Qwen/Qwen2-7B",
                         help="Tokenizer to use")
+    parser.add_argument("--max_frames", type=int, default=4,
+                        help="Max crops to select")
     parser.add_argument("--max_crops", type=int, default=4,
                         help="Max crops to select")
+    parser.add_argument("--frame_sample_mode", type=str, default="fps",
+                        help="How to sample frames")
+    parser.add_argument("--loss_token_weighting", type=str, default=None,
+                        help="re-weighting of loss tokens")
     args = parser.parse_args()
 
     name = args.task
@@ -90,21 +97,41 @@ def main():
     output_file = join(args.output_dir, output_name)
     print(f"Getting qual. examples for {name}")
 
-    pre = Preprocessor(
-        DataFormatter(
-            prompt_templates=args.prompt_templates,
-            message_format=args.message_format,
-            system_prompt=args.system_prompt,
-            always_start_with_space=True,
-        ),
-        MolmoPreprocessor(
-            tokenizer=build_tokenizer(args.tokenizer),
-            crop_mode=args.crop_mode,
-            max_crops=args.max_crops,
-        ),
-        for_inference=args.inference,
-        include_image=True  # include the image in the metadata so we can visualize it
-    )
+    if name == "intern_vid" or name == "mvbench" or name.startswith("llava_video_178k") or name == "koala" or name.startswith("temp_compass"):
+        pre = VideoPreprocessor(
+            DataFormatter(
+                prompt_templates=args.prompt_templates,
+                message_format=args.message_format,
+                system_prompt=args.system_prompt,
+                always_start_with_space=True,
+            ),
+            MultiModalVideoPreprocessor(
+                tokenizer=build_tokenizer(args.tokenizer),
+                crop_mode=args.crop_mode,
+                max_crops=args.max_crops,
+                
+            ),
+            for_inference=args.inference,
+            frame_sample_mode=args.frame_sample_mode,
+            include_image=True,  # include the image in the metadata so we can visualize it
+            max_frames=args.max_frames,
+        )
+    else:
+        pre = Preprocessor(
+            DataFormatter(
+                prompt_templates=args.prompt_templates,
+                message_format=args.message_format,
+                system_prompt=args.system_prompt,
+                always_start_with_space=True,
+            ),
+            MolmoPreprocessor(
+                tokenizer=build_tokenizer(args.tokenizer),
+                crop_mode=args.crop_mode,
+                max_crops=args.max_crops,
+            ),
+            for_inference=args.inference,
+            include_image=True  # include the image in the metadata so we can visualize it
+        )
 
     html = build_qualitative_table(
         args.task, args.split, args.num_examples, pre, is_training=not args.eval,

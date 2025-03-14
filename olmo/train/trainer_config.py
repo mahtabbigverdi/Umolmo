@@ -19,7 +19,7 @@ from torch.distributed import init_device_mesh
 from torch.distributed.fsdp import MixedPrecision, ShardingStrategy, MixedPrecisionPolicy
 
 from olmo.config import BaseConfig, StrEnum
-from olmo.data.data_loader import DataConfig
+from olmo.data.data_loader import DataLoaderConfig
 from olmo.eval.inf_evaluator import InfDatasetEvaluatorConfig
 from olmo.eval.loss_evaluator import LossDatasetEvaluatorConfig
 from olmo.exceptions import OLMoConfigurationError
@@ -286,7 +286,7 @@ class TrainConfig(BaseConfig):
     Learning rate scheduler configuration.
     """
 
-    data: DataConfig = field(default_factory=DataConfig)
+    data: DataLoaderConfig = field(default_factory=DataLoaderConfig)
     """
     Training data configuration.
     """
