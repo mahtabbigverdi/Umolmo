@@ -61,6 +61,7 @@ class MolmoConfig(BaseModelConfig):
     def update_legacy_settings(cls, config: D) -> D:
         if "llm" not in config:
             # Old v1 style config
+            log.info("Converting legacy config")
             config = convert_legacy_config(config)
         config.llm = LlmConfig.update_legacy_settings(config.llm)
         if config.vision_backbone is not None:
