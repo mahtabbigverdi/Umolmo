@@ -527,7 +527,7 @@ class MolmoPreprocessor:
                         [self.image_end_token_id],
             ]
             return (np.concatenate(joint, 0), batch_pixels_to_patches(resized, image_patch_size),
-                    batch_pixels_to_patches(resized_mask, image_patch_size), pooling_idx)
+                    batch_pixels_to_patches(resized_mask, image_patch_size).mean(-1), pooling_idx)
 
         if self.crop_mode in ["overlap-and-resize-c2", "overlap-and-resize"]:
             # Discard this many patches from the (left/top, right/bottom) of crops
