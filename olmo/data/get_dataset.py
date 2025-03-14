@@ -1,9 +1,9 @@
 from olmo.data.academic_datasets import (
-    ScienceQAImageOnly, TextVqa, OkVqa, DocQa,
+    ScienceQAImageOnly, TextVqa, OkVqa,
     AOkVqa, Vqa2, PlotQa, FigureQa, DvQa, TabWMPDirectAnswer,
     AndroidControl, TallyQa, AI2D, CountBenchQa, RealWorldQa, MathVista, MMMU, ClockBench
 )
-from olmo.data.academic_datasets_manual import ChartQa, InfoQa, SceneTextQa
+from olmo.data.academic_datasets_manual import ChartQa, InfoQa, SceneTextQa, DocQa
 from olmo.data.dataset import Dataset
 from olmo.data.pixmo_datasets import (
     PixMoDocs, PixMoCount, PixMoPoints, PixMoCapQa, PixMoCap, PixMoPointExplanations,
@@ -20,6 +20,15 @@ def get_dataset_by_name(dataset_name, split) -> Dataset:
         return PixMoDocs("diagrams", split=split)
     elif dataset_name in ["scifi_charts_qa", "pixmo_docs_charts"]:
         return PixMoDocs("charts", split=split)
+
+    elif dataset_name in ["pixmo_docs_other_flat"]:
+        return PixMoDocs("other", split=split, flat=True)
+    elif dataset_name in ["pixmo_docs_charts_flat"]:
+        return PixMoDocs("charts", split=split, flat=True)
+    elif dataset_name in ["pixmo_docs_tables_flat"]:
+        return PixMoDocs("tables", split=split, flat=True)
+    elif dataset_name in ["pixmo_docs_diagrams_flat"]:
+        return PixMoDocs("diagrams", split=split, flat=True)
 
     # PixMo-Pointing
     elif dataset_name in ["pointing_high_freq", "pixmo_points_high_freq"]:

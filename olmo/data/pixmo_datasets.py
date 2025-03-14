@@ -4,6 +4,7 @@ import os
 import re
 import shutil
 from os.path import join, exists
+from typing import Iterable
 
 import datasets
 import numpy as np
@@ -129,35 +130,93 @@ class PixMoCount(Dataset):
 
 
 class PixMoDocs(Dataset):
-    V1_STYLE = {
-        "pixmo_docs_other": "scifi_document",
-        "pixmo_docs_charts": "scifi_charts",
-        "pixmo_docs_diagrams": "scifi_diagram",
-        "pixmo_docs_tables": "scifi_table"
-    }
+
+    @staticmethod
+    def save_image(images: Iterable):
+        raise NotImplementedError()
+        keys = []
+        for image in images:
+            key = compute_hash(image["bytes"])
+            keys.append(key)
+            with open(join(DATA_HOME, "pixmo_docs_images", key), "wb") as f:
+                f.write(image["bytes"])
+        return dict(image_path=keys)
 
     @classmethod
     def download(cls, n_procs=1):
         for name in ["other", "charts", "diagrams", "tables"]:
+            local_name = join(PIXMO_DATASETS, f"pixmo_docs_{name}")
+            if exists(local_name):
+                continue
             datasets.load_dataset_builder("allenai/pixmo-docs", name=name).download_and_prepare()
+            all_data = datasets.DatasetDict()
+            for split in ["validation", "train"]:
+                ds = datasets.load_dataset("allenai/pixmo-docs", split=split, name=name)
+                ds = ds.cast_column("image", datasets.Image(decode=False))
+                # Doing this inplace causes issue with the column feature type,
+                # so just map to a new column and then replace the old one
+                ds = ds.map(
+                    cls.save_image,
+                    input_columns="image",
+                    batched=True,
+                    batch_size=256,
+                    num_proc=n_procs if len(ds) > 10000 else 1,
+                    desc=f"{name}-{split}-images",
+                    remove_columns="image",
+                    load_from_cache_file=False
+                )
+                ds = ds.rename_column("image_path", "image")
+                all_data[split] = ds
+            save_local_dataset(all_data, local_name, n_procs)
 
-    def __init__(self, doc_type, split, sample=None, keep_in_memory=False, v1_style=False):
+    def __init__(self, doc_type, split, sample=None, keep_in_memory=False, flat=False, use_image_files=True):
         assert doc_type in ["other", "charts", "diagrams", "tables"]
-        assert split in ["train", "validation", "test"]
+        assert split in ["train", "validation"]
         self.doc_type = doc_type
-        self.v1_style = v1_style
-        self.dataset = datasets.load_dataset(
-            "allenai/pixmo-docs", name=doc_type, split=split, keep_in_memory=keep_in_memory)
+        self.flat = flat
+        self.use_image_files = use_image_files
+        if use_image_files:
+            # Load a local version of the data that contains filenames instead of the images directly
+            local_name = join(PIXMO_DATASETS, f"pixmo_docs_{doc_type}")
+            self.dataset = datasets.load_from_disk(local_name, keep_in_memory=keep_in_memory)[split]
+        else:
+            self.dataset = datasets.load_dataset(
+                "allenai/pixmo-docs", name=doc_type, split=split, keep_in_memory=keep_in_memory)
+        if flat:
+            # Use an index so we don't have to load the images into memory if `keep_in_memory=False`
+            # FIXME just switch to the JSON dataset
+            logging.info("Building flat index")
+            offset = 0
+            n_questions = [len(x["question"]) for x in self.dataset["questions"]]
+            image_index = np.repeat(np.arange(len(self.dataset), dtype=np.int32), n_questions)
+            question_index = np.concatenate([np.arange(x, dtype=np.int32) for x in n_questions], 0)
+            self.flat_index = np.stack([image_index, question_index], 1)
+            logging.info("Done")
 
     def __len__(self):
-        return len(self.dataset)
+        return len(self.flat_index) if self.flat else len(self.dataset)
 
     def get(self, item, rng):
         style = f"pixmo_docs_{self.doc_type}"
-        if self.v1_style:
-            style = self.V1_STYLE[style]
+        if self.flat:
+            image_ix, question_ix = self.flat_index[item]
+            example = self.dataset[int(image_ix)]
+            if self.use_image_files:
+                example["image"] = join(DATA_HOME, "pixmo_docs_images", example["image"])
+            qas = example["questions"]
+            return dict(
+                image=example["image"],
+                question=qas["question"][question_ix],
+                answer=qas["answer"][question_ix],
+                style=style,
+                metadata=dict(
+                    image_id=example["image_id"]
+                )
+            )
         example = self.dataset[item]
         qas = example["questions"]
+        if self.use_image_files:
+            example["image"] = join(DATA_HOME, "pixmo_docs_images", example["image"])
         return dict(
             image=example["image"],
             message_list=[
@@ -168,7 +227,6 @@ class PixMoDocs(Dataset):
                 image_id=example["image_id"]
             )
         )
-
 
 class PixMoPoints(Dataset):
 
