@@ -30,7 +30,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(prog="Train a captioner")
     parser.add_argument("llm", choices=["debug"] + list(LLMS.keys()))
-    parser.add_argument("--vision_backbone", choices=list(VISION_BACKBONES.keys()), default="siglip")
+    parser.add_argument("--vision_backbone", choices=list(VISION_BACKBONES.keys()), default="siglip2")
     parser.add_argument("--global_batch_size", default=128, type=int)
     parser.add_argument("--n_eval_examples", default=2048, type=int)
     parser.add_argument("--device_eval_batch_size", default=4, type=int)
@@ -80,7 +80,7 @@ if __name__ == "__main__":
             ),
             mm_preprocessor=MolmoPreprocessorConfig(
                 crop_mode="overlap-and-resize-c2",
-                max_crops=8 if args.vision_backbone == "siglip" else 12,
+                max_crops=8 if args.vision_backbone in ["siglip", "siglip2"] else 12,
                 overlap_margins=(4, 4)
             )
         )
