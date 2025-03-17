@@ -8,7 +8,7 @@ from typing import Dict, Any
 import torch
 from transformers import AutoModel, AutoModelForCausalLM, CLIPModel, SiglipModel
 
-from launch_scripts.utils import VISION_BACKBONES, LLMS, DEFAULT_LOAD_PATHS
+from launch_scripts.utils import VISION_BACKBONES, LLMS
 from olmo.nn.image_vit import VitConfig
 from olmo.nn.llm import LlmConfig, BlockType
 from olmo.util import prepare_cli_environment
@@ -510,9 +510,8 @@ def convert_state_dict_qwen2(state_dict, config: LlmConfig, block_type: BlockTyp
     return out
 
 
-def get_default_load_path(model_name: str) -> str:
-    default_load_path = DEFAULT_LOAD_PATHS[model_name]
-    return "/".join(default_load_path.split("/")[1:])
+def get_default_load_path(cfg) -> str:
+    return "/".join(cfg.init_path.split("/")[1:])
 
 
 CONVERT_FNS = {
@@ -552,7 +551,7 @@ def main_vit(args: argparse.Namespace) -> None:
     cfg = VISION_BACKBONES[args.model]
     convert_fn = CONVERT_FNS[args.model]
 
-    output_path = str(Path(args.data_dir).joinpath(get_default_load_path(args.model)))
+    output_path = str(Path(args.data_dir).joinpath(get_default_load_path(cfg)))
     Path(output_path).parent.mkdir(exist_ok=True, parents=True)
 
     logging.info(f"Convert model {args.model} to olmo format and save to {output_path}...")
@@ -582,7 +581,7 @@ def main_llm(args: argparse.Namespace) -> None:
     cfg = LLMS[args.model]
     convert_fn = CONVERT_FNS[args.model]
 
-    output_path = str(Path(args.data_dir).joinpath(get_default_load_path(args.model)))
+    output_path = str(Path(args.data_dir).joinpath(get_default_load_path(cfg)))
     Path(output_path).parent.mkdir(exist_ok=True, parents=True)
 
     logging.info(f"Convert model {args.model} to olmo format and save to {output_path}...")
