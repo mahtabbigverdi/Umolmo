@@ -73,7 +73,7 @@ def load_image(image_path):
                     return load_image(image)
 
 
-def arange_for_pooling(idx_arr, pool_w, pool_h):
+def arange_for_pooling(idx_arr, pool_h, pool_w):
     h_pad = pool_h * ((idx_arr.shape[0] + pool_h - 1) // pool_h) - idx_arr.shape[0]
     w_pad = pool_w * ((idx_arr.shape[1] + pool_w - 1) // pool_w) - idx_arr.shape[1]
     idx_arr = np.pad(idx_arr, [[h_pad//2, (h_pad+1)//2], [w_pad//2, (w_pad+1)//2]],
