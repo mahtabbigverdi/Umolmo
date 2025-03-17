@@ -1,5 +1,6 @@
 import logging
 from typing import Dict
+from dataclasses import replace
 
 from olmo.models.molmo.data_formatter import DataFormatter
 from olmo.models.molmo.model_preprocessor import MolmoPreprocessorConfig
@@ -213,7 +214,7 @@ DEFAULT_VISION_BACKBONE = VitConfig(
 
 
 SIGLIP_VISION_BACKBONE = VitConfig(
-    init_path="${oc.env:MOLMO_DATA_DIR}/pretrained_image_encoders/siglip2-so400m-14-384.pt",
+    init_path="${oc.env:MOLMO_DATA_DIR}/pretrained_image_encoders/siglip-so400m-14-384.pt",
     image_model_type="siglip",
     image_default_input_size=(378, 378),
     image_patch_size=14,
@@ -232,6 +233,12 @@ SIGLIP_VISION_BACKBONE = VitConfig(
     residual_dropout=0.0,
     initializer_range=0.02,
     resize_mode="siglip",
+)
+
+
+SIGLIP2_VISION_BACKBONE = replace(
+    SIGLIP_VISION_BACKBONE,
+    init_path="${oc.env:MOLMO_DATA_DIR}/pretrained_image_encoders/siglip2-so400m-14-384.pt",
 )
 
 
@@ -370,6 +377,43 @@ OLMO_1024_PREVIEW = LlmConfig(
 )
 
 
+OLMO2_1124_7B = replace(
+    OLMO_1024_PREVIEW,
+    init_path="${oc.env:MOLMO_DATA_DIR}/pretrained_llms/olmo2-1124-7b.pt",
+    tokenizer=TokenizerConfig(
+        identifier="allenai/OLMo-2-1124-7B",
+    ),
+)
+
+
+OLMO2_1124_13B = replace(
+    OLMO_1024_PREVIEW,
+    init_path="${oc.env:MOLMO_DATA_DIR}/pretrained_llms/olmo2-1124-13b.pt",
+    d_model=5120,
+    n_heads=40,
+    n_layers=40,
+    mlp_hidden_size=27648,
+    tokenizer=TokenizerConfig(
+        identifier="allenai/OLMo-2-1124-13B",
+    ),
+)
+
+
+
+OLMO2_0325_32B = replace(
+    OLMO_1024_PREVIEW,
+    init_path="${oc.env:MOLMO_DATA_DIR}/pretrained_llms/olmo2-0325-32b.pt",
+    d_model=5120,
+    n_heads=40,
+    n_kv_heads=8,
+    n_layers=64,
+    mlp_hidden_size=55296,
+    tokenizer=TokenizerConfig(
+        identifier="allenai/OLMo-2-0325-32B",
+    ),
+)
+
+
 QWEN2_7B = LlmConfig(
     init_path="${oc.env:MOLMO_DATA_DIR}/pretrained_llms/qwen2-7b.pt",
     vocab_size=152064,
@@ -396,6 +440,7 @@ QWEN2_7B = LlmConfig(
         identifier="Qwen/Qwen2-7B",
     ),
 )
+
 
 QWEN25_15B = LlmConfig(
     init_path="${oc.env:MOLMO_DATA_DIR}/pretrained_llms/qwen2.5-1.5b.pt",
@@ -511,6 +556,7 @@ QWEN2_72B = LlmConfig(
 VISION_BACKBONES: Dict[str, VitConfig] = {
     "openai": DEFAULT_VISION_BACKBONE,
     "siglip": SIGLIP_VISION_BACKBONE,
+    "siglip2": SIGLIP2_VISION_BACKBONE,
     "dinov2_large_336": DINOV2_LARGE_336_VISION_BACKBONE,
     "metaclip_l14_336": METACLIP_L14_336_VISION_BACKBONE,
 }
@@ -519,6 +565,9 @@ VISION_BACKBONES: Dict[str, VitConfig] = {
 LLMS: Dict[str, LlmConfig] = {
     "olmoe": OLMOE,
     "olmo_1024_preview": OLMO_1024_PREVIEW,
+    "olmo2_1124_7b": OLMO2_1124_7B,
+    "olmo2_1124_13b": OLMO2_1124_13B,
+    "olmo2_0325_32b": OLMO2_0325_32B,
     "qwen2_7b": QWEN2_7B,
     "qwen2_72b": QWEN2_72B,
     "qwen2.5_7b": QWEN25_7B,
@@ -526,4 +575,9 @@ LLMS: Dict[str, LlmConfig] = {
     "qwen2.5_1.5b": QWEN25_15B,
 }
 
+
+DEFAULT_LOAD_PATHS = dict(
+    **{k: v.init_path for k, v in VISION_BACKBONES.items()},
+    **{k: v.init_path for k, v in LLMS.items()},
+)
 

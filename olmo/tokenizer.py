@@ -112,10 +112,9 @@ def build_tokenizer(
         token=environ.get("HF_ACCESS_TOKEN"),
         cache_dir=cache_dir,
     )
-    if ("qwen2" in tokenizer_type.lower()) or ("olmo" in tokenizer_type.lower()):
+    if tokenizer.bos_token_id is None:
         # These tokenizers do not have a BOS, and instead use EOS as a generic seperator token.
         # In this case we will use EOS as BOS
-        assert tokenizer.bos_token_id is None
         bos_token_id = tokenizer.eos_token_id
 
     if pad_tokenizer_to is not None:

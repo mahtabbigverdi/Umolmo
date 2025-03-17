@@ -356,17 +356,6 @@ def is_url(path: PathOrStr) -> bool:
     return re.match(r"[a-z0-9]+://.*", str(path)) is not None
 
 
-def dir_is_empty(dir: PathOrStr) -> bool:
-    dir = Path(dir)
-    if not dir.is_dir():
-        return True
-    try:
-        next(dir.glob("*"))
-        return False
-    except StopIteration:
-        return True
-
-
 def get_progress_bar() -> Progress:
     from cached_path import get_download_progress
 

@@ -517,11 +517,16 @@ def get_default_load_path(cfg) -> str:
 CONVERT_FNS = {
     "openai": convert_state_dict_clip,
     "siglip": convert_state_dict_siglip,
+    "siglip2": convert_state_dict_siglip,
     "dinov2_large_336": convert_state_dict_dino,
     "metaclip_l14_336": convert_state_dict_clip,
     "olmoe": convert_state_dict_olmoe,
     "olmo_1024_preview": convert_state_dict_olmo_1024_preview,
+    "olmo2_1124_7b": convert_state_dict_olmo_1024_preview,
+    "olmo2_1124_13b": convert_state_dict_olmo_1024_preview,
+    "olmo2_0325_32b": convert_state_dict_olmo_1024_preview,
     "qwen2_7b": convert_state_dict_qwen2,
+    "qwen2.5_7b": convert_state_dict_qwen2,
     "qwen2.5_3b": convert_state_dict_qwen2,
     "qwen2.5_1.5b": convert_state_dict_qwen2,
     "qwen2_72b": convert_state_dict_qwen2,
@@ -531,6 +536,7 @@ CONVERT_FNS = {
 VIT_HF_SOURCES  = {
     "openai": "openai/clip-vit-large-patch14-336",
     "siglip": "google/siglip-so400m-patch14-384",
+    "siglip2": "google/siglip2-so400m-patch14-384",
     "dinov2_large_336": "facebook/dinov2-large",
     "metaclip_l14_336": "facebook/metaclip-l14-fullcc2.5b",
 }
@@ -539,8 +545,12 @@ VIT_HF_SOURCES  = {
 LLM_HF_SOURCES = {
     "olmoe": "allenai/OLMoE-1B-7B-0924",
     "olmo_1024_preview": "allenai/OLMo-7B-1024-preview",
+    "olmo2_1124_7b": "allenai/OLMo-2-1124-7B",
+    "olmo2_1124_13b": "allenai/OLMo-2-1124-13B",
+    "olmo2_0325_32b": "allenai/OLMo-2-0325-32B",
     "qwen2_7b": "Qwen/Qwen2-7B",
     "qwen2_72b": "Qwen/Qwen2-72B",
+    "qwen2.5_7b": "Qwen/Qwen2.5-7B",
     "qwen2.5_3b": "Qwen/Qwen2.5-3B",
     "qwen2.5_1.5b": "Qwen/Qwen2.5-1.5B",
 }
