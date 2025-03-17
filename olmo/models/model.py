@@ -42,6 +42,11 @@ class OLMoOutput(NamedTuple):
     Model-specific metrics and losses
     """
 
+    internal: Optional[Dict[str, torch.Tensor]] = None
+    """
+    Internal data the might be used for visualizations
+    """
+
 
 class OLMoGenerateOutput(NamedTuple):
     token_ids: torch.LongTensor
@@ -53,6 +58,11 @@ class OLMoGenerateOutput(NamedTuple):
     scores: torch.FloatTensor
     """
     The scores of the generated sequences, a tensor of shape `(batch_size, beam_size)`.
+    """
+
+    internal: Optional[Dict] = None
+    """
+    Internal data the might be used for visualizations
     """
 
 
@@ -119,6 +129,7 @@ class ModelBase(torch.nn.Module):
         min_steps: Optional[int] = None,
         final_sequence_scorer: Optional[FinalSequenceScorer] = None,
         constraints: Optional[List[Constraint]] = None,
-        is_distributed: bool=False
+        is_distributed: bool=False,
+        return_prefill_output: bool = False,
     ) -> OLMoGenerateOutput:
         raise NotImplementedError()
