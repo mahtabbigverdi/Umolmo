@@ -580,9 +580,11 @@ class Trainer:
         logits_for_loss = logits.to(torch.float32).view(-1, logits.size(-1)) # for numerical stability
 
         ce_loss, z_loss = self.loss_fn(
-            logits_for_loss, labels, ignore_index=-100, reduction="sum",
+            logits_for_loss, labels, ignore_index=-100, reduction="none",
             compute_z_loss=compute_z_loss, z_loss_scale=self.cfg.softmax_auxiliary_loss_scale,
         )
+        ce_loss = (ce_loss*loss_masks.view(ce_loss.shape)).sum()
+        z_loss = (z_loss*loss_masks.view(z_loss.shape)).sum()
         return ce_loss, z_loss, model_out
 
     def train_batch(self, batch: Dict[str, Any], compute_metrics) -> Tuple[torch.Tensor, Optional[Dict]]:
