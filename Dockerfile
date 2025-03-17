@@ -1,7 +1,7 @@
 # From https://github.com/allenai/OLMo-core/blob/e279fd8191a8cc466481f521a3cab10c27deb693/src/Dockerfile
 # NOTE: make sure CUDA_VERSION and TORCH_CUDA_VERSION always match, except for punctuation
-ARG CUDA_VERSION="12.4"
-ARG TORCH_CUDA_VERSION="124"
+ARG CUDA_VERSION="12.6"
+ARG TORCH_CUDA_VERSION="126"
 ARG TORCH_VERSION="2.6.0"
 
 #########################################################################
