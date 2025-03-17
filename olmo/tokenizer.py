@@ -18,7 +18,7 @@ except ImportError:
 
 # Special tokens, these should be present in any tokenizer we use since the preprocessor uses them
 IMAGE_PATCH_TOKEN = f"<im_patch>"  # Where to insert high-res tokens
-IMAGE_LOW_RES_TOKEN = f"<im_l>"  # Where to insert low-res tokens
+IMAGE_LOW_RES_TOKEN = f"<im_low>"  # Where to insert low-res tokens
 IM_START_TOKEN = f"<im_start>"
 IM_END_TOKEN = f"<im_end>"
 IM_COL_TOKEN = f"<im_col>"
