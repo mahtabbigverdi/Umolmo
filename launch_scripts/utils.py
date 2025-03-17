@@ -398,7 +398,7 @@ QWEN2_7B = LlmConfig(
 )
 
 QWEN25_15B = LlmConfig(
-    init_path="${oc.env:MOLMO_DATA_DIR}/pretrained_llms/qwen2.5-3b.pt",
+    init_path="${oc.env:MOLMO_DATA_DIR}/pretrained_llms/qwen2.5-1.5b.pt",
     vocab_size=151936,
     max_sequence_length=4096,
     residual_dropout=0,
