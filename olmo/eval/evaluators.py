@@ -243,10 +243,13 @@ class SavePredictions(Evaluator):
                 log.info("done saving json")
 
                 if self.table:
-                    html_file = os.path.join(self.output_dir, self.get_file_name(step, None) + ".html")
                     html_data = gather_examples_as_html(None, tokenizer, metadatas, predictions)
-                    with open(html_file, "w") as f:
-                        f.write(html_data.get_html())
+                    write_file(
+                        self.output_dir,
+                        self.get_file_name(step, None) + ".html",
+                        html_data.get_html(),
+                        save_overwrite=True
+                    )
                     log.info("done saving html table for rank 0")
 
         return metrics
