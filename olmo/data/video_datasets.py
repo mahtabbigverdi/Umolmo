@@ -13,6 +13,10 @@ from moviepy import VideoFileClip
 
 import ast
 import decord
+
+from olmo.io import read_file
+from olmo.util import flatten_lists, resource_path
+
 decord.logging.set_level(2)
 from decord import VideoReader, cpu
 
@@ -292,19 +296,19 @@ class LLaVAVideo178K(DatasetBase):
         "ytb_KWmrJ_jxozc.mp4"
     ])
 
-    def __init__(self, split, answer_type="multi_choice"):
+    def __init__(self, split, answer_type="multi_choice", flat=False):
         if split == "val":
             split = "validation"    
         assert split in ["train", "validation"]
         assert answer_type in ["multi_choice", "open_ended", "caption", "all"]
         self.answer_type = answer_type
+        self.flat = flat
         super().__init__(split)
 
     def load(self):
-        with open(self.file_path, 'r') as file:
-            config = yaml.safe_load(file)
+        config = yaml.safe_load(read_file(join(self.data_path, "data_subset_config.yaml")))
 
-        shuffled_video_names = json.load(open(self.shuffled_video_names_path, 'r'))
+        shuffled_video_names = json.loads(read_file(self.shuffled_video_names_path, 'r'))
         if self.split == "train":
             subset_video_names = set(shuffled_video_names[:int(len(shuffled_video_names) * 0.95)])
         elif self.split == "validation":
@@ -406,7 +410,8 @@ class LLaVAVideo178K(DatasetBase):
                     ),
                     "message_list": example["message_list"],
                 })
-
+        if self.flat:
+            data_list_format = flatten_lists([dict(ex, message_list=[message]) for message in ex["message_list"]] for ex in data_list_format)
         return data_list_format
 
     def __len__(self):

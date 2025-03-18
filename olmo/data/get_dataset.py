@@ -23,10 +23,16 @@ def get_dataset_by_name(dataset_name, split) -> Dataset:
         return Koala(split=split)
     if dataset_name == "llava_video_178k_mc":
         return LLaVAVideo178K(split=split, answer_type="multi_choice")
+    if dataset_name == "llava_video_178k_mc_flat":
+        return LLaVAVideo178K(split=split, answer_type="multi_choice", flat=True)
     if dataset_name == "llava_video_178k_oe":
         return LLaVAVideo178K(split=split, answer_type="open_ended")
+    if dataset_name == "llava_video_178k_oe_flat":
+        return LLaVAVideo178K(split=split, answer_type="open_ended", flat=True)
     if dataset_name == "llava_video_178k_cap":
         return LLaVAVideo178K(split=split, answer_type="caption")
+    if dataset_name == "llava_video_178k_cap_flat":
+        return LLaVAVideo178K(split=split, answer_type="caption", flat=True)
     if dataset_name == "mvbench":
         return MVBench(split=split)
     if dataset_name.startswith("temp_compass"):
