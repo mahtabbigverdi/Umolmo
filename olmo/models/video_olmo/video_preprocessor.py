@@ -502,12 +502,11 @@ class VideoPreprocessor:
             rng=rng,
         )
 
-        image_collage = get_image_collage(frames)
-        processed_video["image_collage"] = image_collage
-
         if formatter_metadata is None:
             formatter_metadata = {}
         if self.include_image:
+            image_collage = get_image_collage(frames)
+            processed_video["image_collage"] = image_collage
             formatter_metadata["image"] = image_collage
             h, w = image_collage.shape[:2]
         else:

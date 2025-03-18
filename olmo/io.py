@@ -691,6 +691,26 @@ def _gcs_clear_directory(bucket_name: str, prefix: str):
         return
 
 
+def glob(path):
+    from urllib.parse import urlparse
+    parsed = urlparse(path)
+    if parsed.scheme == "gs":
+        storage_client = _get_gcs_client()
+        bucket = storage_client.bucket(parsed.netloc)
+        blobs = bucket.list_blobs(
+            delimiter="/",
+            match_glob=parsed.path.lstrip("/"),
+            retry=_get_gcs_retry(),
+        )
+        for blob in blobs:
+            yield f"gs://{parsed.netloc}/{blob.name}"
+    elif parsed.scheme == "file":
+        from glob import glob
+        return glob(path)
+    else:
+        raise ValueError()
+
+
 def _gcs_list_directory(
     bucket_name: str,
     prefix: str,
