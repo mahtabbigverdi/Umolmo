@@ -30,6 +30,9 @@ from olmo.torch_util import BufferCache, get_default_device
 from olmo.util import flatten_list
 
 
+log = logging.getLogger(__name__)
+
+
 @dataclasses.dataclass
 class TokenScorerConfig(BaseConfig):
     selection_model: str = "linear"
@@ -112,15 +115,13 @@ class HeMolmoConfig(BaseModelConfig):
 
     def build_collator(self, sequence_length, pad_mode: str, include_metadata=True) -> HeMMCollator:
         """Collators for tensors from the preprocessor produces"""
-        h, l = self.mm_preprocessor.get_max_tokens(self.vision_backbone)
-        c = self.mm_preprocessor.get_max_crops()
-        logging.info(f"Building collator, len={sequence_length} max-h={h} "
-                     f"max-l={l}, max-crops={c} pad={pad_mode}")
+        padding_lens = self.mm_preprocessor.get_image_padding_lens(self.vision_backbone)
+        if pad_mode:
+            log.info(f"Building collator, pad={pad_mode} seq_len={sequence_length} " +
+                     " ".join(f"{k}={v}" for k, v in padding_lens.items()))
         return HeMMCollator(
             sequence_length,
-            max_high_res_tokens=h,
-            max_low_res_tokens=l,
-            max_crops=self.mm_preprocessor.get_max_crops(),
+            padding_lens,
             include_metadata=include_metadata,
             pad=pad_mode,
         )
@@ -392,15 +393,15 @@ class HeMolmo(ModelBase):
         response_mask: Optional[torch.Tensor] = None,
         images: Optional[torch.Tensor] = None,
         image_masks: Optional[torch.Tensor] = None,
-        pooled_patches_idx: Optional[torch.Tensor] = None,
         subsegment_ids: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.Tensor] = None,
 
         # Data for token selection
-        low_pooled_patches_idx: Optional[torch.Tensor] = None,
+        high_res_tokens_idx: Optional[torch.Tensor] = None,
+        low_res_tokens_idx: Optional[torch.Tensor] = None,
         low_to_high: Optional[torch.Tensor] = None,
         high_res_features_weights: Optional[torch.Tensor] = None,
-        high_res_patch_pos_ids: Optional[torch.Tensor] = None,
+        high_res_pos_ids: Optional[torch.Tensor] = None,
 
         # Generation/output args
         past_key_values: Optional[Sequence[Tuple[torch.Tensor, torch.Tensor]]] = None,
@@ -502,7 +503,7 @@ class HeMolmo(ModelBase):
         ts_cfg = self.config.token_scorer
         if images is not None:
             image_features = self.vision_backbone(
-                images, image_masks, [low_pooled_patches_idx, pooled_patches_idx])
+                images, image_masks, [low_res_tokens_idx, high_res_tokens_idx])
             low_image_features, low_image_mask = image_features[0]
             high_image_features, high_res_mask = image_features[1]
             before_high_res = (image_segment_ids <= 1)
@@ -561,7 +562,7 @@ class HeMolmo(ModelBase):
                 else:
                     low_res_layer_outputs = [low_res_x]
 
-                n_low_res = low_pooled_patches_idx.shape[1]
+                n_low_res = low_res_tokens_idx.shape[1]
 
                 # [batch, n_crops, n_patches, 576]
                 # Mask patches (could padding, overlap, or bath-padding) get zero attention
@@ -597,9 +598,6 @@ class HeMolmo(ModelBase):
                     # features are for the low-res patches and need to interpolates
                     if not ts_cfg.four_scores_per_low_res_patch:
                         low_res_importance_flat = torch.tile(torch.mean(low_res_importance_flat, dim=-1, keepdim=True), [1, 1, 4])
-                    # low_res_importance = einops.rearrange(
-                    #     low_res_importance_flat, "b (w h) (dw dh) -> b (w dw h dh)",
-                    #     dh=2, dw=2, w=low_h, h=low_h)
                     high_res_importance = torch.matmul(
                         low_res_importance_flat.reshape(batch_size, 1, -1),
                         low_to_high
@@ -668,7 +666,7 @@ class HeMolmo(ModelBase):
 
             x = x.clone()
             x.view(-1, dim)[is_high_res_patch.view(-1)] += valid_selected_features
-            selected_pos_ids = high_res_patch_pos_ids[batch_idx, selection]
+            selected_pos_ids = high_res_pos_ids[batch_idx, selection]
             position_ids.view(-1)[is_high_res_patch.view(-1)] += selected_pos_ids.view(-1)[selection_valid]
 
             if selection_out.token_importance is not None:
@@ -768,6 +766,11 @@ class HeMolmo(ModelBase):
             return OLMoOutput(logits=logits,
                               attn_key_values=attn_key_values,
                               metrics=metrics,
+                              internal=dict(
+                                high_res_pos_ids=high_res_pos_ids,
+                                selected=selection_out.selection,
+                                high_res_importance=high_res_importance.detach(),
+                              ),
                               hidden_states=tuple(all_hidden_states) if output_hidden_states else None)  # type: ignore[arg-type]
         else:
             return OLMoOutput(logits=logits,
@@ -810,11 +813,11 @@ class HeMolmo(ModelBase):
         image_data = dict(
             images=batch.get("images"),
             image_masks=batch.get("image_masks"),
-            low_pooled_patches_idx=batch.get("low_pooled_patches_idx"),
-            pooled_patches_idx=batch.get("pooled_patches_idx"),
+            low_res_tokens_idx=batch.get("low_res_tokens_idx"),
+            high_res_tokens_idx=batch.get("high_res_tokens_idx"),
             low_to_high=batch.get("low_to_high"),
             high_res_features_weights=batch.get("high_res_features_weights"),
-            high_res_patch_pos_ids=batch.get("high_res_patch_pos_ids"),
+            high_res_pos_ids=batch.get("high_res_pos_ids"),
         )
 
         batch_size, seq_len = input_ids.shape
@@ -930,4 +933,5 @@ class HeMolmo(ModelBase):
         return OLMoGenerateOutput(
             token_ids=token_ids,  # type: ignore[arg-type]
             scores=scores,  # type: ignore[arg-type]
+            internal=prefill_output[0].internal if return_prefill_output else None
         )

@@ -66,10 +66,9 @@ class HePreprocessorConfig(BaseConfig):
         else:
             return self.max_crops
 
-    def get_max_tokens(self, vision_backbone_config: MolmoVisionBackboneConfig):
+    def get_image_padding_lens(self, vision_backbone_config: MolmoVisionBackboneConfig):
         """Max numbers of image tokens can be built for one image"""
-        preprocessor = self.build(None, vision_backbone_config)
-        return preprocessor.max_image_tokens()
+        return self.build(None, vision_backbone_config).get_image_padding_lens()
 
     def build(
         self, tokenizer, vision_backbone_config: MolmoVisionBackboneConfig):
@@ -110,8 +109,7 @@ class HeMultiModalPreprocessor(MolmoPreprocessor):
     low_res_from_high: Optional[int] = None
     low_res_from_low: Optional[int] = 2
 
-    def max_image_tokens(self) -> int:
-        """Return the max number of pooled image tokens this could produce for any image"""
+    def get_image_padding_lens(self):
         base_h, base_w = self.base_image_input_size
         high, low = -1, -1
         for h, w in [
@@ -121,7 +119,12 @@ class HeMultiModalPreprocessor(MolmoPreprocessor):
             new_high, new_low = self.compute_num_tokens(h, w)
             high = max(high, new_high)
             low = max(low, new_low)
-        return high, low
+        return dict(
+            images=1 if self.crop_mode == "resize" else (1+self.max_crops),
+            high_res_pos_ids=new_high,
+            low_res_tokens_idx=new_low,
+            high_res_tokens_idx=new_high,
+        )
 
     def compute_num_tokens(self, image_h, image_w) -> int:
         """Return the number of pooled image tokens produced for an image of size image_w, image_h"""
@@ -144,7 +147,7 @@ class HeMultiModalPreprocessor(MolmoPreprocessor):
         h, w = h//image_patch_size, w//image_patch_size
         idx_arr = arange_for_pooling(
             torch.zeros([h, w]), self.image_pooling_h, self.image_pooling_w)
-        overlap_tokens = idx_arr.shape[0] * idx_arr.shape[1]
+        high_res_tokens = idx_arr.shape[0] * idx_arr.shape[1]
 
         low_res_tokens = 0
         if self.low_res_from_low:
@@ -154,7 +157,7 @@ class HeMultiModalPreprocessor(MolmoPreprocessor):
         if self.low_res_from_high:
             idx_arr = arange_for_pooling(torch.zeros([h, w]), self.low_res_from_high, self.low_res_from_high)
             low_res_tokens += idx_arr.shape[0] * idx_arr.shape[1]
-        return overlap_tokens, low_res_tokens
+        return high_res_tokens, low_res_tokens
 
     def image_to_patches_and_tokens(
         self,
@@ -615,8 +618,8 @@ class HeMultiModalPreprocessor(MolmoPreprocessor):
 
         out = {
             "images": images,
-            "low_pooled_patches_idx": np.concatenate(low_pooled_patches_idx, 0),
-            "pooled_patches_idx": np.concatenate(pooled_patches_idx, 0),
+            "low_res_tokens_idx": np.concatenate(low_pooled_patches_idx, 0),
+            "high_res_tokens_idx": np.concatenate(pooled_patches_idx, 0),
             "input_tokens": input_ids,
             "loss_masks": all_loss_masks,
             "target_tokens": target_tokens,
