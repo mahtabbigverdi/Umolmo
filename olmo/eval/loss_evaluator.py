@@ -59,7 +59,7 @@ class LossMetrics:
         total_weight = loss_masks.sum()
         labels = batch["labels"]
         pred = torch.argmax(model_out.logits, dim=-1)
-        accuracy = (pred.flatten() == labels.flatten()).float().sum().item()
+        accuracy = ((pred.flatten() == labels.flatten()).float() * loss_masks.flatten()).sum().item()
         self.eval_metrics["CrossEntropyLoss"].update(cross_entropy_loss/total_weight, total_weight)
         if zloss is not None:
             self.eval_metrics["ZLoss"].update(zloss/total_weight, total_weight)
@@ -114,7 +114,7 @@ class LossDatasetEvaluator:
                 response_mask = (batch["loss_masks"] > 0)
                 with torch.autocast("cuda", enabled=True, dtype=autocast_precision):
                     model_out = model(
-                        **{k: v for k,v in batch.items() if k not in ["labels", "loss_masks", "metadata"]},
+                        **{k: v for k, v in batch.items() if k not in ["labels", "loss_masks", "metadata"]},
                         response_mask=response_mask)
                 logits = model_out.logits
                 loss_masks = batch["loss_masks"]
@@ -124,9 +124,12 @@ class LossDatasetEvaluator:
                 labels = labels.view(-1)
                 logits_for_loss = logits.to(torch.float32).view(-1, logits.size(-1)) # for numerical stability
                 ce_loss, z_loss = loss_fn(
-                    logits_for_loss, labels, ignore_index=-100, reduction="sum",
+                    logits_for_loss, labels, ignore_index=-100, reduction="none",
                     compute_z_loss=self.z_loss is not None, z_loss_scale=self.z_loss,
                 )
+                ce_loss = (ce_loss * loss_masks.view(-1)).sum()
+                if z_loss is not None:
+                    z_loss = (z_loss * loss_masks.view(-1)).sum()
                 self.evaluator.update(batch, model_out, ce_loss, z_loss)
 
             if self.console_log_interval and not pbar:
