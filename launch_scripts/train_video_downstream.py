@@ -141,7 +141,7 @@ if __name__ == "__main__":
 
     if args.seq_len == "auto":
         max_for_image = model_cfg.mm_preprocessor.get_max_image_tokens(model_cfg.vision_backbone)
-        seq_len = 256 + max_for_image
+        seq_len = 1024 + max_for_image
         seq_len = ((seq_len  + 128 - 1) // 128) * 128
         log.info(f"Setting seq len to {seq_len}")
     else:
@@ -173,6 +173,7 @@ if __name__ == "__main__":
             device_batch_size=args.device_eval_batch_size,
         )
         evaluation.data.persistent_workers = True
+        evaluation.data.prefetch_factor = 8
         evaluations.append(evaluation)
 
         inf_evaluation = get_evaluation(
@@ -184,6 +185,7 @@ if __name__ == "__main__":
             device_batch_size=args.device_inf_batch_size,
         )
         inf_evaluation.data.persistent_workers = True
+        evaluation.data.prefetch_factor = 8
         inf_evaluators.append(inf_evaluation)
 
     import os
@@ -216,6 +218,7 @@ if __name__ == "__main__":
             num_workers=num_workers,
             pad="to_max",
             pin_memory=True,
+            prefetch_factor=8,
             seed=50189,
         ),
         ft_connector=True,
