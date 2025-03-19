@@ -32,6 +32,7 @@ REMOVED = dict(
     unconditioned=False,
     use_cls_feature=False,
     pad_to=None,
+    pad_value=0,
     gin_bindings=None,
     prompt_override=None,
     pad_token_id=IGNORE,
