@@ -17,6 +17,7 @@ from torchvision.transforms.functional import affine, InterpolationMode
 
 from olmo.data.dataset import DATA_HOME, Dataset, DatasetBase
 from olmo.data.download_urls import download_pixmo_urls, filter_and_group_data, add_internal_urls
+from olmo.util import transpose_dict_of_lists
 
 if DATA_HOME is not None:
     PIXMO_DATASETS = join(DATA_HOME, "pixmo_datasets")
@@ -101,12 +102,21 @@ class PixMoCount(Dataset):
         self.split = split
 
     def __len__(self):
-        return len(self.dataset)
+        if self.counting == "both":
+            return len(self.dataset) * 2
+        else:
+            return len(self.dataset) * 2
 
     def get(self, item, rng):
+        if self.counting == "both":
+            mode = "point_count" if (item%2==0) else "pointing"
+            item = item // 2
+        else:
+            mode = "point_count" if (item%2==0) else "pointing"
+
         example = self.dataset[item]
         out = dict(
-            style="point_count" if self.counting else "pointing",
+            style=mode,
             image=example["image"],
             label=example["label"],
             metadata=dict(
@@ -219,6 +229,7 @@ class PixMoDocs(Dataset):
             )
         )
 
+
 class PixMoPoints(Dataset):
 
     @classmethod
@@ -241,15 +252,19 @@ class PixMoPoints(Dataset):
             name = "high_frequency" if method == "counting" else "basic"
             save_local_dataset(filtered_dataset, local_name, n_procs=n_procs, n_val=n_val)
 
-    def __init__(self, split, kind="both", counting=False, keep_in_memory=False):
+    def __init__(self, split, kind="both", counting=False, keep_in_memory=False,
+                 max_points=None, max_total_points_per_example=None):
         if kind not in ["high_frequency", "basic", "both"]:
             raise ValueError(kind)
         if split not in ["train", "validation"]:
             raise ValueError(f"Unknown split {split}")
-        mode = "point_count" if counting else "pointing"
+        self.counting = counting
+        if counting == "both":
+            self.mode = ["point_count", "pointing"]
+        else:
+            self.mode = "point_count" if counting else "pointing"
         self.split = split
         self.kind = kind
-        self.mode = mode
         if kind == "both":
             data1 = datasets.load_from_disk(
                 join(PIXMO_DATASETS, "points-counting"), keep_in_memory=keep_in_memory)[split]
@@ -262,11 +277,53 @@ class PixMoPoints(Dataset):
         else:
             self.data = datasets.load_from_disk(
                 join(PIXMO_DATASETS, f"points-counting"), keep_in_memory=keep_in_memory)[split]
+        if max_total_points_per_example or max_points:
+            data = transpose_dict_of_lists(self.data[:])
+            flattened = []
+            n_filtered = 0
+            total_points = 0
+            for ex in data:
+                sub_batches = []
+                on = []
+                total_on = 0
+                total_points += len(ex["points"])
+                for ix, points in enumerate(ex["points"]):
+                    n = len(points)
+                    if max_points and n > max_points:
+                        n_filtered += 1
+                        continue
+                    if max_total_points_per_example and (total_on + n > max_total_points_per_example):
+                        if on:
+                            sub_batches.append(on)
+                            total_on = 0
+                            on = []
+                    on.append(ix)
+                    total_on += n
+                if on:
+                    sub_batches.append(on)
+                for ix in sub_batches:
+                    flattened.append(dict(
+                        ex,
+                        label=[ex["label"][i] for i in ix],
+                        points=[ex["points"][i] for i in ix],
+                    ))
+            logging.info(f"Filtered {n_filtered} ({n_filtered}/{total_points}) points")
+            logging.info(f"Split {len(data)} examples into {len(flattened)} parts")
+            self.data = flattened
 
     def __len__(self):
-        return len(self.data)
+        if self.counting == "both":
+            return len(self.data)*2
+        else:
+            return len(self.data)
 
     def get(self, item, rng):
+        if self.counting == "both":
+            mode = self.mode[item % 2]
+            item = item // 2
+        else:
+            mode = self.mode
+
         ex = self.data[item]
         messages = []
         for label, points in zip(ex["label"], ex["points"]):
@@ -274,7 +331,7 @@ class PixMoPoints(Dataset):
                 label=label,
                 points=np.stack([[x["x"] for x in points], [x["y"] for x in points]], -1),
                 point_scale=100,
-                style=self.mode
+                style=mode
             ))
         return dict(
             image=ex["image"],

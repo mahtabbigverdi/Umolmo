@@ -80,6 +80,14 @@ def get_dataset_by_name(dataset_name, split) -> Dataset:
     elif dataset_name in ["point_count", "pixmo_points_counting"]:
         return PixMoPoints(kind="basic", split=split, counting=True)
 
+    # More than 60 points will start getting truncated anyway with a seq. len of 2304
+    elif dataset_name in ["pixmo_points_train"]:
+        return PixMoPoints(kind="basic", split=split, counting="both", max_points=60, max_total_points_per_example=60)
+    elif dataset_name in ["pixmo_points_high_freq_train"]:
+        return PixMoPoints(kind="high_frequency", split=split, counting="both", max_points=60, max_total_points_per_example=60)
+    elif dataset_name in ["pixmo_count_train"]:
+        return PixMoCount(split=split, counting="both")
+
     # PixMo-Point-Explanations
     elif dataset_name in ["point_qa", "pixmo_pointing_explanations"]:
         return PixMoPointExplanations(split=split, split_groups=True)
