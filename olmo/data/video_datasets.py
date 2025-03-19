@@ -3,7 +3,7 @@
 
 import os
 import json
-import glob
+# import glob
 import yaml
 import pandas as pd
 import numpy as np
@@ -13,8 +13,10 @@ from moviepy import VideoFileClip
 
 import ast
 import decord
+from torchvision.datasets.utils import list_dir
+from tqdm import tqdm
 
-from olmo.io import read_file
+from olmo.io import read_file, is_url, glob, file_exists
 from olmo.util import flatten_lists, resource_path
 
 decord.logging.set_level(2)
@@ -41,7 +43,7 @@ def create_video_from_frames(frames_dir, start_frame, end_frame, fps=3):
     # Generate output path
     output_path = os.path.join(frames_dir, f"video_{start_frame:05d}_{end_frame:05d}.mp4")
     
-    if os.path.exists(output_path):
+    if file_exists(output_path):
         return output_path
 
     # Get list of frame files within the range
@@ -90,7 +92,7 @@ def save_bounded_video(video_path, start_time, end_time, task_type):
     end_time = round(end_time, 2)
     output_path = f"{base_path}_bounded_decimal_2_{start_time}_{end_time}{ext}"
 
-    if os.path.exists(output_path):
+    if file_exists(output_path):
         return output_path
 
     metadata = iio.immeta(video_path)
@@ -231,8 +233,7 @@ class MVBench(DatasetBase):
     def load(self):
         data = []
         for k, v in self.data_list.items():
-            with open(os.path.join(self.data_path, "json", v[0]), 'r') as f:
-                json_data = json.load(f)
+            json_data = json.loads(read_file(os.path.join(self.data_path, "json", v[0])))
             
             for qa_idx, qa_data in enumerate(json_data):
                 question, answer = self.qa_template(qa_data)
@@ -242,13 +243,24 @@ class MVBench(DatasetBase):
                     video_path = os.path.join(v[1], converted_video_name)
                 else:
                     video_path = os.path.join(v[1], qa_data['video'])
-                
-                if not os.path.exists(video_path):
-                    print(f"Video {video_path} does not exist")
-                    continue
 
                 if k in self.data_types_with_bound:
-                    video_path = save_bounded_video(video_path, qa_data['start'], qa_data['end'], k)
+                    if is_url(video_path):
+                        # Assume the bounded video has already been saved since even calling
+                        # `file_exists` on each example can be slow if they are URLs
+                        base_path, ext = os.path.splitext(video_path)
+                        start_time, end_time = qa_data['start'], qa_data['end']
+                        if k == "Episodic Reasoning":
+                            fps = 3
+                            start_frame = int(start_time * fps) + 1  # +1 because frames start at 1
+                            end_frame = int(end_time * fps)
+                            video_path = os.path.join(video_path, f"video_{start_frame:05d}_{end_frame:05d}.mp4")
+                        else:
+                            start_time = round(start_time, 2)
+                            end_time = round(end_time, 2)
+                            video_path = f"{base_path}_bounded_decimal_2_{start_time}_{end_time}{ext}"
+                    else:
+                        video_path = save_bounded_video(video_path, qa_data['start'], qa_data['end'], k)
 
                 data.append({
                     'question': question,
@@ -308,11 +320,13 @@ class LLaVAVideo178K(DatasetBase):
     def load(self):
         config = yaml.safe_load(read_file(join(self.data_path, "data_subset_config.yaml")))
 
-        shuffled_video_names = json.loads(read_file(self.shuffled_video_names_path, 'r'))
+        shuffled_video_names = json.loads(read_file(self.shuffled_video_names_path))
         if self.split == "train":
             subset_video_names = set(shuffled_video_names[:int(len(shuffled_video_names) * 0.95)])
         elif self.split == "validation":
             subset_video_names = set(shuffled_video_names[int(len(shuffled_video_names) * 0.95):])
+        else:
+            raise NotImplementedError(self.split)
 
         data = {}
         data_list_format = []
@@ -329,8 +343,10 @@ class LLaVAVideo178K(DatasetBase):
                     style = "llava_video_" + ("da" if question_type == "open_ended" else "mc")
 
                 config_path = os.path.join(self.data_path, data_file['path'])
-                files_data = [json.load(open(f, 'r')) for f in glob.glob(config_path)]
-                first_file_data = files_data[0]
+                first_file_data = None
+                for file in glob(config_path):
+                    first_file_data = json.loads(read_file(file))
+                    break
 
                 for qa_data in first_file_data:
                     video_path = os.path.join(self.data_path, qa_data['data_source'], qa_data['video'])

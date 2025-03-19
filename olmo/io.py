@@ -704,11 +704,12 @@ def glob(path):
         )
         for blob in blobs:
             yield f"gs://{parsed.netloc}/{blob.name}"
-    elif parsed.scheme == "file":
-        from glob import glob
-        return glob(path)
+    elif parsed.scheme in ["file", '']:
+        from glob import iglob
+        for file in iglob(path):
+            yield file
     else:
-        raise ValueError()
+        raise NotImplementedError(parsed.scheme)
 
 
 def _gcs_list_directory(

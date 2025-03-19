@@ -24,18 +24,15 @@ def _collate(tensors, max_sequence_length=None, dtype=None, pad=None, pad_value=
         max_len = max_sequence_length
         if not allow_truncate:
             assert all(x.shape[0] <= max_len for x in tensors if x is not None)
-    else:
+    elif pad is None:
         max_len = max((0 if x is None else x.shape[0]) for x in tensors)
         if max_sequence_length:
             if allow_truncate:
                 max_len = min(max_len, max_sequence_length)
             elif max_sequence_length < max_len:
                 raise ValueError(f"{max_sequence_length} would truncate a non-truncatable tensor with length of {max_len}")
-
-        if pad is None:
-            pass
-        elif pad is not None:
-            raise NotImplementedError(pad)
+    else:
+        raise NotImplementedError(pad)
 
     arr = np.full([len(tensors), max_len] + list(tensor.shape[1:]), pad_value,
                   dtype=dtype or tensor.dtype)
@@ -83,8 +80,7 @@ class MMCollator:
                     [ex.get(key) for ex in batch], self.max_sequence_length, dtype, pad=self.pad)
 
         for key, max_len in self.image_padding_lens.items():
-            out[key] = _collate([ex.get(key) for ex in batch], max_len, pad=self.pad, allow_truncate=False)
-
+            out[key] = _collate([ex.get(key) for ex in batch], max_len, pad=self.pad, allow_truncate=False,)
         out["input_ids"] = out.pop("input_tokens")
         if "target_tokens" in out:
             out["labels"] = out.pop("target_tokens")

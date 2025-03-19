@@ -45,7 +45,7 @@ if __name__ == "__main__":
     parser.add_argument("data")
     parser.add_argument("--global_batch_size", default=256, type=int)
     parser.add_argument("--n_eval_examples", default=None, type=int)
-    parser.add_argument("--n_high_res", default=None, type=int)
+    parser.add_argument("--n_high_res", default=128, type=int)
     args, other_args = parser.parse_known_args()
 
     if args.checkpoint in ["debug", "debug_he"]:

@@ -139,15 +139,18 @@ def example_to_html_dict(ex, preprocessor, show_patches=False, show_crops=False)
         n_crops = ex["images"].shape[0]
         crop_h, crop_w = base_h//patch_size, base_w//patch_size
         boxes_to_show = [[] for _ in range(len(images))]
-        patches_used = []
+        patches_used = {}
         if ex.get("pooled_patches_idx") is not None:
-            patches_used += ex["pooled_patches_idx"].tolist()
-        if ex.get("low_res_pooled_idx") is not None:
-            patches_used += ex["low_res_pooled_idx"].tolist()
-        if ex.get("high_res_pooled_idx") is not None:
-            patches_used += ex["high_res_pooled_idx"].tolist()
+            for k in ex["pooled_patches_idx"].tolist():
+                patches_used[tuple(k)] = {"border-color": "blue", "z-index": 100}
+        if ex.get("low_res_idx") is not None:
+            for k in ex["low_res_idx"].tolist():
+                patches_used[tuple(k)] = {"border-color": "red", "z-index": 110, "opacity": 0.7}
+        if ex.get("high_res_idx") is not None:
+            for k in ex["high_res_idx"].tolist():
+                patches_used[tuple(k)] = {"border-color": "blue", "z-index": 100, "border-width": "thin"}
 
-        for patch_ids in patches_used:
+        for patch_ids, style in patches_used.items():
             patch_ids = np.array(patch_ids)
             patch_ids = patch_ids[patch_ids >= 0]
             if len(patch_ids) == 0:
@@ -156,13 +159,13 @@ def example_to_html_dict(ex, preprocessor, show_patches=False, show_crops=False)
             patch_ids %= (crop_h * crop_w)
             xs = (patch_ids % crop_h) * patch_size
             ys = (patch_ids // crop_h) * patch_size
-            boxes_to_show[crop_ix].append([
-                xs.min(), ys.min(), xs.max()+patch_size, ys.max()+patch_size])
+            box = [xs.min(), ys.min(), xs.max()+patch_size, ys.max()+patch_size]
+            boxes_to_show[crop_ix].append(BoxesToVisualize(np.array([box]), style=style))
 
         for crop_ix, (crop, boxes) in enumerate(zip(images, boxes_to_show)):
             if len(boxes) > 0:
                 out[f"patch-{crop_ix}"] = get_html_image_with_boxes(
-                    build_embedded_image(crop), [BoxesToVisualize(np.array(boxes), "blue")])
+                    build_embedded_image(crop), boxes)
             else:
                 out[f"patch-{crop_ix}"] = crop
 
@@ -278,13 +281,15 @@ def build_html_table(data: List[Dict[str, Any]], col_widths=None, fixed_width=Fa
 class BoxesToVisualize:
     """Boxes to draw on an image"""
     boxes: Any
-    color: str
+    color: str=None
     format: str = "yxyx"
     labels: List[str] = None
     shape: str = "box"
+    style: Dict[str, Any] = None
+    scores: Optional = None
 
 
-def html_rect(x1, y1, x2, y2, color="black", border_width="medium", label=None):
+def html_rect(x1, y1, x2, y2, style=None, score=None, label=None, text_color=None):
     """Utility method to get a HTML rectangle element"""
     rect_style = {
         "position": "absolute",
@@ -292,18 +297,15 @@ def html_rect(x1, y1, x2, y2, color="black", border_width="medium", label=None):
         "left": f"{x1}px",
         "height": f"{y2-y1}px",
         "width": f"{x2-x1}px",
-        "border-style": "solid",
-        "border-color": color,
-        "border-width": border_width,
-        "box-sizing": "border-box",
     }
+    rect_style.update(style)
     rect_style_str = "; ".join(f"{k}: {v}" for k, v in rect_style.items())
 
     text_style = {
         "position": "absolute",
         "top": y1-5,
         "left": x1+3,
-        "color": color,
+        "color": text_color,
         "background-color": "black",
         "z-index": 9999,
         "padding-right": "5px",
@@ -329,8 +331,8 @@ def html_rect(x1, y1, x2, y2, color="black", border_width="medium", label=None):
 
 
 def get_html_image_with_boxes(
-    image_src, boxes: List[BoxesToVisualize],
-    width=None, height=None, wrap="div", img_size=None, max_dim=None) -> str:
+    image_src, boxes: List[BoxesToVisualize], width=None, height=None, wrap="div",
+    img_size=None, max_dim=None, image_style=None) -> str:
     """Build a HTML element containing `image_src` and the boxes in `boxes` on top of it.
 
     Provides a way to draw annotated images without have to load/modify the image itself
@@ -338,6 +340,8 @@ def get_html_image_with_boxes(
     html = []
     html += [f'<{wrap} style="display: inline-block; position: relative;">']
     image_attr = dict(src=image_src)
+    if image_style:
+        image_attr["style"] = image_style
     if max_dim is not None:
         assert height is None and width is None
         scale = max_dim / max(img_size)
@@ -389,26 +393,57 @@ def get_html_image_with_boxes(
         for ix in range(len(task_boxes)):
             box = task_boxes[ix]
             x1, y1, x2, y2 = box
+            rect_style = {}
+
+            if box_set.shape == "box":
+                rect_style = {
+                    "border-style": "solid",
+                    "border-color": box_set.color,
+                    "box-sizing": "border-box",
+                }
+            elif box_set.shape == "box_full":
+                rect_style = {
+                    "background-color": box_set.color,
+                }
+            else:
+                raise NotImplementedError(f"Shape not understood: {box_set.shape}")
+            if box_set.style is not None:
+                rect_style.update(box_set.style)
+
             html += html_rect(
                 x1*w_factor, y1*h_factor, x2*w_factor, y2*h_factor,
-                color=box_set.color,
-                label=None if box_set.labels is None else box_set.labels[ix]
+                style=rect_style,
+                label=None if box_set.labels is None else box_set.labels[ix],
+                score=None if box_set.scores is None else box_set.scores[ix],
             )
 
     html += [f'</{wrap}>']
     return "\n".join(html)
 
 
-def postprocess_prompt(prompt_text):
+def postprocess_prompt(prompt_text, show_col_tokens=False):
     """Get a human-readable prompt by compressing the image tokens"""
     start = 0
     prompt_text = prompt_text.lstrip()  # some tokenizers add a leading space before special tokens
     post_processed_text = ""
-    for match in re.finditer(r"<im_start>\s?((<im_patch>|<im_col>)\s?)*\s?<im_end>", prompt_text):
-        n_patches = match.group(0).count("<im_patch>")
+    target_tokens = [tokenizer.IMAGE_LOW_RES_TOKEN, tokenizer.IMAGE_PATCH_TOKEN]
+    if not show_col_tokens:
+        target_tokens.append(tokenizer.IM_COL_TOKEN)
+    target_re = "|".join(target_tokens) + r"\s?"
+    for match in re.finditer(fr"({target_re})+", prompt_text):
+        n_patches = sum(match.group(0).count(x) for x in target_tokens)
         if match.start() > start:
             post_processed_text += prompt_text[start:match.start()]
-        post_processed_text += f"IMAGE[{n_patches}]"
+        prefix = next(re.finditer(target_re, match.group(0))).group(0)
+        post_processed_text += f"{prefix}[{n_patches}]"
         start = match.end()
+
+    # for match in re.finditer(r"<im_start>\s?((<im_patch>|<im_col>)\s?)*\s?<im_end>", prompt_text):
+    #     n_patches = match.group(0).count("<im_patch>")
+    #     if match.start() > start:
+    #         post_processed_text += prompt_text[start:match.start()]
+    #     post_processed_text += f"IMAGE[{n_patches}]"
+    #     start = match.end()
     post_processed_text += prompt_text[start:]
     return post_processed_text
+

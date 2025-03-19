@@ -170,7 +170,12 @@ def siglip_resize_and_pad(
     image: np.ndarray,
     desired_output_size: Tuple[int, int],
 ) -> Tuple[np.ndarray, np.ndarray]:
-    image = torch.permute(torch.from_numpy(image), [2, 0, 1])
+    if len(image.shape) == 3:
+        is_video = False
+        image = torch.permute(torch.from_numpy(image), [2, 0, 1])
+    else:
+        is_video = True
+        image = torch.permute(torch.from_numpy(image), [0, 3, 1, 2])
     dtype = image.dtype
     if torch.is_floating_point(image):
         in_min = 0.0
@@ -195,8 +200,12 @@ def siglip_resize_and_pad(
     resized = resized.to(torch.float32)
     resized = (resized - in_min) / (in_max - in_min)
 
-    resized = torch.permute(resized, [1, 2, 0]).numpy()
-    image_mask = np.ones_like(resized[:, :, 0], dtype=np.bool_)
+    if is_video:
+        resized = torch.permute(resized, [0, 2, 3, 1]).numpy()
+        image_mask = None
+    else:
+        resized = torch.permute(resized, [1, 2, 0]).numpy()
+        image_mask = np.ones_like(resized[:, :, 0], dtype=np.bool_)
     
     return resized, image_mask
 
@@ -336,7 +345,6 @@ class MolmoPreprocessorConfig(BaseConfig):
             tokenizer,
             loss_token_weighting=self.loss_token_weighting,
             legacy_image_mask=self.legacy_image_mask,
-
             normalize=vit.normalize,
             crop_mode=self.crop_mode,
             max_crops=self.max_crops,

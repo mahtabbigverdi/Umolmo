@@ -34,9 +34,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(prog="Train a multitask model")
     parser.add_argument("mixture", help="Name of datset mixture to train on")
     parser.add_argument("checkpoint", help="Path to checkpoint to start from")
+    parser.add_argument("--seq_len", default="auto", type=str)
     parser.add_argument("--wandb_run_name", default="multitask_video", type=str)
-    parser.add_argument("--seq_len", default=2048, type=int)
-    parser.add_argument("--max_eval_examples", default=1024, type=int)
+    parser.add_argument("--max_eval_examples", default=512, type=int)
     parser.add_argument("--max_eval_examples_inf", default=-1, type=int)
     parser.add_argument("--max_crops", default=10, type=int)
     parser.add_argument("--global_batch_size", default=32, type=int)
@@ -84,6 +84,12 @@ if __name__ == "__main__":
                  ["lv_long_cap", ["llava_video_178k_cap"], 0.4]]
         eval_tasks = ["mvbench"]
 
+    elif args.mixture in ["lv_flat"]:
+        tasks = [["lv_mc", ["llava_video_178k_mc_flat"], 0.2],
+                 ["lv_oe", ["llava_video_178k_oe_flat"], 0.4],
+                 ["lv_long_cap", ["llava_video_178k_cap_flat"], 0.4]]
+        eval_tasks = ["mvbench"]
+
     else:
         raise NotImplementedError(args.mixture)
 
@@ -97,19 +103,16 @@ if __name__ == "__main__":
         eval_interval = 20
         save_interval = 500
         log_interval = args.log_interval
-        eval_examples = 16
         max_eval_examples = 16
         duration = 30000
         num_workers = 0
     else:
         global_batch_size = args.global_batch_size
         max_eval_examples = args.max_eval_examples
-        eval_examples = 256
         log_interval = args.log_interval
         eval_interval = 1000
         save_interval = 4000
         duration = args.duration
-        inf_eval_interval = duration
         checkpoint = select_checkpoint(args.checkpoint)
         if exists(join(args.checkpoint, "model.yaml")):
             model_cfg = MolmoConfig.load(join(checkpoint, "model.yaml"))
@@ -136,8 +139,14 @@ if __name__ == "__main__":
         )
         num_workers = args.num_workers
 
-    if args.seq_len != model_cfg.llm.max_sequence_length:
-        model_cfg.llm.max_sequence_length = args.seq_len
+    if args.seq_len == "auto":
+        max_for_image = model_cfg.mm_preprocessor.get_max_image_tokens(model_cfg.vision_backbone)
+        seq_len = 256 + max_for_image
+        seq_len = ((seq_len  + 128 - 1) // 128) * 128
+        log.info(f"Setting seq len to {seq_len}")
+    else:
+        seq_len = int(args.seq_len)
+    model_cfg.llm.max_sequence_length = seq_len
 
     # Fine-tuning settings
     model_cfg.llm.residual_dropout = 0.1
@@ -157,7 +166,7 @@ if __name__ == "__main__":
     for task in eval_tasks:
         evaluation = get_evaluation(
             task,
-            args.seq_len,
+            seq_len,
             max_examples=max_eval_examples,
             num_workers=num_workers,
             for_inference=False,
@@ -168,7 +177,7 @@ if __name__ == "__main__":
 
         inf_evaluation = get_evaluation(
             task,
-            args.seq_len,
+            seq_len,
             max_examples=args.max_eval_examples_inf,
             num_workers=num_workers,
             for_inference=True,
@@ -193,6 +202,7 @@ if __name__ == "__main__":
             entity=wandb_entity,
             log_interval=log_interval
         ),
+        compile_loss=True,
         compile=CompilerConfig(mode="default"),
         allow_resume=True,
         model=model_cfg,
@@ -202,7 +212,7 @@ if __name__ == "__main__":
             shuffle=True,
             split="train",
             drop_last=True,
-            sequence_length=args.seq_len,
+            sequence_length=seq_len,
             num_workers=num_workers,
             pad="to_max",
             pin_memory=True,
@@ -257,7 +267,7 @@ if __name__ == "__main__":
         softmax_auxiliary_loss_scale=1e-4,
         eval_interval=eval_interval,
         evaluators=evaluations,
-        inf_eval_interval=inf_eval_interval,
+        inf_eval_interval="${max_duration}",
         inf_evaluators=inf_evaluators,
         save_final_unsharded_checkpoint=True,
     )

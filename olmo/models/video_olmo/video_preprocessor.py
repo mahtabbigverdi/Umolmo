@@ -1,3 +1,5 @@
+import logging
+from os.path import basename, dirname
 from typing import List, Optional, Union, Tuple
 
 import math
@@ -9,6 +11,9 @@ from PIL import Image
 import imageio.v3 as iio
 
 import decord
+
+from olmo.io import resource_path
+
 decord.logging.set_level(2)
 from decord import VideoReader, cpu
 
@@ -69,6 +74,7 @@ def load_decord_video(
     """
     Load a video and returns frames as RGB numpy array.
     """
+    video_path = resource_path(dirname(video_path), basename(video_path)).as_posix()
     vr = VideoReader(video_path, num_threads=1, ctx=cpu(0))
 
     # Get video properties
@@ -115,6 +121,7 @@ def load_pyav_video(
     """
     Load a video and returns frames as RGB numpy array.
     """
+    video_path = resource_path(dirname(video_path), basename(video_path)).as_posix()
     meta = iio.immeta(video_path)
     video_fps = meta["fps"]
     duration = meta["duration"]
@@ -199,6 +206,8 @@ def get_image_collage(frames: np.ndarray, frame_size: int = 128) -> np.ndarray:
 
 @dataclass
 class MultiModalVideoPreprocessorConfig(MolmoPreprocessorConfig):
+    time_mode: str = "per-frame"
+
     crop_mode: str = "frame_sampling"
     """How to divide the images into crops"""
 
@@ -234,6 +243,7 @@ class MultiModalVideoPreprocessorConfig(MolmoPreprocessorConfig):
         vit = vision_backbone_config.vit
         h, w = vit.image_default_input_size
         low_res_tokens = preprocessor.compute_num_tokens(h, w, self.pooling_h, self.pooling_w)
+
         if self.periodic_high_res_frame:
             high_res_tokens = preprocessor.compute_num_tokens(h, w, self.high_res_pooling_h, self.high_res_pooling_w)
             n_high_res = 1 + (self.max_frames - 1) // self.periodic_high_res_frame
@@ -243,6 +253,23 @@ class MultiModalVideoPreprocessorConfig(MolmoPreprocessorConfig):
         else:
             padding_lens["low_res_pooled_idx"] = low_res_tokens*self.max_frames
         return padding_lens
+
+    def get_max_image_tokens(self, vision_backbone_config: MolmoVisionBackboneConfig):
+        lens = self.get_image_padding_lens(vision_backbone_config)
+        seq_len = lens["low_res_pooled_idx"] + lens.get("high_res_pooled_idx", 0)
+        extra_per_frame = 2  # start/end tokens
+        if self.time_mode == "per-frame":
+            extra_per_frame += 8  # time markers
+        elif self.time_mode == "prefix":
+            seq_len += 10  # time prefix
+        else:
+            assert self.time_mode is None
+        if self.use_col_tokens:
+            sz = vision_backbone_config.vit.image_default_input_size
+            patch_size = vision_backbone_config.vit.image_patch_size
+            extra_per_frame += (sz[1] // patch_size // self.pooling_w)
+        seq_len += self.max_frames * extra_per_frame
+        return seq_len
 
     def build(self, tokenizer, vision_backbone_config: MolmoVisionBackboneConfig) -> 'MultiModalVideoPreprocessor':
         vit = vision_backbone_config.vit
@@ -279,6 +306,7 @@ class MultiModalVideoPreprocessor(MolmoPreprocessor):
     Converts video/text inputs into tensors that can be used in the forward method
     for the a model
     """
+    time_mode: str = "per-frame"
     subsegment_video_value: int = 10000
     max_text_tokens: int = 750
     periodic_high_res_frame: Optional[int] = None
@@ -287,6 +315,7 @@ class MultiModalVideoPreprocessor(MolmoPreprocessor):
 
     def __post_init__(self):
         super().__post_init__()
+        assert self.time_mode in ["per-frame", "prefix"] or self.time_mode is None
 
     def __call__(
         self,
@@ -348,15 +377,25 @@ class MultiModalVideoPreprocessor(MolmoPreprocessor):
 
         frame_id_token_ids = []
         for frame_idx, frame_time in enumerate(frame_times):
-            prev_space= " " if frame_idx > 0 else ""
-            frame_id = prev_space + f"time {frame_time:.2f} " # explicit whitespace before/after image tokens
-            frame_id_token_ids.append(self.tokenizer.encode(frame_id))
+            if self.time_mode == "per-frame":
+                prev_space= " " if frame_idx > 0 else ""
+                frame_id = prev_space + f"time {frame_time:.2f} " # explicit whitespace before/after image tokens
+                frame_id_token_ids.append(self.tokenizer.encode(frame_id))
+            else:
+                frame_id_token_ids.append(None)
 
         all_frame_patches = []
         low_res_pooled_idx = []
         high_res_pooled_idx = []
         video_masks = []
         video_tokens = []
+
+        if self.time_mode == "prefix":
+            tmp = np.array(frame_times)
+            deltas = tmp[1:] - tmp[:-1]
+            fps = np.mean(deltas)
+            prefix = self.tokenizer.encode(f"FPS {fps:0.2f}")
+            video_tokens.append(prefix)
 
         for frame_idx, frame in enumerate(frames):
             frame_pooling_w = self.image_pooling_w
@@ -384,7 +423,8 @@ class MultiModalVideoPreprocessor(MolmoPreprocessor):
             all_frame_patches.append(frame_patches)
             if self.image_padding_mask:
                 video_masks.append(frame_masks)
-            video_tokens.append(np.array(frame_id_token_ids[frame_idx], dtype=np.int32))
+            if frame_id_token_ids[frame_idx]:
+                video_tokens.append(np.array(frame_id_token_ids[frame_idx], dtype=np.int32))
             video_tokens.append(frame_tokens)
 
         all_frame_patches = np.concatenate(all_frame_patches, 0)
@@ -484,7 +524,8 @@ class VideoPreprocessor:
         try:
             frames, frame_times = load_video_decord_or_pyav(example["video"], self.max_frames, self.frame_sample_mode, self.candidate_sampling_fps)
         except Exception as e:
-            raise ValueError(f"Could not load video: {example['video']}")
+            e.add_note(f"Could not load video: {example['video']}")
+            raise e
         else:
             example["video"] = frames[0]
 
