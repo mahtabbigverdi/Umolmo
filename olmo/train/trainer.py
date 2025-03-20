@@ -495,6 +495,7 @@ class Trainer:
         checkpoint_dir = join(self.cfg.save_folder, f"step{self.global_step}{suffix}")
         current_checkpoints.append(checkpoint_dir)
 
+        barrier()
         self.checkpointer.save(
             checkpoint_dir,
             self.fsdp_model,

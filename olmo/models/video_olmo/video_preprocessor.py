@@ -274,9 +274,8 @@ class MultiModalVideoPreprocessorConfig(MolmoPreprocessorConfig):
     def build(self, tokenizer, vision_backbone_config: MolmoVisionBackboneConfig) -> 'MultiModalVideoPreprocessor':
         vit = vision_backbone_config.vit
         return MultiModalVideoPreprocessor(
-            tokenizer,
+            tokenizer=tokenizer,
             loss_token_weighting=self.loss_token_weighting,
-
             normalize=vit.normalize,
             crop_mode=self.crop_mode,
             max_crops=self.max_crops,

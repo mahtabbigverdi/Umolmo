@@ -256,7 +256,7 @@ On other machines credentials can be passed in through a ENV variable `GOOGLE_AP
 so it can be set with a beaker-secret. It should contain a raw JSON google 
 credential file.
 
-Sharded checkpoints will be much more efficient on weka since they can be downloaded/uploaded
+Sharded checkpoints will be much more efficient when using multiple nodes since they can be downloaded/uploaded
 in parallel by different nodes.
 
 ### Weka

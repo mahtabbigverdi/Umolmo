@@ -145,12 +145,9 @@ if __name__ == "__main__":
             ], 0.15],
             ["aux", aux, 0.50],
             ["pointing", [
-                "pixmo_points",
-                "pixmo_count",
-                "pixmo_points_high_freq",
-                "pixmo_points_counting",
-                "pixmo_points_high_freq_counting",
-                "pixmo_count_counting",
+                "pixmo_points_train",
+                "pixmo_count_train",
+                "pixmo_points_high_freq_train",
             ], 0.35]
         ]
     elif args.mixture in ["3.3-synthetic"]:

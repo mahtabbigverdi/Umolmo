@@ -2,7 +2,9 @@ from typing import Dict, List, Any
 import numpy as np
 import torch
 
+from olmo import tokenizer
 from olmo.models.molmo.collator import _collate
+from olmo.tokenizer import get_special_token_ids
 
 
 class HeMMCollator:
@@ -10,7 +12,7 @@ class HeMMCollator:
 
     TEXT_KEYS = ["input_tokens", "target_tokens", "loss_masks", "subsegment_ids", "position_ids"]
 
-    def __init__(self, max_sequence_length, padding_lens, include_metadata=True, pad=None):
+    def __init__(self, tok, max_sequence_length, padding_lens, include_metadata=True, pad=None):
         """
         :param max_sequence_length: truncate examples longer than this length
         :param include_metadata: whether to include the metadata in the out batch
@@ -21,11 +23,20 @@ class HeMMCollator:
         self.include_metadata = include_metadata
         self.padding_lens = padding_lens
         self.pad = pad
+        special_tokens = get_special_token_ids(tok)
+        self._image_tokens = np.array([
+            special_tokens[tokenizer.IMAGE_LOW_RES_TOKEN],
+            special_tokens[tokenizer.IMAGE_PATCH_TOKEN],
+        ])[None, :]
 
     def __call__(self, batch: List[Dict[str, Any]]) -> Dict[str, Any]:
         assert len(batch) > 0, "Given an empty batch"
         keys = batch[0].keys()
         out = {}
+
+        if self.pad:
+            if any(np.any(self._image_tokens == ex["input_tokens"][self.max_sequence_length:][:, None]) for ex in batch):
+                raise ValueError("An image would have gotten truncated!")
 
         for key in self.TEXT_KEYS:
             # If one examples has subsegment_ids, all examples need it so with ones
@@ -48,8 +59,8 @@ class HeMMCollator:
                 out[key] = _collate([ex.get(key) for ex in batch], max_len, pad=self.pad, allow_truncate=False)
 
         l2h = [ex["low_to_high"] for ex in batch]
-        n_low = self.padding_lens["low_res_tokens_idx"]*4
-        n_high = self.padding_lens["high_res_tokens_idx"]
+        n_low = out["low_res_tokens_idx"].shape[1]*4
+        n_high = out["high_res_tokens_idx"].shape[1]
         out["low_to_high"] = torch.from_numpy(np.stack([
             np.pad(x, [[0, n_low-x.shape[0]], [0, n_high-x.shape[1]]])
             for x in l2h

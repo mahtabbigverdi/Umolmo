@@ -1,18 +1,14 @@
 import dataclasses
 import math
-import warnings
-from io import BytesIO
 from typing import List, Optional, Union, Any, Tuple
 
 import PIL
 from PIL import ImageFile
-from PIL import ImageOps
 from einops import einops
 
 from olmo import tokenizer
 from olmo.config import BaseConfig
-from olmo.data.dataset import DATA_HOME
-from olmo.io import get_bytes_range
+from olmo.data.image_preprocessor import load_image, ImagePreprocessor
 from olmo.tokenizer import get_special_token_ids
 from olmo.nn.vision_backbone import MolmoVisionBackboneConfig
 
@@ -24,9 +20,6 @@ def setup_pil():
 
 import numpy as np
 import torch
-import torchvision.transforms
-from torchvision.transforms import InterpolationMode
-from torchvision.transforms.functional import convert_image_dtype
 
 from transformers.image_utils import (
     OPENAI_CLIP_MEAN,
@@ -35,241 +28,6 @@ from transformers.image_utils import (
 )
 
 from olmo.models.molmo.data_formatter import DataFormatter
-
-
-DEFAULT_IMAGE_PATH = "/weka/oe-training-default/mm-olmo/torch_datasets"
-
-
-def load_image(image_path):
-    setup_pil()  # Call here so the setting is applied in multi-processing contexts
-    if isinstance(image_path, PIL.Image.Image):
-        # Avoid annoying palette transparency warnings filling up the logs
-        with warnings.catch_warnings(record=True) as w:
-            image = image_path.convert("RGB")
-        try:
-            image = ImageOps.exif_transpose(image)
-        except Exception as e:
-            pass
-        return np.array(image)
-    elif isinstance(image_path, np.ndarray):
-        assert len(image_path.shape) == 3, "Image should have 3 dimensions"
-        assert image_path.shape[2] == 3, "Image should have 3 channels"
-        assert image_path.dtype == np.uint8, "Image should have uint8 type"
-        return image_path
-    else:
-        # This a bit of hack to handle cases where the image path was hard-coded
-        # into the dataset to the weka path
-        if DATA_HOME != DEFAULT_IMAGE_PATH and DEFAULT_IMAGE_PATH in image_path:
-            image_path = image_path.replace(DEFAULT_IMAGE_PATH, DATA_HOME)
-
-        # Ignore image loading warning
-        with warnings.catch_warnings(record=True) as w:
-            if image_path.startswith("gs://"):
-                image_bytes = get_bytes_range(image_path, 0, None)
-                with PIL.Image.open(BytesIO(image_bytes)) as image:
-                    return load_image(image)
-            else:
-                with PIL.Image.open(image_path) as image:
-                    return load_image(image)
-
-
-def arange_for_pooling(idx_arr, pool_h, pool_w):
-    h_pad = pool_h * ((idx_arr.shape[0] + pool_h - 1) // pool_h) - idx_arr.shape[0]
-    w_pad = pool_w * ((idx_arr.shape[1] + pool_w - 1) // pool_w) - idx_arr.shape[1]
-    idx_arr = np.pad(idx_arr, [[h_pad//2, (h_pad+1)//2], [w_pad//2, (w_pad+1)//2]],
-                     mode='constant',constant_values=-1)
-    return einops.rearrange(
-        idx_arr, "(h dh) (w dw) -> h w (dh dw)", dh=pool_h, dw=pool_w)
-
-
-def resize_and_pad(
-    image,
-    desired_output_size,
-    is_training=False,
-    resize_method="torch-bilinear",
-    pad_value=0,
-    rng=np.random
-):
-    """Resize an image while padding to preserve uts aspect ratio."""
-    desired_height, desired_width = desired_output_size
-    height, width = image.shape[:2]
-
-    # Cast into float32 since the training code did this in float32 and it (very rarely) effects
-    # the results after rounding.
-    image_scale_y = np.array(desired_height, np.float32) / np.array(height, np.float32)
-    image_scale_x = np.array(desired_width, np.float32) / np.array(width, np.float32)
-    image_scale = min(image_scale_x, image_scale_y)
-    scaled_height = int(np.array(height, np.float32) * image_scale)
-    scaled_width = int(np.array(width, np.float32) * image_scale)
-
-    if resize_method in ["tensorflow", "tensorflow-random"]:
-        # This how the original training code did resizing, it can produce slightly different
-        # results then using torch resize so we keep it just in case
-        import tensorflow as tf
-        if resize_method == "tensorflow-random" and is_training:
-            resize_methods = sorted([k for k in tf.image.ResizeMethod.__dict__.keys() if k.isupper()])
-            mode = resize_methods[rng.randint(len(resize_methods))]
-            mode = getattr(tf.image.ResizeMethod, mode)
-        else:
-            mode = tf.image.ResizeMethod.BILINEAR
-        image = tf.image.convert_image_dtype(tf.constant(image), dtype=tf.float32)
-        image = tf.image.resize(
-            image,
-            [scaled_height, scaled_width],
-            method=mode,
-            antialias=True,
-        )
-        image = tf.clip_by_value(image, 0.0, 1.0)
-        image = image.numpy()
-    elif resize_method in ["torch-bilinear", "torch-rng"]:
-        image = torch.permute(torch.from_numpy(image), [2, 0, 1])
-        image = convert_image_dtype(image)  # resize in float32 to match the training code
-        if resize_method == "torch-rng"  and is_training:
-            options = [InterpolationMode.BILINEAR, InterpolationMode.NEAREST_EXACT,
-                       InterpolationMode.BICUBIC, InterpolationMode.LANCZOS, InterpolationMode.HAMMING]
-            mode = options[rng.randint(len(options))]
-        else:
-            mode = InterpolationMode.BILINEAR
-        image = torchvision.transforms.Resize([scaled_height, scaled_width], mode, antialias=True)(image)
-        image = torch.clip(image, 0.0, 1.0)
-        image = torch.permute(image, [1, 2, 0]).numpy()
-    else:
-        raise NotImplementedError(resize_method)
-
-    top_pad = (desired_height - scaled_height) // 2
-    left_pad = (desired_width - scaled_width) // 2
-    padding = [
-        [top_pad, desired_height - scaled_height - top_pad],
-        [left_pad, desired_width - scaled_width - left_pad],
-        [0, 0]
-    ]
-    image_mask = np.pad(np.ones_like(image[:, :, 0], dtype=bool), padding[:2])
-    image = np.pad(image, padding, constant_values=pad_value)
-    return image, image_mask
-
-
-def metaclip_resize(image, desired_output_size):
-    image = torch.permute(torch.from_numpy(image), [2, 0, 1])
-    if torch.is_floating_point(image):
-        image = torchvision.transforms.Resize(
-            desired_output_size, InterpolationMode.BICUBIC, antialias=True)(image)
-        image = torch.clip(image, 0.0, 1.0)
-    else:
-        assert image.dtype == torch.uint8, "Expected float images or uint8 images, but got {}".format(image.dtype)
-        image = torchvision.transforms.Resize(
-            desired_output_size, InterpolationMode.BICUBIC, antialias=True)(image)
-        image = image.to(torch.float32)
-        image = torch.clip(image, 0, 255)
-        image = image / 255.0
-    resized = torch.permute(image, [1, 2, 0]).numpy()
-    image_mask = np.ones_like(resized[:, :, 0], dtype=np.bool_)
-    return resized, image_mask
-
-
-def siglip_resize_and_pad(
-    image: np.ndarray,
-    desired_output_size: Tuple[int, int],
-) -> Tuple[np.ndarray, np.ndarray]:
-    if len(image.shape) == 3:
-        is_video = False
-        image = torch.permute(torch.from_numpy(image), [2, 0, 1])
-    else:
-        is_video = True
-        image = torch.permute(torch.from_numpy(image), [0, 3, 1, 2])
-    dtype = image.dtype
-    if torch.is_floating_point(image):
-        in_min = 0.0
-        in_max = 1.0
-        resized = torchvision.transforms.Resize(
-            desired_output_size,
-            InterpolationMode.BILINEAR,
-            antialias=False,
-        )(image)
-        resized = torch.clip(resized, 0.0, 1.0).to(dtype)
-    else:
-        assert image.dtype == torch.uint8, "SigLIP expects float images or uint8 images, but got {}".format(image.dtype)
-        in_min = 0.0
-        in_max = 255.0
-        resized = torchvision.transforms.Resize(
-            desired_output_size,
-            InterpolationMode.BILINEAR,
-            antialias=False,
-        )(image)
-        resized = torch.clip(resized, 0, 255).to(dtype)
-
-    resized = resized.to(torch.float32)
-    resized = (resized - in_min) / (in_max - in_min)
-
-    if is_video:
-        resized = torch.permute(resized, [0, 2, 3, 1]).numpy()
-        image_mask = None
-    else:
-        resized = torch.permute(resized, [1, 2, 0]).numpy()
-        image_mask = np.ones_like(resized[:, :, 0], dtype=np.bool_)
-    
-    return resized, image_mask
-
-
-def dino_resize_and_pad(
-    image: np.ndarray,
-    desired_output_size: Tuple[int, int],
-) -> Tuple[np.ndarray, np.ndarray]:
-    image = torch.permute(torch.from_numpy(image), [2, 0, 1])
-    dtype = image.dtype
-    if torch.is_floating_point(image):
-        resized = torchvision.transforms.Resize(
-            desired_output_size,
-            InterpolationMode.BICUBIC,
-            antialias=True,
-        )(image)
-        resized = torch.clip(resized, 0.0, 1.0).to(torch.float32)
-    else:
-        assert image.dtype == torch.uint8, "DINOv2 expects float images or uint8 images, but got {}".format(image.dtype)
-        resized = torchvision.transforms.Resize(
-            desired_output_size,
-            InterpolationMode.BICUBIC,
-            antialias=True,
-        )(image)
-        resized = torch.clip(resized, 0, 255).to(torch.float32)
-        resized = resized / 255.0
-    
-    resized = torch.permute(resized, [1, 2, 0]).numpy()
-    image_mask = np.ones_like(resized[:, :, 0], dtype=np.bool_)
-
-    return resized, image_mask
-
-
-def select_tiling(h, w, patch_size, max_num_crops):
-    """Divide in image of size [w, h] in up to max_num_patches of size patch_size"""
-    original_size = np.stack([h, w])  # [1, 2]
-    original_res = h * w
-    tilings = []
-    for i in range(1, max_num_crops + 1):
-        for j in range(1, max_num_crops + 1):
-            if i*j <= max_num_crops:
-                tilings.append((i, j))
-    # sort so argmin and argmax favour smaller tilings in the event of a tie
-    tilings.sort(key=lambda x: (x[0]*x[1], x[0]))
-    candidate_tilings = np.array(tilings, dtype=np.int32)  # [n_resolutions, 2]
-    candidate_resolutions = candidate_tilings * patch_size  # [n_resolutions, 2]
-
-    # How much we would need to scale the image to fit exactly in each tiling
-    original_size = np.stack([h, w], dtype=np.float32)  # [1, 2]
-
-    # The original size can be zero in rare cases if the image is smaller than the margin
-    # In those cases letting the scale become infinite means the tiling is based on the
-    # other side, or falls back to the smallest tiling
-    with np.errstate(divide='ignore'):
-        required_scale_d = candidate_resolutions.astype(np.float32) / original_size,
-    required_scale = np.min(required_scale_d, axis=-1, keepdims=True)  # [n_resolutions, 1]
-    if np.all(required_scale < 1):
-        # We are forced to downscale, so try to minimize the amount of downscaling
-        ix = np.argmax(required_scale)
-    else:
-        # Pick the resolution that required the least upscaling so that it most closely fits the image
-        required_scale = np.where(required_scale < 1.0, 10e9, required_scale)
-        ix = np.argmin(required_scale)
-    return candidate_tilings[ix]
 
 
 def batch_pixels_to_patches(array, patch_size):
@@ -290,6 +48,16 @@ def batch_pixels_to_patches(array, patch_size):
         array = np.transpose(array, [0, 1, 3, 2, 4, 5])
         array = np.reshape(array, [n_crops, h_patches*w_patches, patch_size*patch_size*c])
         return array
+
+
+def arange_for_pooling(idx_arr, pool_h, pool_w):
+    h_pad = pool_h * ((idx_arr.shape[0] + pool_h - 1) // pool_h) - idx_arr.shape[0]
+    w_pad = pool_w * ((idx_arr.shape[1] + pool_w - 1) // pool_w) - idx_arr.shape[1]
+    idx_arr = np.pad(idx_arr, [[h_pad//2, (h_pad+1)//2], [w_pad//2, (w_pad+1)//2]],
+                     mode='constant',constant_values=-1)
+    return einops.rearrange(
+        idx_arr, "(h dh) (w dw) -> h w (dh dw)", dh=pool_h, dw=pool_w)
+
 
 
 @dataclasses.dataclass
@@ -342,7 +110,7 @@ class MolmoPreprocessorConfig(BaseConfig):
     def build(self, tokenizer, vision_backbone_config: MolmoVisionBackboneConfig):
         vit = vision_backbone_config.vit
         return MolmoPreprocessor(
-            tokenizer,
+            tokenizer=tokenizer,
             loss_token_weighting=self.loss_token_weighting,
             legacy_image_mask=self.legacy_image_mask,
             normalize=vit.normalize,
@@ -362,31 +130,23 @@ class MolmoPreprocessorConfig(BaseConfig):
 
 
 @dataclasses.dataclass
-class MolmoPreprocessor:
+class MolmoPreprocessor(ImagePreprocessor):
     """
     Converts text/images inputs into tensors that can be used in the forward method
     for the a model
     """
-    tokenizer: Any
+    tokenizer: Any = None
     loss_token_weighting: Optional[str] = None
-
     legacy_image_mask: bool = False
 
     # How to crops/resize images
-    normalize: str = "openai"
-    crop_mode: str = "resize"
-    max_crops: int = 6
-    overlap_margins: Tuple[int, int] = (4, 4)
-    resize: str = "default"
+    crop_mode: str = "default"
     use_col_tokens: bool = True
 
     # Data about the ViT and connector we need when deciding the crops
-    base_image_input_size: Tuple[int, int] = (336, 336)
     image_pooling_w: int = 2
     image_pooling_h: int = 2
-    image_patch_size: int = 14
     image_padding_mask: Union[bool, int] = False
-    pad_value: float = 0
 
     image_patch_token_id: int = dataclasses.field(init=False)
     image_col_token_id: int = dataclasses.field(init=False)
@@ -423,59 +183,20 @@ class MolmoPreprocessor:
         crop_patch_w = self.base_image_input_size[1] // image_patch_size
         crop_patch_h = self.base_image_input_size[0] // image_patch_size
 
-        resize_idx = np.arange(crop_patch_w*crop_patch_h).reshape([crop_patch_h, crop_patch_w])
+        resize_idx = np.zeros([crop_patch_h, crop_patch_w])
         idx_arr = arange_for_pooling(resize_idx, pool_h, pool_w)
         resize_tokens = idx_arr.shape[0] * idx_arr.shape[1]
 
         if self.crop_mode in ["resize"]:
             return resize_tokens
 
-        margin_patches = sum(self.overlap_margins)
-        margin_pixels = image_patch_size*margin_patches  # pixels removed per dim
-        assert crop_patch_w == crop_patch_h
-        crop_window_patches = crop_patch_w - margin_patches
-        crop_window_size = crop_window_patches * image_patch_size
-        tiling = select_tiling(
-            image_h - margin_pixels,
-            image_w - margin_pixels,
-            crop_window_size,
-            self.max_crops
-        )
-        h, w = [tiling[0]*crop_window_size+margin_pixels, tiling[1]*crop_window_size+margin_pixels]
-        h, w = h//image_patch_size, w//image_patch_size
-        idx_arr = arange_for_pooling(
-            torch.zeros([h, w]), pool_h, pool_w)
+        h, w = self.compute_overlapping_crops_size(image_h, image_w)
+        idx_arr = arange_for_pooling(torch.zeros([h, w]), pool_h, pool_w)
         overlap_tokens = idx_arr.shape[0] * idx_arr.shape[1]
         if self.crop_mode in ["overlap-and-resize-c2"]:
             return overlap_tokens + resize_tokens
         else:
             return overlap_tokens
-
-    def _normalize(self, image):
-        if self.normalize == "openai":
-            image -= np.array(OPENAI_CLIP_MEAN, dtype=np.float32)[None, None, :]
-            image /= np.array(OPENAI_CLIP_STD, dtype=np.float32)[None, None, :]
-        elif self.normalize == "siglip":
-            image = np.asarray(-1.0, dtype=np.float32) + image * np.asarray(2.0, dtype=np.float32)
-        elif self.normalize == "dino":
-            image -= np.array([0.485, 0.456, 0.406], dtype=np.float32)[None, None, :]
-            image /= np.array([0.229, 0.224, 0.225], dtype=np.float32)[None, None, :]
-        else:
-            raise NotImplementedError(self.normalize)
-        return image
-
-    def resize_image(self, image, output_size, is_training, rng):
-        if self.resize == "siglip":
-            return siglip_resize_and_pad(image, output_size)
-        elif self.resize == "dino":
-            return dino_resize_and_pad(image, output_size)
-        elif self.resize == "metaclip":
-            return metaclip_resize(image, output_size)
-        else:
-            resize = "torch-bilinear" if self.resize == "default" else self.resize
-            return resize_and_pad(
-                image, output_size, pad_value=self.pad_value, rng=rng, is_training=is_training,
-                resize_method=resize)
 
     def image_to_patches_and_tokens(
         self,
@@ -509,15 +230,11 @@ class MolmoPreprocessor:
         crop_size = base_image_input_size[0]
 
         if self.crop_mode == "resize":
-            resized, resized_mask = self.resize_image(image, base_image_input_size, is_training, rng)
-            resized = np.expand_dims(resized, 0)
-            resized_mask = np.expand_dims(resized_mask, 0)
-            resized = self._normalize(resized)
+            resized, resized_mask, resize_idx = self.build_resized_image(image, is_training=is_training, rng=rng)
             resize_idx = np.arange(crop_patch_w*crop_patch_h).reshape([crop_patch_h, crop_patch_w])
             pooling_idx = arange_for_pooling(resize_idx, pooling_h, pooling_w)
             h, w = pooling_idx.shape[:2]
             pooling_idx = pooling_idx.reshape([-1, pooling_h*pooling_w])
-
             per_row = np.full(
                 (w,),
                 patch_id,
@@ -535,76 +252,7 @@ class MolmoPreprocessor:
                     batch_pixels_to_patches(resized_mask, image_patch_size).mean(-1), pooling_idx)
 
         if self.crop_mode in ["overlap-and-resize-c2", "overlap-and-resize"]:
-            # Discard this many patches from the (left/top, right/bottom) of crops
-            left_margin, right_margin = overlap_margins
-            total_margin_pixels = base_image_input_d*(right_margin + left_margin)  # pixels removed per dim
-            crop_patches = base_image_input_size[0] // base_image_input_d  # patches per crop dim
-            crop_window_patches = crop_patches - (right_margin + left_margin)  # usable patches
-            crop_window_size = crop_window_patches * base_image_input_d
-
-            # Decide how to tile the image, to account for the overlap margins we compute the tiling
-            # as if we had an image without the margins and were using a crop size without the margins
-            tiling = select_tiling(
-                original_image_h - total_margin_pixels,
-                original_image_w - total_margin_pixels,
-                crop_window_size,
-                max_crops
-            )
-            src, img_mask = self.resize_image(
-                image,
-                [tiling[0]*crop_window_size+total_margin_pixels, tiling[1]*crop_window_size+total_margin_pixels],
-                is_training,
-                rng
-            )
-            src = self._normalize(src)
-
-            # Now we have to split the image into crops, and track what patches came from
-            # where in `patch_idx_arr`
-            n_crops = tiling[0] * tiling[1]
-            crop_arr = np.zeros([n_crops, crop_size, crop_size, 3], dtype=src.dtype)
-            mask_arr = np.zeros([n_crops, crop_size, crop_size], dtype=img_mask.dtype)
-            patch_idx_arr = np.zeros([n_crops, crop_patch_h, crop_patch_w], dtype=np.int32)
-            on = 0
-            on_crop = 0
-            for i in range(tiling[0]):
-                # Slide over `src` by `crop_window_size` steps, but extract crops of size `crops_size`
-                # which results in overlapping crop windows
-                y0 = i*crop_window_size
-                for j in range(tiling[1]):
-                    x0 = j*crop_window_size
-                    crop_arr[on_crop] = src[y0:y0+crop_size, x0:x0+crop_size]
-                    mask_arr[on_crop] = img_mask[y0:y0+crop_size, x0:x0+crop_size]
-                    patch_idx = np.arange(crop_patch_w*crop_patch_h).reshape(crop_patch_h, crop_patch_w)
-                    patch_idx += on_crop * crop_patch_h * crop_patch_w
-
-                    # Mask out idx that are in the overlap region
-                    if i != 0:
-                        patch_idx[:left_margin, :] = -1
-                    if j != 0:
-                        patch_idx[:, :left_margin] = -1
-                    if i != tiling[0]-1:
-                        patch_idx[-right_margin:, :] = -1
-                    if j != tiling[1]-1:
-                        patch_idx[:, -right_margin:] = -1
-                    patch_idx_arr[on_crop] = patch_idx
-                    on_crop += 1
-
-            # `patch_idx_arr` is ordered crop-by-crop, here we transpose `patch_idx_arr`
-            # so it is ordered left-to-right order
-            patch_idx_arr = np.reshape(
-                patch_idx_arr,
-                [tiling[0], tiling[1], crop_patch_h, crop_patch_w]
-            )
-            patch_idx_arr = np.transpose(patch_idx_arr, [0, 2, 1, 3])
-            patch_idx_arr = np.reshape(patch_idx_arr, [-1])
-
-            # Now get the parts not in the overlap region, so it should map each patch in `src`
-            # to the correct patch it should come from in `crop_arr`
-            patch_idx_arr = patch_idx_arr[patch_idx_arr >= 0].reshape(
-                src.shape[0]//image_patch_size,
-                src.shape[1]//image_patch_size,
-            )
-
+            crop_arr, mask_arr, patch_idx_arr = self.build_overlapping_crops(image, is_training=is_training, rng=rng)
             pooling_idx = arange_for_pooling(patch_idx_arr, pooling_h, pooling_w)
             h, w = pooling_idx.shape[:2]
             pooling_idx = pooling_idx.reshape([-1, pooling_h*pooling_w])
@@ -626,16 +274,14 @@ class MolmoPreprocessor:
                 return np.concatenate(joint, 0), crop_arr, mask_arr, pooling_idx
 
             # Finally do the same for the global image
-            resized, resized_mask = self.resize_image(image, base_image_input_size, is_training, rng)
-            resized = self._normalize(resized)
-            crop_arr = np.concatenate([np.expand_dims(resized, 0), crop_arr], 0)
+            resized, resized_mask, resize_idx = self.build_resized_image(image, is_training=is_training, rng=rng)
+            crop_arr = np.concatenate([resized, crop_arr], 0)
 
             if self.legacy_image_mask:
-                mask_arr = np.pad(mask_arr, [[0, 1], [0, 0], [0, 0]], constant_values=-1)
+                mask_arr = np.pad(mask_arr.astype(np.float32), [[0, 1], [0, 0], [0, 0]], constant_values=-1)
             else:
-                mask_arr = np.concatenate([np.expand_dims(resized_mask, 0), mask_arr], 0)
+                mask_arr = np.concatenate([resized, mask_arr], 0)
 
-            resize_idx = np.arange(crop_patch_h*crop_patch_w).reshape([crop_patch_h, crop_patch_w])
             resize_idx = arange_for_pooling(resize_idx, pooling_h, pooling_w)
             h, w = resize_idx.shape[:2]
             resize_idx = resize_idx.reshape([-1, pooling_h*pooling_w])

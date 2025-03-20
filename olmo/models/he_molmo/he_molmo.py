@@ -64,6 +64,8 @@ class HeMolmoConfig(BaseModelConfig):
     llm: LlmConfig = field(default_factory=LlmConfig)
     """LLM to use for generation"""
 
+    shared_low_high_embedding: bool = True
+
     vision_backbone: Optional[MolmoVisionBackboneConfig] = field(default_factory=MolmoVisionBackboneConfig)
     """Vision embedding module to get image features"""
 
@@ -120,6 +122,7 @@ class HeMolmoConfig(BaseModelConfig):
             log.info(f"Building collator, pad={pad_mode} seq_len={sequence_length} " +
                      " ".join(f"{k}={v}" for k, v in padding_lens.items()))
         return HeMMCollator(
+            self.build_tokenizer(),
             sequence_length,
             padding_lens,
             include_metadata=include_metadata,
@@ -179,11 +182,13 @@ class HeMolmo(ModelBase):
                 tokenizer.IMAGE_PATCH_TOKEN,
                 tokenizer.IM_COL_TOKEN,
                 tokenizer.IM_END_TOKEN,
+                tokenizer.IMAGE_LOW_RES_TOKEN,
             ]], dtype=torch.long, device=get_default_device())
             ts_config = config.token_selector
         self._image_end_token_id = self.special_ids[tokenizer.IM_END_TOKEN]
         self._image_start_token_id = self.special_ids[tokenizer.IM_START_TOKEN]
-        self._image_patch_id = self.special_ids[tokenizer.IMAGE_PATCH_TOKEN]
+        self._low_res_patch_id = self.special_ids[tokenizer.IMAGE_LOW_RES_TOKEN]
+        self._high_res_patch_id = self.special_ids[tokenizer.IMAGE_PATCH_TOKEN]
         self._block_checkpoint_fn = None
 
         ts_config = self.config.token_scorer
@@ -446,7 +451,13 @@ class HeMolmo(ModelBase):
         # shape: (batch_size, seq_len, d_model)
         if input_ids is not None:
             input_ids = input_ids * (input_ids != -1).to(input_ids.dtype)
-        x = self.transformer.wte(input_ids) if input_embeddings is None else input_embeddings  # type: ignore
+
+        if input_embeddings is not None:
+            x = input_embeddings
+        elif self.config.shared_low_high_embedding:
+            x = self.transformer.wte(torch.where(input_ids == self._low_res_patch_id, self._high_res_patch_id, input_ids))
+        else:
+            x = self.transformer.wte(input_ids)
 
         num_image: Optional[int] = None
 
@@ -506,9 +517,8 @@ class HeMolmo(ModelBase):
                 images, image_masks, [low_res_tokens_idx, high_res_tokens_idx])
             low_image_features, low_image_mask = image_features[0]
             high_image_features, high_res_mask = image_features[1]
-            before_high_res = (image_segment_ids <= 1)
-            is_low_res_patch = (input_ids == self._image_patch_id) & before_high_res
-            is_high_res_patch = (input_ids == self._image_patch_id) & (~before_high_res)
+            is_low_res_patch = (input_ids == self._low_res_patch_id)
+            is_high_res_patch = (input_ids == self._high_res_patch_id)
 
             if self.config.token_scorer.source == "2llm":
                 raise NotImplementedError()
@@ -563,6 +573,7 @@ class HeMolmo(ModelBase):
                     low_res_layer_outputs = [low_res_x]
 
                 n_low_res = low_res_tokens_idx.shape[1]
+                import pdb; pdb.set_trace()
 
                 # [batch, n_crops, n_patches, 576]
                 # Mask patches (could padding, overlap, or bath-padding) get zero attention
