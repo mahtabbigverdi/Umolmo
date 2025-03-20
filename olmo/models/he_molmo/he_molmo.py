@@ -573,7 +573,6 @@ class HeMolmo(ModelBase):
                     low_res_layer_outputs = [low_res_x]
 
                 n_low_res = low_res_tokens_idx.shape[1]
-                import pdb; pdb.set_trace()
 
                 # [batch, n_crops, n_patches, 576]
                 # Mask patches (could padding, overlap, or bath-padding) get zero attention

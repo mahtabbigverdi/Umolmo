@@ -310,6 +310,10 @@ def run_trainer(cfg: TrainConfig) -> None:
             log.info(f"Checkpoint successfully loaded in {time.perf_counter()-t0:0.1f} seconds")
             barrier()
 
+        for name, param in fsdp_model.named_parameters():
+            if not torch.all(torch.isfinite(param)):
+                raise ValueError(name)
+
         # Ready to start training
         if not cfg.dry_run:
             log.info("Starting training...")

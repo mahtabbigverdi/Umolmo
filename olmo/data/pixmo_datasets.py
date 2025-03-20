@@ -105,14 +105,14 @@ class PixMoCount(Dataset):
         if self.counting == "both":
             return len(self.dataset) * 2
         else:
-            return len(self.dataset) * 2
+            return len(self.dataset)
 
     def get(self, item, rng):
         if self.counting == "both":
             mode = "point_count" if (item%2==0) else "pointing"
             item = item // 2
         else:
-            mode = "point_count" if (item%2==0) else "pointing"
+            mode = "point_count" if self.counting else "pointing"
 
         example = self.dataset[item]
         out = dict(
