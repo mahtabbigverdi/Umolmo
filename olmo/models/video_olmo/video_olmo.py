@@ -40,7 +40,7 @@ class VideoOlmoConfig(MolmoConfig):
     def get_default_model_name(cls):
         return "video_olmo"
 
-    vision_backbone: Optional[MolmoVisionBackboneConfig] = field(default_factory=MolmoVisionBackbone)
+    vision_backbone: Optional[MolmoVisionBackboneConfig] = field(default_factory=MolmoVisionBackboneConfig)
     """Vision embedding module to get image features"""
 
     mm_preprocessor: MultiModalVideoPreprocessorConfig = field(default_factory=MultiModalVideoPreprocessorConfig)
