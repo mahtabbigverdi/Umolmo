@@ -1,6 +1,6 @@
 # This file is used to load the video dataset for the MVBench task.
 # Code is adapted from https://github.com/OpenGVLab/Ask-Anything/blob/main/video_chat2/mvbench.ipynb
-
+import logging
 import os
 import json
 # import glob
@@ -17,7 +17,7 @@ from torchvision.datasets.utils import list_dir
 from tqdm import tqdm
 
 from olmo.io import read_file, is_url, glob, file_exists
-from olmo.util import flatten_lists, resource_path
+from olmo.util import flatten_lists, resource_path, split_into_groups
 
 decord.logging.set_level(2)
 from decord import VideoReader, cpu
@@ -308,13 +308,14 @@ class LLaVAVideo178K(DatasetBase):
         "ytb_KWmrJ_jxozc.mp4"
     ])
 
-    def __init__(self, split, answer_type="multi_choice", flat=False):
+    def __init__(self, split, answer_type="multi_choice", flat=False, max_per_video=None):
         if split == "val":
             split = "validation"    
         assert split in ["train", "validation"]
         assert answer_type in ["multi_choice", "open_ended", "caption", "all"]
         self.answer_type = answer_type
         self.flat = flat
+        self.max_per_video = max_per_video
         super().__init__(split)
 
     def load(self):
@@ -426,8 +427,17 @@ class LLaVAVideo178K(DatasetBase):
                     ),
                     "message_list": example["message_list"],
                 })
+
         if self.flat:
             data_list_format = flatten_lists([dict(ex, message_list=[message]) for message in ex["message_list"]] for ex in data_list_format)
+        elif self.max_per_video:
+            flat = []
+            for ex in tqdm(data_list_format):
+                for msg in split_into_groups(ex["message_list"], self.max_per_video):
+                    flat.append(dict(ex, message_list=msg))
+            logging.info(f"Split {len(data_list_format)} in {len(flat)} examples")
+            data_list_format = flat
+
         return data_list_format
 
     def __len__(self):

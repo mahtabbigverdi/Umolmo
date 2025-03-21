@@ -84,6 +84,12 @@ if __name__ == "__main__":
                  ["lv_long_cap", ["llava_video_178k_cap"], 0.4]]
         eval_tasks = ["mvbench"]
 
+    elif args.mixture in ["lv_split"]:
+        tasks = [["lv_mc", ["llava_video_178k_mc_split"], 0.2],
+                 ["lv_oe", ["llava_video_178k_oe"], 0.4],
+                 ["lv_long_cap", ["llava_video_178k_cap"], 0.4]]
+        eval_tasks = ["mvbench"]
+
     elif args.mixture in ["lv_flat"]:
         tasks = [["lv_mc", ["llava_video_178k_mc_flat"], 0.2],
                  ["lv_oe", ["llava_video_178k_oe_flat"], 0.4],

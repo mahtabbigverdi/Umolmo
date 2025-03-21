@@ -220,6 +220,28 @@ def flatten_lists(xss):
     return [x for xs in xss for x in xs]
 
 
+def split_into_groups(lst, max_group_size):
+    """ partition `lst` into that the mininal number of groups that as evenly sized
+    as possible  and are at most `max_group_size` in size """
+    if max_group_size is None:
+        return [lst]
+    if max_group_size == 1:
+        return [[x] for x in lst]
+    n_groups = (len(lst) + max_group_size - 1) // max_group_size
+    per_group = len(lst) // n_groups
+    remainder = len(lst) % n_groups
+    groups = []
+    ix = 0
+    for _ in range(n_groups):
+        group_size = per_group
+        if remainder > 0:
+            remainder -= 1
+            group_size += 1
+        groups.append(lst[ix:ix + group_size])
+        ix += group_size
+    return groups
+
+
 def set_env_variables():
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
     setup_gcp_credentials()
