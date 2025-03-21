@@ -593,7 +593,8 @@ class HeMolmo(ModelBase):
                 else:
                     if ts_cfg.source in ["all_layers"]:
                         low_res_x_features = torch.cat(low_res_layer_outputs, -1)
-                        low_res_x_features /= np.sqrt(len(low_res_layer_outputs))
+                        if not ts_cfg.normalize_importance_scores:
+                            low_res_x_features /= np.sqrt(len(low_res_layer_outputs))
                     else:
                         low_res_x_features = low_res_x
 
@@ -603,6 +604,8 @@ class HeMolmo(ModelBase):
                     low_res_features.view(-1, low_res_dim)[low_image_mask.view(-1)] = low_res_features_sparse
                     if ts_cfg.low_res_features_drop:
                         low_res_features = F.dropout(low_res_features, ts_cfg.low_res_features_drop, self.training)
+                    if ts_cfg.normalize_importance_scores:
+                        high_res_importance = low_res_features / np.sqrt(low_res_features.shape[-1])
                     low_res_importance_flat = self.importance_ln(low_res_features)
 
                     # features are for the low-res patches and need to interpolates
@@ -658,12 +661,10 @@ class HeMolmo(ModelBase):
             elif ts_cfg.learned_rescaling is not None:
                 raise NotImplementedError(ts_cfg.learned_rescaling)
 
-            if ts_cfg.normalize_importance_scores:
-                high_res_importance = high_res_importance / np.sqrt(high_res_importance.shape[-1])
-
             selection_mask = high_res_features_weights > 0
             selection_out: SelectionOutput = self.token_selector(
                 high_res_importance, high_res_mask, selection_mask)
+
             selection = selection_out.selection
 
             batch_idx = torch.arange(batch_size, device=x.device)
@@ -717,12 +718,6 @@ class HeMolmo(ModelBase):
         all_hidden_states = []
         for block_idx, block in enumerate(self.transformer.blocks):
             layer_past = None if past_key_values is None else past_key_values[block_idx]
-            # if self.config.llm.should_checkpoint_block(block_idx):
-            #     x, cache = self._block_checkpoint_fn(block,
-            #         x, attention_bias=attention_bias, position_ids=position_ids, drop_mask=response_mask,
-            #         layer_past=layer_past, use_cache=use_cache, value_scaling=value_scaling,
-            #     )
-            # else:
             x, cache = block(
                 x, attention_bias=attention_bias, position_ids=position_ids, drop_mask=response_mask,
                 layer_past=layer_past, use_cache=use_cache, value_scaling=value_scaling,
