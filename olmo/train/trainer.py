@@ -495,7 +495,12 @@ class Trainer:
         checkpoint_dir = join(self.cfg.save_folder, f"step{self.global_step}{suffix}")
         current_checkpoints.append(checkpoint_dir)
 
+        # torch.distributed.checkpointing can experience weird transients errors, where one
+        # process will hit "800 operation not permitted"
+        # barrier/synchronize since it seems to fix the issue
         barrier()
+        torch.cuda.synchronize(self.device)
+
         self.checkpointer.save(
             checkpoint_dir,
             self.fsdp_model,

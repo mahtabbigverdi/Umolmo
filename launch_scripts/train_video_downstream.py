@@ -35,7 +35,6 @@ if __name__ == "__main__":
     parser.add_argument("mixture", help="Name of datset mixture to train on")
     parser.add_argument("checkpoint", help="Path to checkpoint to start from")
     parser.add_argument("--seq_len", default="auto", type=str)
-    parser.add_argument("--wandb_run_name", default="multitask_video", type=str)
     parser.add_argument("--max_eval_examples", default=512, type=int)
     parser.add_argument("--max_eval_examples_inf", default=-1, type=int)
     parser.add_argument("--max_crops", default=10, type=int)
@@ -48,6 +47,7 @@ if __name__ == "__main__":
     parser.add_argument("--connector_learning_rate", default=5e-6, type=float)
     parser.add_argument("--duration", default=10000, type=int)
     parser.add_argument("--log_interval", default=20, type=int)
+    parser.add_argument("--prefetch_factor", default=8, type=int)
     parser.add_argument("--freeze_vit", action="store_true")
     parser.add_argument("--num_workers", default=2, type=int)
     parser.add_argument("--image_pooling_h", default=2, type=int)
@@ -117,7 +117,7 @@ if __name__ == "__main__":
         max_eval_examples = args.max_eval_examples
         log_interval = args.log_interval
         eval_interval = 1000
-        save_interval = 4000
+        save_interval = 1000
         duration = args.duration
         checkpoint = select_checkpoint(args.checkpoint)
         if exists(join(args.checkpoint, "model.yaml")):
@@ -147,7 +147,7 @@ if __name__ == "__main__":
 
     if args.seq_len == "auto":
         max_for_image = model_cfg.mm_preprocessor.get_max_image_tokens(model_cfg.vision_backbone)
-        seq_len = 1024 + max_for_image
+        seq_len = 768 + max_for_image
         seq_len = ((seq_len  + 128 - 1) // 128) * 128
         log.info(f"Setting seq len to {seq_len}")
     else:
@@ -179,7 +179,7 @@ if __name__ == "__main__":
             device_batch_size=args.device_eval_batch_size,
         )
         evaluation.data.persistent_workers = True
-        evaluation.data.prefetch_factor = 8
+        evaluation.data.prefetch_factor = args.prefetch_factor
         evaluations.append(evaluation)
 
         inf_evaluation = get_evaluation(
@@ -191,7 +191,7 @@ if __name__ == "__main__":
             device_batch_size=args.device_inf_batch_size,
         )
         inf_evaluation.data.persistent_workers = True
-        evaluation.data.prefetch_factor = 8
+        evaluation.data.prefetch_factor = args.prefetch_factor
         inf_evaluators.append(inf_evaluation)
 
     import os
@@ -199,7 +199,7 @@ if __name__ == "__main__":
     wandb_project = os.environ.get("WANDB_PROJECT", "video_olmo")
 
     cfg = TrainConfig(
-        run_name=args.wandb_run_name,
+        run_name="multitask_video",
         save_folder="debug_run" if debug else omegaconf.MISSING,
         seed=6198,
         dry_run=False,
@@ -224,7 +224,7 @@ if __name__ == "__main__":
             num_workers=num_workers,
             pad="to_max",
             pin_memory=True,
-            prefetch_factor=8,
+            prefetch_factor=args.prefetch_factor,
             seed=50189,
         ),
         ft_connector=True,
@@ -274,16 +274,15 @@ if __name__ == "__main__":
         speed_monitor=SpeedMonitorConfig(window_size=20),
         softmax_auxiliary_loss=True,
         softmax_auxiliary_loss_scale=1e-4,
-        eval_interval=eval_interval,
         evaluators=evaluations,
-        inf_eval_interval="${max_duration}",
+        eval_interval=1000,
+        inf_eval_interval=2000,
         inf_evaluators=inf_evaluators,
-        save_final_unsharded_checkpoint=True,
+        save_final_unsharded_checkpoint=False,
     )
 
     conf = OmegaConf.create(cfg)
     if other_args:
-        overrides = [clean_opt(arg) for arg in other_args]
-        conf = OmegaConf.merge(conf, OmegaConf.from_dotlist(overrides))
+        conf.merge_with_dotlist([clean_opt(arg) for arg in other_args])
     cfg = cast(TrainConfig, OmegaConf.to_object(conf))
     run_trainer(cfg)
