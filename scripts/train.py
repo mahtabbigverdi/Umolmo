@@ -83,10 +83,9 @@ def run_trainer(cfg: TrainConfig) -> None:
     if start_from is None and cfg.load_path:
         start_from = cfg.load_path
         reset_train, reset_opt = cfg.reset_trainer_state, cfg.reset_optimizer_state
-    elif cfg.initial_model_checkpoint is not None:
+    elif start_from is None and cfg.initial_model_checkpoint is not None:
         start_from = cfg.initial_model_checkpoint
         reset_train, reset_opt = True, True
-
     start_from_unsharded = start_from and is_unsharded_checkoint(start_from)
     if start_from_unsharded:
         assert reset_opt and reset_train, "Unshared checkpoints do not support optim/train state loading"
