@@ -299,7 +299,8 @@ class ImagePreprocessor:
     def build_resized_image(self, image, is_training, rng):
         resized, resized_mask = self.resize_image(image, self.base_image_input_size, is_training, rng)
         resized = self.normalize_image(resized)
-        resized = np.expand_dims(resized, 0)
+        if len(resized.shape) == 3:
+            resized = np.expand_dims(resized, 0)
         resized_mask = np.expand_dims(resized_mask, 0)
         crop_patch_w = self.base_image_input_size[1] // self.image_patch_size
         crop_patch_h = self.base_image_input_size[0] // self.image_patch_size
