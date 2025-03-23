@@ -1,5 +1,5 @@
 import dataclasses
-from typing import Optional, Dict
+from typing import Optional, Dict, Any
 
 import torch
 from torch import nn
@@ -11,7 +11,7 @@ class TokenSelectionConfig:
     hard: bool = False
     noise: float = 0.0
     loss_weight: float = 0.01
-    target_scale: float = 0.7 
+    target_scale: float = 0.7
     loss_pow: float = 1
     dropout: float = 0
     loss: str = "batch-mean"
@@ -19,6 +19,7 @@ class TokenSelectionConfig:
     rescale: float = 1  
     offset: float = 0.2
     attention_scaling: Optional[float]=None
+    saturation_loss: float = 0
 
     def build(self) -> 'TokenSelector':
         return TokenSelector(self)
@@ -114,11 +115,17 @@ class TokenSelector(nn.Module):
             else:
                 raise NotImplementedError(cfg.loss)
 
+            if self.config.saturation_loss:
+                delta = torch.where(top_k > 0, top_k - 10, -(10 + top_k))
+                saturation_loss = torch.where((delta > 0) & valid, torch.square(delta), 0)
+                loss = loss + (self.config.saturation_loss * saturation_loss * loss_mask).sum() / n_valid
+
             metrics["TokenScaleMean"] = importance_score_mean
             metrics["TokenScaleVar"] = (importance_scores - importance_score_mean).square().sum() / n_valid
             metrics["TokenScale80"] = ((importance_scores > 0.80).float()*loss_mask).sum() / n_valid
             metrics["TokenScale20"] = ((importance_scores < 0.20).float()*loss_mask).sum() / n_valid
             metrics["HighResSelection"] = importance_scores.flatten()[valid.flatten()]
+            metrics["HighResVals"] = top_k.flatten()[valid.flatten()]
 
         return SelectionOutput(
             selection=selection,

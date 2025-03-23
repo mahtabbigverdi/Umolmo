@@ -42,7 +42,7 @@ class LossMetrics:
     def compute(self) -> Dict[str, Union[float, WBValue]]:
         metrics = {}
         for k, v in self.eval_metrics.items():
-            if k == "HighResSelection":
+            if k in ["HighResSelection", "HighResVals"]:
                 metrics[k] = wandb.Histogram(v.compute().detach().cpu().numpy(), num_bins=100)
             elif v.weight > 0:
                 metrics[k] = v.compute().item()
@@ -66,7 +66,7 @@ class LossMetrics:
         self.eval_metrics["Accuracy"].update(accuracy/total_weight, total_weight)
         if model_out.metrics is not None:
             for name, val in model_out.metrics.items():
-                if name == "HighResSelection":
+                if name in ["HighResSelection", "HighResVals"]:
                     if name not in self.eval_metrics:
                         self.eval_metrics[name] = torchmetrics.CatMetric("error")
                     self.eval_metrics[name].update(val)
