@@ -366,7 +366,7 @@ class ModelEvaluator:
             # Post-process the metrics by saving the wandb.Html outputs to disk
             if save_dir and get_global_rank() == 0:
                 for k, v in list(metrics.items()):
-                    if k == "HighResSelection":
+                    if k in ["HighResSelection", "HighResVals"]:
                         # FIXME Ideally we would save the histogram as a PNG
                         del metrics[k]
                         continue
