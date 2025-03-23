@@ -147,7 +147,10 @@ if __name__ == "__main__":
 
     if args.seq_len == "auto":
         max_for_image = model_cfg.mm_preprocessor.get_max_image_tokens(model_cfg.vision_backbone)
-        seq_len = 768 + max_for_image
+        if args.mixture in ["lv_flat"]:
+            seq_len = 256 + max_for_image
+        else:
+            seq_len = 768 + max_for_image
         seq_len = ((seq_len  + 128 - 1) // 128) * 128
         log.info(f"Setting seq len to {seq_len}")
     else:
