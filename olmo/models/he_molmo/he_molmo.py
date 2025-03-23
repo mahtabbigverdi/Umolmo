@@ -139,8 +139,9 @@ class HeMolmoConfig(BaseModelConfig):
 
 class MLP(nn.Module):
 
-    def __init__(self, in_fe, hidden_size, out_dim):
+    def __init__(self, in_fe, hidden_size, out_dim, scale: float=None):
         super().__init__()
+        self.scale = scale
 
         self.w1 = nn.Linear(
             in_fe,
@@ -162,6 +163,8 @@ class MLP(nn.Module):
         x, gate = x.chunk(2, dim=-1)
         x = x * F.silu(gate)
         x = self.w2(x)
+        if self.scale:
+            x *= self.scale
         return x
 
 
@@ -216,10 +219,12 @@ class HeMolmo(ModelBase):
         if ts_config.selection_model == "linear":
             self.importance_ln = nn.Linear(n_low_features, 4, bias=False)
         else:
-            self.importance_ln = MLP(n_low_features, 1024, 4)
+            self.importance_ln = MLP(n_low_features, 1024, 4,
+                                     scale=1024**(-.5) if ts_config.normalize_importance_scores else None)
 
         if ts_config.high_res_patch_prior:
-            self.patch_importance_ln = MLP(llm_cfg.d_model, 1024, 1)
+            self.patch_importance_ln = MLP(llm_cfg.d_model, 1024, 1,
+                                           scale=1024**(-.5) if ts_config.normalize_importance_scores else None)
 
     def get_token_scoring_modules(self) -> Iterator[nn.Module]:
         for k in ["image_query_ln", "importance_ln", "patch_importance_ln", "low_res_features_ln"]:
@@ -605,7 +610,7 @@ class HeMolmo(ModelBase):
                     if ts_cfg.low_res_features_drop:
                         low_res_features = F.dropout(low_res_features, ts_cfg.low_res_features_drop, self.training)
                     if ts_cfg.normalize_importance_scores:
-                        high_res_importance = low_res_features / np.sqrt(low_res_features.shape[-1])
+                        low_res_features = low_res_features / np.sqrt(low_res_features.shape[-1])
                     low_res_importance_flat = self.importance_ln(low_res_features)
 
                     # features are for the low-res patches and need to interpolates
