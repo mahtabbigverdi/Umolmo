@@ -7,18 +7,21 @@ From https://github.com/allenai/OLMo-core/blob/main/src/olmo_core/distributed/ch
 import dataclasses
 import io
 import logging
+import math
 import operator
 import pickle
 import tempfile
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple, cast
 
 import torch
 import torch.distributed as dist
 import torch.distributed.checkpoint as dist_cp
+from torch.distributed import get_rank
 from torch.distributed.checkpoint.filesystem import WriteResult
 from torch.distributed.checkpoint.metadata import Metadata, MetadataIndex, StorageMeta
 from torch.distributed.checkpoint.planner import (
@@ -43,10 +46,44 @@ from olmo.io import (
     upload, PathOrStr,
 )
 from olmo.util import generate_uuid, get_default_thread_count
-from olmo.torch_util import get_element_size
-
+from olmo.torch_util import get_element_size, get_world_size, get_local_world_size, barrier
 
 log = logging.getLogger(__name__)
+
+
+def get_num_nodes() -> int:
+    return get_world_size() // get_local_world_size()
+
+
+def do_n_at_a_time(
+    f,
+    *,
+    n: Optional[int] = None,
+    world_size: Optional[int] = None,
+    local_rank: Optional[int] = None,
+):
+    """
+    Call a function ``f`` in a distributed context from at most ``n`` ranks at a time.
+
+    All ranks will eventually call the given function exactly once, at which point this function
+    will return.
+
+    :param f: The function to call from each rank.
+    :param n: The level of concurrency, i.e. how many ranks are allowed to call ``f`` at once.
+        This defaults to the number of nodes, in which case one rank from each node will
+        call ``f`` at a time.
+    """
+    world_size = world_size if world_size is not None else get_world_size()
+    local_rank = local_rank if local_rank is not None else get_rank()
+    n = n if n is not None else get_num_nodes()
+    group_count = math.ceil(world_size / n)
+    group_rank = local_rank % group_count
+    result = None
+    for active_group in range(group_count):
+        if group_rank == active_group:
+            result = f()
+        barrier()
+    return result
 
 
 @dataclass
@@ -231,7 +268,11 @@ class RemoteFileSystemWriter(dist_cp.StorageWriter):
 
         results: List[WriteResult]
         if self.throttle_uploads and is_url(self.path):
-            raise NotImplementedError()
+            buckets = _split_by_size_and_type(1, plan.items)
+            results = do_n_at_a_time(
+                partial(write_items, buckets),
+                n=max(get_num_nodes() // 4, 1),
+            )
         else:
             buckets = _split_by_size_and_type(self.thread_count, plan.items)
             results = []
