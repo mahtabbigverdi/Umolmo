@@ -597,7 +597,7 @@ def _prepare_state_dict(
     process_group: Optional[dist.ProcessGroup] = None,
 ) -> Dict[str, Any]:
     del process_group  # I feel like these torch functions should take a process group argument.
-    sd_options = dist_cp_sd.StateDictOptions(full_state_dict=False, cpu_offload=True)
+    sd_options = dist_cp_sd.StateDictOptions(full_state_dict=False, cpu_offload=False)
     state_dict: Dict[str, Any] = {
         "model": dist_cp_sd.get_model_state_dict(model, options=sd_options)
     }
