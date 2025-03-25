@@ -118,9 +118,6 @@ def get_evaluation(name, seq_len, max_examples, for_inference=True,
     if name == "coco_2014_vqa_multi":
         name = "coco_2014_vqa"
 
-    evaluator = get_evaluator(name)
-    evaluator.num_wandb_examples = 64
-
     eval_only_tasks = ["mmmu", "mme", "math_vista", "real_world_qa", "seed_bench",
                        "mmbench", "sugar_crepe", "blink"]
     eval_only_tasks += [task_name + "_test" for task_name in eval_only_tasks]
@@ -130,36 +127,10 @@ def get_evaluation(name, seq_len, max_examples, for_inference=True,
         task_name = name + "_test" if not name.endswith("_test") else name
     else:
         task_name = name
-    evaluator.num_wandb_examples = 32
-    evaluator.n_to_log = 0
-    evaluator.save_predictions = None
     test_eval_tasks = ["mme_test", "real_world_qa_test", "real_world_qa_test", "count_bench",
                        "seed_bench_test", "sugar_crepe_test", "count_bench_from_caption", "pointing_test"]
     if split is None:
         split = "test" if task_name in test_eval_tasks else "validation"
-
-    if name.startswith("named_entity"):
-        max_new_tokens = 256
-    elif name == "math_vista_demo":
-        max_new_tokens = 384
-    elif name in ["chart_qa_scifi", "chart_qa_ex", "chart_qa_exp", "chart_qa_prompting_explanation"] or name.endswith("_demo"):
-        max_new_tokens = 256
-    elif name.startswith("user_questions_for_elo"):
-        max_new_tokens = 768  # Can have counts of 20+ so make sure there is room
-    elif name in ["pointing_eval", "pointing"]:
-        max_new_tokens = 192  # 192 is enought for counts <=10 in the point tag format
-    elif "countbench_qa" in name or "pixmo_count" in name:
-        max_new_tokens = 192
-    elif name == "android_control_hl_cot":
-        max_new_tokens = 64
-    elif name.startswith("android_control"):
-        max_new_tokens = 16
-    elif name == "llava_video_178k_oe" or name == "llava_video_178k_cap" or name.startswith("temp_compass"):
-        max_new_tokens = 192
-    elif "refc" in name or "mvbench" in name or name == "llava_video_178k_mc":
-        max_new_tokens = 32
-    else:
-        max_new_tokens = 12
 
     ds = DataLoaderConfig(
         dataset=task_name, sequence_length=seq_len,
@@ -171,6 +142,35 @@ def get_evaluation(name, seq_len, max_examples, for_inference=True,
     )
 
     if for_inference:
+        evaluator = get_evaluator(name)
+        evaluator.num_wandb_examples = 64
+        evaluator.num_wandb_examples = 32
+        evaluator.n_to_log = 0
+        evaluator.save_predictions = None
+
+        if name.startswith("named_entity"):
+            max_new_tokens = 256
+        elif name == "math_vista_demo":
+            max_new_tokens = 384
+        elif name in ["chart_qa_scifi", "chart_qa_ex", "chart_qa_exp", "chart_qa_prompting_explanation"] or name.endswith("_demo"):
+            max_new_tokens = 256
+        elif name.startswith("user_questions_for_elo"):
+            max_new_tokens = 768  # Can have counts of 20+ so make sure there is room
+        elif name in ["pointing_eval", "pointing"]:
+            max_new_tokens = 192  # 192 is enought for counts <=10 in the point tag format
+        elif "countbench_qa" in name or "pixmo_count" in name:
+            max_new_tokens = 192
+        elif name == "android_control_hl_cot":
+            max_new_tokens = 64
+        elif name.startswith("android_control"):
+            max_new_tokens = 16
+        elif name == "llava_video_178k_oe" or name == "llava_video_178k_cap" or name.startswith("temp_compass"):
+            max_new_tokens = 192
+        elif "refc" in name or "mvbench" in name or name == "llava_video_178k_mc":
+            max_new_tokens = 32
+        else:
+            max_new_tokens = 12
+
         return InfDatasetEvaluatorConfig(
             max_examples=max_examples,
             device_batch_size=device_batch_size,
