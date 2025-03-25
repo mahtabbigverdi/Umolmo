@@ -132,9 +132,9 @@ class LossDatasetEvaluator:
                     z_loss = (z_loss * loss_masks.view(-1)).sum()
                 self.evaluator.update(batch, model_out, ce_loss, z_loss)
 
-            if self.console_log_interval and not pbar:
-                if eval_step + 1 == num_eval_batches or (eval_step + 1) % self.console_log_interval == 0:
-                    log.info(f"[eval_step={eval_step + 1}/{num_eval_batches}]")
+                if self.console_log_interval and not pbar:
+                    if eval_step + 1 == num_eval_batches or (eval_step + 1) % self.console_log_interval == 0:
+                        log.info(f"[eval_step={eval_step + 1}/{num_eval_batches}]")
         return self.evaluator.compute()
 
 
