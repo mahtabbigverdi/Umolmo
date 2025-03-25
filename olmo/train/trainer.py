@@ -711,16 +711,6 @@ class Trainer:
         self.min_train_loss = min(self.min_train_loss, self.cur_train_loss)
         return metrics
 
-    def eval_step(self, batch: Dict[str, Any], evaluator: LossMetrics) -> None:
-        # Move tensors to the right device.
-        batch = self.move_to_device(batch, self.device)
-
-        # Run forward pass.
-        with torch.inference_mode():
-            with torch.autocast("cuda", enabled=True, dtype=self.cfg.autocast_precision):
-                ce_loss, z_loss, model_out = self.model_forward(batch, compute_z_loss=True)
-            evaluator.update(batch, model_out, ce_loss, z_loss)
-
     def split_batch(self, batch: Dict[str, Any]) -> List[Dict[str, Any]]:
         microbatch_size = self.cfg.device_train_microbatch_size
         batch_size = batch["input_ids"].shape[0]
