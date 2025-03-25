@@ -8,6 +8,7 @@ from collections import Counter
 from typing import Optional, Dict, Tuple
 
 import numpy as np
+from olmo import tokenizer
 
 from olmo.config import BaseConfig
 
@@ -316,6 +317,7 @@ class DataFormatter(BaseConfig):
     default_inference_len: int = 65  # Inference len for length-conditioned prompting
     select_answer: str = "best"  # How to select answer for questions with many answers
     debug: bool = False  # deterministic mode for debugging
+    image_last: bool = False
 
     def points_to_text(self, points, scale, label_text, alt_text):
         if isinstance(scale, (tuple, list)):
@@ -602,6 +604,13 @@ class DataFormatter(BaseConfig):
             else:
                 with_system_prompt = messages[0]
             messages = [with_system_prompt] + messages[1:]
+
+        if (
+            self.image_last and
+            ("image" in example or "video" in example) and
+            tokenizer.IMAGE_PROMPT not in message[0]
+        ):
+            messages[0] = message[0] + tokenizer.IMAGE_PROMPT
 
         # Add the role annotations such as "User:" and "Assistant:"
         messages = self.format_messages(messages)

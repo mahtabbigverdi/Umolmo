@@ -15,7 +15,6 @@ from olmo import tokenizer
 from olmo.config import BaseConfig, D
 from olmo.models.molmo.data_formatter import DataFormatter
 from olmo.models.molmo.model_preprocessor import Preprocessor
-from olmo.models.he_molmo.he_data_formater import HeDataFormatter
 from olmo.models.he_molmo.he_collator import HeMMCollator
 from olmo.models.he_molmo.he_preprocessor import HePreprocessorConfig
 from olmo.models.he_molmo.token_selector import TokenSelectionConfig, SelectionOutput
@@ -69,7 +68,7 @@ class HeMolmoConfig(BaseModelConfig):
     vision_backbone: Optional[MolmoVisionBackboneConfig] = field(default_factory=MolmoVisionBackboneConfig)
     """Vision embedding module to get image features"""
 
-    data_formatter: HeDataFormatter = field(default_factory=HeDataFormatter)
+    data_formatter: DataFormatter = field(default_factory=lambda: DataFormatter(image_last=True))
     """How to prompt the model for different tasks"""
 
     token_scorer: TokenScorerConfig = field(default_factory=TokenScorerConfig)
