@@ -1,14 +1,32 @@
 import numpy as np
-from olmo.models.molmo.model_preprocessor import MultiModalPreprocessor
-from olmo.html_utils import postprocess_prompt
+from olmo import tokenizer
+import re
+
+from olmo.models.molmo.model_preprocessor import MolmoPreprocessor
 from olmo.tokenizer import build_tokenizer, IMAGE_PROMPT
 
 DUMMY_IMAGE = np.zeros((32, 32, 3), dtype=np.uint8)
 
 
+def postprocess_prompt(prompt_text):
+    """Get a human-readable prompt by compressing the image tokens"""
+    start = 0
+    prompt_text = prompt_text.lstrip()  # some tokenizers add a leading space before special tokens
+    post_processed_text = ""
+    target_tokens = [tokenizer.IMAGE_LOW_RES_TOKEN, tokenizer.IMAGE_PATCH_TOKEN]
+    for match in re.finditer(r"<im_start>\s?((<im_patch>|<im_col>)\s?)*\s?<im_end>", prompt_text):
+        n_patches = match.group(0).count("<im_patch>")
+        if match.start() > start:
+            post_processed_text += prompt_text[start:match.start()]
+        post_processed_text += f"IMAGE[{n_patches}]"
+        start = match.end()
+    post_processed_text += prompt_text[start:]
+    return post_processed_text
+
+
 def get_preprocessor():
     tokenizer = build_tokenizer("Qwen/Qwen2-7B")
-    return MultiModalPreprocessor(tokenizer=tokenizer)
+    return MolmoPreprocessor(tokenizer=tokenizer)
 
 
 def _test_tokenization(messages, n_at_start=None, preprocessor=None):
