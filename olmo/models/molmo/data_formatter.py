@@ -608,9 +608,9 @@ class DataFormatter(BaseConfig):
         if (
             self.image_last and
             ("image" in example or "video" in example) and
-            tokenizer.IMAGE_PROMPT not in message[0]
+            tokenizer.IMAGE_PROMPT not in messages[0]
         ):
-            messages[0] = message[0] + tokenizer.IMAGE_PROMPT
+            messages[0] = messages[0] + tokenizer.IMAGE_PROMPT
 
         # Add the role annotations such as "User:" and "Assistant:"
         messages = self.format_messages(messages)
