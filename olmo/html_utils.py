@@ -82,8 +82,8 @@ def example_to_html_dict(ex, preprocessor, show_patches=False, show_crops=False)
         for i, seg, w in segment_text:
             seg = postprocess_prompt(seg)
             text.append("<li>")
-            if "image_size" in ex["metadata"]:
-                seg_points = extract_points(seg, *ex["metadata"]["image_size"])
+            if "image_size" in metadata:
+                seg_points = extract_points(seg, *metadata["image_size"])
             else:
                 seg_points = []
             if seg_points:
@@ -438,12 +438,6 @@ def postprocess_prompt(prompt_text, show_col_tokens=False):
         post_processed_text += f"{prefix}[{n_patches}]"
         start = match.end()
 
-    # for match in re.finditer(r"<im_start>\s?((<im_patch>|<im_col>)\s?)*\s?<im_end>", prompt_text):
-    #     n_patches = match.group(0).count("<im_patch>")
-    #     if match.start() > start:
-    #         post_processed_text += prompt_text[start:match.start()]
-    #     post_processed_text += f"IMAGE[{n_patches}]"
-    #     start = match.end()
     post_processed_text += prompt_text[start:]
     return post_processed_text
 
