@@ -25,7 +25,7 @@ from olmo.io import read_json, is_url, write_json, file_exists, dir_is_empty, li
 from olmo.util import prepare_cli_environment
 
 METRIC_ORDER = ["name", "wandb", "step", "checkpoint", "src", "num_statements", "is_repeating",
-                "consistency", "recall", "recall_at_10", "loss", "acc"]
+                "f1", "consistency", "recall", "recall_at_10", "loss", "acc"]
 
 
 class Gpt4WithCache:
@@ -691,7 +691,7 @@ def main():
             prefix = dirname(file) + f"/{prefix}"
 
         results_file = prefix + "results_v3.json"
-        if args.save_metrics and exists(results_file):
+        if args.save_metrics and file_exists(results_file):
            logging.info(f"Loading metrics from {results_file}")
            results = read_json(results_file)
         else:
@@ -791,6 +791,9 @@ def main():
                 else:
                     logging.warning(f"Unable to find loss for {run.id} {step}")
                 url = f"https://wandb.ai/prior-ai2/cockatoo/runs/{run.id}"
+
+        if "recall" in results and "consistency" in results:
+            results["f1"] = 2*results["recall"] * results["consistency"] / (results["recall"] + results["consistency"])
 
         config_file = join(dirname(dirname(file)), "config.yaml")
         all_results.append(results)
