@@ -93,7 +93,7 @@ class DatasetEvaluatorConfig(BaseConfig):
     def generative(self):
         return self.generative_evaluator is not None
 
-    def build_evaluator(self, model_config, device, default_save_dir, console_log_interval):
+    def build_evaluator(self, model_config, device, default_save_dir, console_log_interval, include_image=False):
         if self.generative:
             cfg = InfDatasetEvaluatorConfig(
                 self.label, self.data, self.generative_evaluator,
@@ -101,7 +101,8 @@ class DatasetEvaluatorConfig(BaseConfig):
                 device_batch_size=self.device_batch_size,
                 subset_num_batches=self.subset_num_batches,
                 max_examples=self.max_examples,
-                console_log_interval=console_log_interval
+                console_log_interval=console_log_interval,
+                include_image=include_image,
             )
             return cfg.build_dataset_evaluator(
                 model_config=model_config, device=device, default_save_dir=default_save_dir)
@@ -161,6 +162,9 @@ class EvalConfig(BaseConfig):
 
     save_dir: Optional[str] = None
     """Where to save prediction, metrics, and visualizations"""
+
+    include_image: bool = False
+    """Include the image in the evaluation outputs"""
 
     @property
     def autocast_precision(self) -> torch.dtype:

@@ -78,6 +78,7 @@ class MolmoConfig(BaseModelConfig):
         self,
         for_inference,
         is_training=True,
+        include_image: bool = False,
     ) -> Preprocessor:
         """
         Build a preprocessor that converts 'raw' image/text data from various tasks into tensors
@@ -88,6 +89,7 @@ class MolmoConfig(BaseModelConfig):
             self.mm_preprocessor.build(self.build_tokenizer(), self.vision_backbone),
             for_inference=for_inference,
             is_training=is_training,
+            include_image=include_image,
         )
 
     def build_collator(self, sequence_length, pad_mode: str, include_metadata=True) -> MMCollator:

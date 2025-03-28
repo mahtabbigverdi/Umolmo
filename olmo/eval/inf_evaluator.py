@@ -242,6 +242,9 @@ class InfDatasetEvaluatorConfig(BaseConfig):
     console_log_interval: Optional[int] = None
     """How often to log progress to console"""
 
+    include_image: bool = False
+    """Include image in the metadata"""
+
     def build_dataset_evaluator(
         self,
         model_config,
@@ -262,6 +265,7 @@ class InfDatasetEvaluatorConfig(BaseConfig):
             for_inference=True,
             pad_batches=True,
             max_steps_for_padding=max_steps,
+            include_image=self.include_image,
         )
         if self.max_examples is not None:
             num_batches = self.max_examples // self.device_batch_size*get_world_size()

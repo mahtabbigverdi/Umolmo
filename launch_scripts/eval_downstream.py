@@ -38,6 +38,8 @@ def main():
                         help="Load with FSDP, can be used to avoid OOMs")
     parser.add_argument("--max_new_tokens", type=int, default=None,
                         help="Override max new tokens, otherwise use task-specific default")
+    parser.add_argument("--include_image", action="store_true",
+                        help="Include image in the evaluation outputs")
     args, other_args = parser.parse_known_args()
 
     if args.high_res:
@@ -142,6 +144,7 @@ def main():
             fsdp2=True
         ) if args.fsdp else None,
         skip_if_metrics_cached=not args.overwrite,
+        include_image=args.include_image,
     )
 
     config = OmegaConf.create(cfg)

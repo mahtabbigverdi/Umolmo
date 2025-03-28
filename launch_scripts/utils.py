@@ -106,7 +106,8 @@ def get_evaluator(name) -> EvaluatorConfig:
 
 
 def get_evaluation(name, seq_len, max_examples, for_inference=True,
-                   num_workers=2, device_batch_size=None, persistent_workers=False) -> InfDatasetEvaluatorConfig:
+                   num_workers=2, device_batch_size=None,
+                   persistent_workers=False, include_image=False) -> InfDatasetEvaluatorConfig:
     """Gets the default evaluation config for task (or task:split string) `name`"""
     if ":" in name:
         name, split = name.split(":")
@@ -178,7 +179,8 @@ def get_evaluation(name, seq_len, max_examples, for_inference=True,
             evaluator=evaluator,
             label="ai2_diagram" if "ai2_diagram" in name else name,
             data=ds,
-            console_log_interval="${console_log_interval}"  # Use log interval in top-level config
+            console_log_interval="${console_log_interval}",  # Use log interval in top-level config
+            include_image=include_image,
         )
             
     else:

@@ -67,7 +67,8 @@ class DataLoaderConfig(BaseConfig):
         for_inference: bool,
         include_metadata: bool = None,
         pad_batches: bool = False,
-        max_steps_for_padding=None
+        max_steps_for_padding=None,
+        include_image: bool = False,
     ) -> DataLoader:
         assert self.mixture is None and self.root_size_mixture is None
         log.info(f"Loading eval dataset: {self.dataset}/{self.split}")
@@ -89,7 +90,7 @@ class DataLoaderConfig(BaseConfig):
                 n_pad = (n_steps*global_batch_size) - len(dataset)
 
         preprocessor = model_config.build_preprocessor(
-            for_inference=for_inference, is_training=False)
+            for_inference=for_inference, is_training=False, include_image=include_image)
         dataset = DeterministicDataset(
             dataset=dataset,
             seed=self.seed,
