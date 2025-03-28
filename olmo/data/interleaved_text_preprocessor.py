@@ -90,8 +90,13 @@ class InterleavedTextPreprocessor:
                 if text_loss[e] != 0:
                     raise ValueError("Must have a non-loss token after MM data")
                 n_tokens += len(text_ids)
-                n_non_truncatable += min(np.argmax(text_loss != 0) + 1, s)
-                if message_set_ix != 0 and max_tokens and (n_non_truncatable >= max_tokens):
+                if message_set_ix == 0:
+                    n_non_truncatable += max(np.argmax(text_loss != 0) + 1, s)
+                else:
+                    n_non_truncatable += s
+                if message_set_ix != 0 and (max_tokens is not None) and (n_non_truncatable >= max_tokens):
+                    # Adding the message would result in either all the loss tokens for the first
+                    # example, or some of the MM tokens, getting truncated
                     break
                 before_ids.append(text_ids[:s])
                 after_ids.append(text_ids[e:])
@@ -99,7 +104,7 @@ class InterleavedTextPreprocessor:
                 after_losses.append(text_loss[e:])
                 before_subsegments.append(np.full(s, ATTEND_ALL_SUBSEGMENT_ID, dtype=np.int32))
                 after_subsegments.append(np.full(len(text_ids[e:]), message_set_ix, dtype=np.int32))
-                if max_tokens and (n_tokens >= max_tokens):
+                if (max_tokens is not None) and (n_tokens >= max_tokens):
                     break
 
             text_token_ids = np.concatenate([
@@ -142,7 +147,9 @@ class InterleavedTextPreprocessor:
 
         If `message_list` is a list of lists, the batch is assumed to contain multiply-annotated
         MM data. The batch will include tokens from all messages but the MM tokens only once, and
-        `subsegment_id` will indicate how to cross-attend between the tokens
+        `subsegment_id` will indicate how to cross-attend between the tokens. Attending between
+        tokens before the MM tokens will be allowed, but attending between tokens after the MM
+        tokens will not.
         """
         text_token_ids, text_loss_masks, text_subsegments = self.tokenize_message_list(message_list, sum(len(x) for x in multi_model_tokens))
 
@@ -178,7 +185,7 @@ class InterleavedTextPreprocessor:
                 mm_position_ids.append(multi_model_pos_ids[i] + on_pos)
                 on_pos += multi_model_pos_ids[i].max() + 1
             if text_token_ids[token_ix] == self.tokenizer.image_prompt_token_id:
-                on = token_ix + 1
+                on = token_ix + 1  # Skip over the image prompt token
             else:
                 on = token_ix
 
@@ -247,7 +254,7 @@ class InterleavedTextPreprocessor:
 
         # Some sanity checks
         if not all(len(v) == len(input_tokens) for v in out.values()):
-            raise RuntimeError("Length mis-match")
+            raise RuntimeError("Length mismatch")
         special_tokens = np.array([
             self.tokenizer.image_end_token_id,
             self.tokenizer.image_start_token_id,
