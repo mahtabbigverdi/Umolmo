@@ -17,6 +17,7 @@ from torchvision.transforms.functional import affine, InterpolationMode
 
 from olmo.data.dataset import DATA_HOME, Dataset, DatasetBase
 from olmo.data.download_urls import download_pixmo_urls, filter_and_group_data, add_internal_urls
+from olmo.data.image_preprocessor import load_pil_image
 from olmo.util import transpose_dict_of_lists
 
 if DATA_HOME is not None:
@@ -623,7 +624,7 @@ class PixMoClocks(DatasetBase):
         split = self.split
         src = join(PIXMO_DATASETS, "clocks", f"{split}.jsonl")
         logging.info(f"Loading pixmo clock data from {src}")
-        with open(src) as f:
+        with open(cached_path(src, cache_dir=os.environ.get("MOLMO_CACHE_DIR"))) as f:
             return f.readlines()
 
     def get(self, item, rng: np.random.RandomState):
@@ -673,7 +674,7 @@ class PixMoClocks(DatasetBase):
                 raise RuntimeError()
             text = "".join(["The time shown is ", time])
 
-        image = PIL.Image.open(join(PIXMO_DATASETS, "clocks", "images", ex["image"]))
+        image = load_pil_image(join(PIXMO_DATASETS, "clocks", "images", ex["image"]))
         # Cutoff the black sharding at the bottom of every image
         image = image.crop((0, 0, image.width, image.height-120))
 

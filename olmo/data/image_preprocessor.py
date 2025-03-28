@@ -34,6 +34,21 @@ from olmo.models.molmo.data_formatter import DataFormatter
 DEFAULT_IMAGE_PATH = "/weka/oe-training-default/mm-olmo/torch_datasets"
 
 
+def load_pil_image(image_path: str) -> PIL.Image.Image:
+    setup_pil()  # Call here so the setting is applied in multi-processing contexts
+    # This a bit of hack to handle cases where the image path was hard-coded
+    # into the dataset to the weka path
+    if DATA_HOME != DEFAULT_IMAGE_PATH and DEFAULT_IMAGE_PATH in image_path:
+        image_path = image_path.replace(DEFAULT_IMAGE_PATH, DATA_HOME)
+    # Ignore image loading warning
+    with warnings.catch_warnings(record=True) as w:
+        if image_path.startswith("gs://"):
+            image_bytes = get_bytes_range(image_path, 0, None)
+            return PIL.Image.open(BytesIO(image_bytes))
+        else:
+            return PIL.Image.open(image_path)
+
+
 def load_image(image_path):
     setup_pil()  # Call here so the setting is applied in multi-processing contexts
     if isinstance(image_path, PIL.Image.Image):

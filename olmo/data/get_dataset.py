@@ -1,9 +1,12 @@
 from olmo.data.academic_datasets import (
-    ScienceQAImageOnly, TextVqa, OkVqa,
-    AOkVqa, Vqa2, PlotQa, FigureQa, DvQa, TabWMPDirectAnswer,
-    AndroidControl, TallyQa, AI2D, CountBenchQa, RealWorldQa, MathVista, MMMU, ClockBench
+    ScienceQAImageOnly, OkVqa,
+    FigureQa, DvQa, TabWMPDirectAnswer,
+    AndroidControl, AI2D, CountBenchQa, RealWorldQa, MathVista, MMMU, ClockBench
 )
-from olmo.data.academic_datasets_manual import ChartQa, InfoQa, SceneTextQa, DocQa
+from olmo.data.academic_datasets_manual import (
+    ChartQa, InfoQa, SceneTextQa, DocQa,
+    TextVqa, AOkVqa, Vqa2, PlotQa, TallyQa
+)
 from olmo.data.video_datasets import (
     InternVid, Koala, LLaVAVideo178K, MVBench, TempCompass
 )
@@ -156,7 +159,7 @@ def get_dataset_by_name(dataset_name, split) -> Dataset:
     if dataset_name == "text_vqa":
         return TextVqa(split)
     if dataset_name == "plot_qa":
-        return PlotQa(split, in_memory=False)
+        return PlotQa(split)
     if dataset_name == "figure_qa":
         return FigureQa(dict(train="train", validation="validation1")[split])
     if dataset_name == "dv_qa":
