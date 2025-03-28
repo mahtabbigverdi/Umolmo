@@ -19,7 +19,7 @@ from olmo.models.he_molmo.he_collator import HeMMCollator
 from olmo.models.he_molmo.he_preprocessor import HePreprocessorConfig
 from olmo.models.he_molmo.token_selector import TokenSelectionConfig, SelectionOutput
 from olmo.nn.beam_search import FinalSequenceScorer, Constraint, Sampler, BeamSearch
-from olmo.nn.image_vit import ResidualAttentionBlock, VisionTransformer
+from olmo.nn.image_vit import ResidualAttentionBlock, DinoResidualAttentionBlock, VisionTransformer, SiglipVisionTransformer, DinoVisionTransformer
 from olmo.nn.legacy_config import convert_legacy_config
 from olmo.nn.llm import LlmConfig, Llm, OLMoBlock, llm_activation_checkpoint_function
 from olmo.models.model import FSDPWrapStrategy, OLMoOutput, OLMoGenerateOutput, ModelBase
@@ -305,7 +305,7 @@ class HeMolmo(ModelBase):
         for module in self.get_token_scoring_modules():
             size_based_module_to_wrap.add(module)
 
-        wrap_layer_names = (OLMoBlock, ResidualAttentionBlock, MolmoVisionBackbone, VisionTransformer)
+        wrap_layer_names = (OLMoBlock, ResidualAttentionBlock, DinoResidualAttentionBlock, MolmoVisionBackbone, VisionTransformer, SiglipVisionTransformer, DinoVisionTransformer)
 
         if wrap_strategy == FSDPWrapStrategy.by_block:
 
