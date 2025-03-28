@@ -11,7 +11,7 @@ from transformers.image_utils import ImageInput
 from olmo import tokenizer
 from olmo.config import BaseConfig, D
 from olmo.data.image_preprocessor import ImagePreprocessor
-from olmo.data.text_preprocessor import InterleavedTextPreprocessor
+from olmo.data.interleaved_text_preprocessor import InterleavedTextPreprocessor
 from olmo.models.molmo.model_preprocessor import arange_for_pooling, batch_pixels_to_patches
 from olmo.nn.vision_backbone import MolmoVisionBackboneConfig
 from olmo.tokenizer import get_special_token_ids

@@ -11,7 +11,7 @@ from PIL import Image
 
 from olmo import tokenizer
 from olmo.data.image_preprocessor import ImagePreprocessor
-from olmo.data.text_preprocessor import InterleavedTextPreprocessor
+from olmo.data.interleaved_text_preprocessor import InterleavedTextPreprocessor
 from olmo.io import resource_path
 from olmo.models.molmo.data_formatter import DataFormatter
 from olmo.tokenizer import get_special_token_ids
