@@ -20,7 +20,7 @@ from scipy.optimize import linear_sum_assignment
 from scipy.spatial.distance import cdist
 from torchmetrics import MeanMetric
 
-from .vqa import vqa_score, anls_metric, relaxed_correctness, \
+from .vqa import vqa_score, anls_metric, relaxed_correctness, scifi_relaxed_correctness, \
     a_okvqa_score, select_mc_option, mmmu_score, real_world_qa_score, math_vista_score
 from .temp_compass_utils import temp_compass_score
 from ..html_utils import build_html_table, postprocess_prompt, BoxesToVisualize, \
@@ -688,6 +688,8 @@ class VqaEval(Evaluator):
                     score = max(anls_metric(ref, pred) for ref in answers)
                 elif metric == "relaxed_correctness":
                     score = max(relaxed_correctness(ans, pred) for ans in answers)
+                elif metric == "scifi_relaxed_correctness":
+                    score = max(scifi_relaxed_correctness(ans, pred) for ans in answers)
                 elif metric == "a_okvqa_score":
                     score = a_okvqa_score(answers, pred)
                 elif metric == "em":

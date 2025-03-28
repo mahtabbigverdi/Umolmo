@@ -209,6 +209,82 @@ def relaxed_correctness(target: str,
         return prediction.lower() == target.lower()
 
 
+def scifi_relaxed_correctness(
+    target: str, prediction: str, max_relative_change: float = 0.05) -> bool:
+
+    def _to_float(text: str) -> Optional[float]:
+        try:
+            return float(text)
+        except ValueError:
+            return None
+
+    def compute_relative_change(target: float, prediction: float) -> float:
+        if target == 0: return abs(target - prediction)
+        return abs(target - prediction) / abs(target)
+    
+    def extract_short_answer(prediction: float) -> float:
+        if "answer:" in prediction: return prediction.split("answer:")[1].strip()
+        else: return prediction
+
+    prediction = extract_short_answer(prediction.lower().strip())
+    target = extract_short_answer(target.lower().strip())
+
+    if len(prediction) == 0:
+        return False
+
+    if prediction[-1] == ".":
+        prediction = prediction[:-1]
+    
+    WORD_TO_NUM = {k: v for k, v in manualMap.items() if k != "none"}
+
+    target_float = _to_float(target)
+    if target_float is not None:
+        # target is a float number
+        if "," in prediction: prediction = prediction.replace(",", "") # remove commas
+
+        # map words to numbers
+        for word, num in WORD_TO_NUM.items():
+            prediction = prediction.replace(word, str(num))
+
+        # extract the number from the prediction, considering float numbers (.), using regex
+        try: prediction_float = _to_float(re.search(r"[-+]?\d*\.\d+|\d+", prediction).group())
+        except: return False # if no number is found, return False
+
+        relative_change = compute_relative_change(target_float, prediction_float)
+
+        prediction_float_normalized = prediction_float / 100
+        relative_change_normalized = compute_relative_change(target_float, prediction_float_normalized)
+
+        if relative_change <= max_relative_change or relative_change_normalized <= max_relative_change:
+            return True
+        else:
+            return False
+
+    else:
+        # target is a string
+        if "[" in target and "," in target:
+            # target is a list
+            target = target.replace("[", "").replace("]", "")
+            targets = target.split(",")
+            correct = True
+
+            for t in targets:
+                if t.strip().lower() not in prediction:
+                    correct = False
+                    break
+
+            if correct:
+                return True
+            else:
+                return False
+
+        else:
+            if target.strip().lower() in prediction:
+                return True
+            else:
+                return False
+
+
 # From https://github.com/MMMU-Benchmark/MMMU/blob/main/eval/main_parse_and_eval.py
 def mmmu_score(
     target: List[str],

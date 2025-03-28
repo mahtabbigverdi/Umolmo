@@ -68,7 +68,7 @@ def get_evaluator(name) -> EvaluatorConfig:
     elif name == "vqa_v2_test":
         return EvaluatorConfig()
     elif name.startswith("chart_qa"):
-        return EvaluatorConfig(vqa_eval="relaxed_correctness,em")
+        return EvaluatorConfig(vqa_eval="relaxed_correctness,scifi_relaxed_correctness,em")
     elif name in ["doc_qa", "info_qa", "st_qa"]:
         return EvaluatorConfig(vqa_eval="ansl,em")
     elif name in ["gqa", "tally_qa"]:
