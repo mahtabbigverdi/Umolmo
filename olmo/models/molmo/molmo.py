@@ -23,7 +23,7 @@ from olmo.models.molmo.data_formatter import DataFormatter
 from olmo.models.molmo.model_preprocessor import Preprocessor, MolmoPreprocessorConfig
 from olmo.models.model import FSDPWrapStrategy, OLMoOutput, OLMoGenerateOutput, ModelBase
 from olmo.nn.beam_search import BeamSearch, Constraint, FinalSequenceScorer, Sampler
-from olmo.nn.image_vit import ResidualAttentionBlock, VisionTransformer
+from olmo.nn.image_vit import ResidualAttentionBlock, DinoResidualAttentionBlock, VisionTransformer, SiglipVisionTransformer, DinoVisionTransformer
 from olmo.nn.legacy_config import convert_legacy_config
 from olmo.nn.llm import LlmConfig, OLMoBlock, Llm
 from olmo.models.model_config import BaseModelConfig
@@ -191,7 +191,7 @@ class Molmo(ModelBase):
             size_based_module_to_wrap.add(self.vision_backbone.image_pooling_2d)
             size_based_module_to_wrap.add(self.vision_backbone.image_projector)
 
-        wrap_layer_names = (OLMoBlock, ResidualAttentionBlock, MolmoVisionBackbone, VisionTransformer)
+        wrap_layer_names = (OLMoBlock, ResidualAttentionBlock, DinoResidualAttentionBlock, MolmoVisionBackbone, VisionTransformer, SiglipVisionTransformer, DinoVisionTransformer)
 
         if wrap_strategy == FSDPWrapStrategy.by_block:
 

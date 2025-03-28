@@ -280,7 +280,7 @@ class MolmoPreprocessor(ImagePreprocessor):
             if self.legacy_image_mask:
                 mask_arr = np.pad(mask_arr.astype(np.float32), [[0, 1], [0, 0], [0, 0]], constant_values=-1)
             else:
-                mask_arr = np.concatenate([resized, mask_arr], 0)
+                mask_arr = np.concatenate([resized_mask, mask_arr], 0)
 
             resize_idx = arange_for_pooling(resize_idx, pooling_h, pooling_w)
             h, w = resize_idx.shape[:2]
