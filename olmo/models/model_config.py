@@ -47,12 +47,14 @@ class BaseModelConfig(BaseConfig):
         self,
         for_inference,
         is_training=True,
+        sequence_length: Optional[int] = None,
     ) -> Callable[[Dict, np.random.RandomState], Dict]:
         """
         Build a preprocessor that processes individual examples
 
         :param for_inference: If the examples will be used for inference
         :param is_training: If train-time augmentation should be applied
+        :param sequence_length: Max sequence length allowed
         """
         raise NotImplementedError()
 

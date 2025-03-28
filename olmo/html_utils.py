@@ -189,8 +189,8 @@ def example_to_html_dict(ex, preprocessor, show_patches=False, show_crops=False)
                 patch = einops.rearrange(
                     sub_patches,
                     '(pool_h pool_w) patch_h patch_w c -> (pool_h patch_h) (pool_w patch_w) c',
-                    pool_h=preprocessor.mm_preprocessor.image_pooling_h,
-                    pool_w=preprocessor.mm_preprocessor.image_pooling_w
+                    pool_h=preprocessor.mm_preprocessor.high_res_pooling_h,
+                    pool_w=preprocessor.mm_preprocessor.high_res_pooling_w
                 )
 
                 src = build_embedded_image(patch)

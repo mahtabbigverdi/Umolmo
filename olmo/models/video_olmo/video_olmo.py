@@ -16,8 +16,8 @@ from olmo.models.molmo.collator import MMCollator
 from olmo.models.molmo.molmo import MolmoConfig
 from olmo.models.molmo.data_formatter import DataFormatter
 
-from olmo.models.video_olmo.video_preprocessor import VideoPreprocessor
-from olmo.models.video_olmo.video_preprocessor import MultiModalVideoPreprocessorConfig
+from olmo.models.video_olmo.video_preprocessor import VideoTextPreprocessor, \
+    MultiModalVideoPreprocessorConfig, VideoPreprocessor
 
 from olmo import tokenizer
 from olmo.nn.llm import LlmConfig, Llm, OLMoBlock
@@ -25,7 +25,7 @@ from olmo.nn.legacy_config import convert_legacy_config
 from olmo.nn.image_vit import ResidualAttentionBlock, VisionTransformer
 from olmo.nn.vision_backbone import MolmoVisionBackbone, MolmoVisionBackboneConfig
 
-from olmo.torch_util import BufferCache
+from olmo.torch_util import BufferCache, get_default_device
 from olmo.models.model import FSDPWrapStrategy, OLMoOutput, OLMoGenerateOutput, ModelBase
 
 from olmo.nn.beam_search import BeamSearch, Constraint, FinalSequenceScorer, Sampler
@@ -64,6 +64,7 @@ class VideoOlmoConfig(MolmoConfig):
         self,
         for_inference,
         is_training=True,
+        max_seq_len: Optional[int] = None,
     ) -> VideoPreprocessor:
         """
         Build a preprocessor that converts 'raw' image/text data from various tasks into tensors
@@ -72,7 +73,7 @@ class VideoOlmoConfig(MolmoConfig):
 
         return VideoPreprocessor(
             self.data_formatter,
-            self.mm_preprocessor.build(self.build_tokenizer(), self.vision_backbone),
+            self.mm_preprocessor.build(self.build_tokenizer(), self.vision_backbone, max_seq_len),
             for_inference=for_inference,
             is_training=is_training,
             frame_sample_mode=self.mm_preprocessor.frame_sample_mode,
@@ -100,14 +101,14 @@ class VideoOlmo(ModelBase):
         if self.config.vision_backbone is not None:
             self.vision_backbone = self.config.vision_backbone.build(self.config.llm, device)
         self.special_ids = tokenizer.get_special_token_ids(self.config.build_tokenizer())
-        if self.config.bi_directional_attn == "image_tokens":
+        if self.config.bi_directional_attn:
             self.__cache["image_tokens"] = torch.as_tensor([self.special_ids[x] for x in [
                 tokenizer.IMAGE_PATCH_TOKEN,
                 tokenizer.IM_COL_TOKEN,
                 tokenizer.IM_START_TOKEN,
                 tokenizer.IM_END_TOKEN,
                 tokenizer.IMAGE_LOW_RES_TOKEN,
-            ]], dtype=torch.long)
+            ]], dtype=torch.long, device=get_default_device())
         self._image_end_token_id = self.special_ids[tokenizer.IM_END_TOKEN]
         self._image_start_token_id = self.special_ids[tokenizer.IM_START_TOKEN]
         self._image_low_res_id = self.special_ids[tokenizer.IMAGE_LOW_RES_TOKEN]
@@ -334,16 +335,10 @@ class VideoOlmo(ModelBase):
 
         if self.config.llm.use_position_ids and attention_mask is None:
             attention_mask = input_ids != -1
-
         if subsegment_ids is not None:
             assert not use_cache, "Subsegment_ids cannot be used with cache."
             subsegment_mask = subsegment_ids.unsqueeze(2) <= subsegment_ids.unsqueeze(1)
-            attention_mask = (
-                subsegment_mask.to(attention_mask.dtype) *
-                attention_mask.unsqueeze(2) *
-                attention_mask.unsqueeze(1))
-            # Allow self-attention for padding tokens, this prevents NaNs
-            # for some SDPA implementations
+            attention_mask = subsegment_mask & attention_mask[:, :, None] & attention_mask[:, None, :]
             attention_mask = attention_mask | torch.eye(seq_len, device=attention_mask.device, dtype=torch.bool)[None, :, :]
             if position_ids is None:
                 raise ValueError(f"Positioned ids must be given if using subsegment_ids")
@@ -413,8 +408,17 @@ class VideoOlmo(ModelBase):
 
         if self.config.bi_directional_attn == "image_tokens":
             image_tokens = self.__cache["image_tokens"].to(input_ids.device)
-            can_attend_bk = torch.any(input_ids[:, :, None] == image_tokens[None, None, :], -1)
-            casual_mask = casual_mask | (can_attend_bk[:, :, None] & can_attend_bk[:, None, :])[:, None, :, :]
+            c = torch.any(input_ids[:, :, None] == image_tokens[None, None, :], -1)
+            casual_mask = casual_mask | (c[:, :, None] & c[:, None, :])[:, None, :, :]
+        elif self.config.bi_directional_attn == "image_to_question":
+            if images is not None:
+                # image tokens can attend to all non-response tokens
+                image_tokens = self.__cache["image_tokens"].to(input_ids.device)
+                is_image_token = torch.any(input_ids[:, :, None] == image_tokens[None, None, :], -1)
+                if use_cache:
+                    casual_mask = casual_mask | is_image_token[:, None, :, None]
+                else:
+                    casual_mask = casual_mask | (is_image_token[:, :, None] & (~response_mask[:, None, :]))[:, None, :, :]
         elif self.config.bi_directional_attn is not None:
             raise NotImplementedError(self.config.bi_directional_attn)
 

@@ -9,7 +9,6 @@ from launch_scripts.utils import VISION_BACKBONES, LLMS
 from olmo.data.data_loader import DataLoaderConfig
 from olmo.data.pixmo_datasets import PixMoCap
 from olmo.eval.loss_evaluator import LossDatasetEvaluatorConfig
-from olmo.models.he_molmo.he_data_formater import HeDataFormatter
 from olmo.models.he_molmo.he_molmo import TokenScorerConfig, HeMolmoConfig
 from olmo.models.he_molmo.he_preprocessor import HePreprocessorConfig
 from olmo.models.he_molmo.token_selector import TokenSelectionConfig
@@ -70,7 +69,7 @@ if __name__ == "__main__":
               source="all_layers"
             ),
             token_selector=TokenSelectionConfig(loss="batch-mean"),
-            data_formatter=HeDataFormatter(system_prompt="style_and_length_v2"),
+            data_formatter=DataFormatter(system_prompt="style_and_length_v2"),
             mm_preprocessor=HePreprocessorConfig(crop_mode="overlap-and-resize-c2", max_crops=6)
         )
 
@@ -103,8 +102,9 @@ if __name__ == "__main__":
             token_selector=TokenSelectionConfig(
                 loss="batch-mean"
             ),
-            data_formatter=HeDataFormatter(
-                system_prompt="style_and_length_v2"
+            data_formatter=DataFormatter(
+                system_prompt="style_and_length_v2",
+                image_last=True
             ),
             mm_preprocessor=HePreprocessorConfig(
                 crop_mode="overlap-and-resize-c2",

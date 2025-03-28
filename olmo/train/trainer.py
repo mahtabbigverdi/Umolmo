@@ -584,7 +584,6 @@ class Trainer:
         labels.masked_fill_(~(loss_masks > 0), -100)
         labels = labels.view(-1)
         logits_for_loss = logits.to(torch.float32).view(-1, logits.size(-1)) # for numerical stability
-
         ce_loss, z_loss = self.loss_fn(
             logits_for_loss, labels, ignore_index=-100, reduction="none",
             compute_z_loss=compute_z_loss, z_loss_scale=self.cfg.softmax_auxiliary_loss_scale,

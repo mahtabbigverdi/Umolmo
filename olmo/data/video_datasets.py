@@ -13,6 +13,7 @@ from moviepy import VideoFileClip
 
 import ast
 import decord
+from olmo import tokenizer
 from torchvision.datasets.utils import list_dir
 from tqdm import tqdm
 
@@ -369,6 +370,8 @@ class LLaVAVideo178K(DatasetBase):
 
                     for conv_idx in range(0, len(conversations), 2):
                         question = conversations[conv_idx]['value']
+                        if tokenizer.IMAGE_PROMPT in question:
+                            raise ValueError()
                         if question.startswith("<image>\n"):
                             question = question[len("<image>\n"):]
                         answer = conversations[conv_idx + 1]['value']

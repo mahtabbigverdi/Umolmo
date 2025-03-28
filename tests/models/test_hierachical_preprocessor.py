@@ -6,9 +6,10 @@ import pytest
 from olmo.models.he_molmo.he_preprocessor import HeMultiModalPreprocessor
 from olmo.tokenizer import build_tokenizer, get_special_token_ids, IM_START_TOKEN, \
     IMAGE_PROMPT, IM_END_TOKEN, IM_COL_TOKEN, IMAGE_PATCH_TOKEN
+from olmo.util import flatten_lists
 
 
-def test_preprocessing(col_tokens: bool=False, max_crops=4, siglip=False):
+def test_preprocessing(col_tokens: bool=False, max_crops=4, siglip=False, multi_message=False):
     tokenizer = build_tokenizer("Qwen/Qwen2-7B")
     n_high_res = 256
 
@@ -28,17 +29,23 @@ def test_preprocessing(col_tokens: bool=False, max_crops=4, siglip=False):
         multi_res_min=None,
         use_high_res_col_tokens=col_tokens,
     )
-    max_tokens = preprocessor.max_image_tokens()
-    assert max_tokens > 0
     if siglip:
         preprocessor.base_image_input_size = (378, 378)
         preprocessor.image_token_length_h = 14
         preprocessor.image_token_length_w = 14
         preprocessor.overlap_margins = (4, 3)
 
+    if multi_message:
+        messages = [
+            ["Here is question1", " answer is 2"],
+            ["And here is a longer question3", " 3"],
+            ["Q3", " a longer answer"]
+        ]
+    else:
+        messages = ["A simple question" + IMAGE_PROMPT + "The", " answer is 3"]
     batch = preprocessor(
         images=np.zeros((500, 500, 3), dtype=np.uint8),
-        messages=["A simple question" + IMAGE_PROMPT + "The", " answer is 3"],
+        messages=messages,
         rng=np.random,
     )
     input_ids = batch["input_tokens"]
@@ -47,13 +54,14 @@ def test_preprocessing(col_tokens: bool=False, max_crops=4, siglip=False):
     high_res_pos_ids = batch["high_res_pos_ids"]
 
     # low-to-high should make sense
-    assert np.allclose(batch["low_to_high"].sum(1), 1)
+    assert np.allclose(batch["low_to_high"].sum(0), 1)
 
     # Check the first set of tokens which should be the input query
-    assert input_ids[0] == tokenizer.bos_token_id
-    assert (input_ids[1:] == tokenizer.eos_token_id).sum() == 0
-    assert tokenizer.decode(input_ids[:first_image_start]) == "A simple question"
-    assert np.all(position_ids[:first_image_start] == np.arange(first_image_start))
+    if not multi_message:
+        assert input_ids[0] == tokenizer.bos_token_id
+        assert (input_ids[1:] == tokenizer.eos_token_id).sum() == 0
+        assert tokenizer.decode(input_ids[:first_image_start]) == "A simple question"
+        assert np.all(position_ids[:first_image_start] == np.arange(first_image_start))
 
     # Now check the low-res image
     second_image_start = 1 + np.argmax(input_ids == end_token_id)
@@ -91,21 +99,37 @@ def test_preprocessing(col_tokens: bool=False, max_crops=4, siglip=False):
     else:
         assert np.all(np.sort(possible_high_res_positions) == np.arange(len(possible_high_res_positions)))
 
-    # Check the output(s)
-    assert tokenizer.decode(input_ids[second_image_end:]) == "The answer is 3"
-    assert high_pos[-1] == position_ids[second_image_end:].min() - 1
-    assert np.all(position_ids[second_image_end:] ==
-                  (high_pos[-1] + 1 + np.arange(len(input_ids[second_image_end:]))))
+    # Check text after the image:
+    if not multi_message:
+        assert tokenizer.decode(input_ids[second_image_end:]) == "The answer is 3"
+        assert high_pos[-1] == position_ids[second_image_end:].min() - 1
+        assert np.all(position_ids[second_image_end:] ==
+                      (high_pos[-1] + 1 + np.arange(len(input_ids[second_image_end:]))))
+    else:
+        subsegment_ids = batch["subsegment_ids"]
+        for i in range(len(messages)):
+            mask = (subsegment_ids == i) | (subsegment_ids == 10000)
+            assert np.all(mask[:second_image_end])
+            text_mask = np.copy(mask)
+            text_mask[:second_image_end] = 0
+            text = tokenizer.decode(input_ids[text_mask])
+            assert text == "".join(messages[i])
+            # assert np.all(
+            #     position_ids[text_mask] ==
+            #     (np.arange(text_mask.sum()) + position_ids[second_image_end-1]+1)
+            # )
 
 
 @pytest.mark.parametrize("col_tokens", [True, False])
 @pytest.mark.parametrize("max_crops", [1, 4])
-@pytest.mark.parametrize("multi_res_selection", [None])  # No longer trying to support multi-res
 @pytest.mark.parametrize("siglip", [True, False])
-def test_preprocessor(col_tokens, multi_res_selection, max_crops, siglip):
+def test_preprocessor(col_tokens, max_crops, siglip):
     test_preprocessing(col_tokens, max_crops=max_crops, siglip=siglip)
-    # FIXME should also with variable res
 
 
-def test_preprocessor2():
-    test_preprocessing(False, max_crops=4, siglip=True)
+def test_preprocessor_multi_message():
+    test_preprocessing(True, max_crops=2, siglip=False, multi_message=True)
+
+
+if __name__ == '__main__':
+    test_preprocessing(False, max_crops=4, siglip=False, multi_message=False)

@@ -21,7 +21,7 @@ from olmo.models.he_molmo.token_selector import TokenSelectionConfig, SelectionO
 from olmo.nn.beam_search import FinalSequenceScorer, Constraint, Sampler, BeamSearch
 from olmo.nn.image_vit import ResidualAttentionBlock, VisionTransformer
 from olmo.nn.legacy_config import convert_legacy_config
-from olmo.nn.llm import LlmConfig, Llm, OLMoBlock, llm_activation_checkpoint_function
+from olmo.nn.llm import LlmConfig, Llm, OLMoBlock, llm_activation_checkpoint_function, LayerNormBase
 from olmo.models.model import FSDPWrapStrategy, OLMoOutput, OLMoGenerateOutput, ModelBase
 from olmo.models.model_config import BaseModelConfig
 from olmo.nn.vision_backbone import MolmoVisionBackboneConfig, MolmoVisionBackbone
@@ -52,6 +52,7 @@ class TokenScorerConfig(BaseConfig):
     attention_scaling: Optional[float] = None
     vector_query: Optional[str] = None
     vector_query_scaling: Optional[str] = None
+    importance_norm: bool = False
 
 
 @dataclasses.dataclass
@@ -102,6 +103,7 @@ class HeMolmoConfig(BaseModelConfig):
         self,
         for_inference,
         is_training=True,
+        max_seq_len: Optional[int] = None,
     ) -> Preprocessor:
         """
         Build a preprocessor that converts 'raw' image/text data from various tasks into tensors
@@ -116,7 +118,7 @@ class HeMolmoConfig(BaseModelConfig):
 
     def build_collator(self, sequence_length, pad_mode: str, include_metadata=True) -> HeMMCollator:
         """Collators for tensors from the preprocessor produces"""
-        padding_lens = self.mm_preprocessor.get_image_padding_lens(self.vision_backbone)
+        padding_lens = self.mm_preprocessor.get_padding_lens(self.vision_backbone)
         if pad_mode:
             log.info(f"Building collator, pad={pad_mode} seq_len={sequence_length} " +
                      " ".join(f"{k}={v}" for k, v in padding_lens.items()))
@@ -221,12 +223,24 @@ class HeMolmo(ModelBase):
             self.importance_ln = MLP(n_low_features, 1024, 4,
                                      scale=1024**(-.5) if ts_config.normalize_importance_scores else None)
 
+        if ts_config.importance_norm:
+            self.importance_norm = LayerNormBase.build(
+                llm_cfg, size=n_low_features,
+                elementwise_affine=llm_cfg.attention_layer_norm_with_affine
+            )
+
         if ts_config.high_res_patch_prior:
             self.patch_importance_ln = MLP(llm_cfg.d_model, 1024, 1,
                                            scale=1024**(-.5) if ts_config.normalize_importance_scores else None)
+            if ts_config.importance_norm:
+                self.patch_importance_norm = LayerNormBase.build(
+                    llm_cfg, size=llm_cfg.d_model,
+                    elementwise_affine=llm_cfg.attention_layer_norm_with_affine
+                )
 
     def get_token_scoring_modules(self) -> Iterator[nn.Module]:
-        for k in ["image_query_ln", "importance_ln", "patch_importance_ln", "low_res_features_ln"]:
+        for k in ["image_query_ln", "importance_ln", "patch_importance_ln", "low_res_features_ln",
+                  "importance_norm", "patch_importance_norm"]:
             if hasattr(self, k):
                 yield getattr(self, k)
 
@@ -236,7 +250,7 @@ class HeMolmo(ModelBase):
                 nn.init.normal_(module.weight, std=self.config.llm.initializer_range)
                 if getattr(module, "bias", None) is not None:
                     nn.init.normal_(module.bias, std=self.config.llm.initializer_range)
-            elif isinstance(module, MLP):
+            elif isinstance(module, (MLP, LayerNormBase)):
                 module.reset_parameters()
             else:
                 raise NotImplementedError()
@@ -437,11 +451,9 @@ class HeMolmo(ModelBase):
 
         if subsegment_ids is not None:
             assert not use_cache, "Subsegment_ids cannot be used with cache."
-            subsegment_mask = subsegment_ids.unsqueeze(2) >= subsegment_ids.unsqueeze(1)
-            attention_mask = (
-                subsegment_mask.to(attention_mask.dtype) *
-                attention_mask.unsqueeze(2) *
-                attention_mask.unsqueeze(1))
+            subsegment_mask = subsegment_ids.unsqueeze(2) <= subsegment_ids.unsqueeze(1)
+            attention_mask = subsegment_mask & attention_mask[:, :, None] & attention_mask[:, None, :]
+            attention_mask = attention_mask | torch.eye(seq_len, device=attention_mask.device, dtype=torch.bool)[None, :, :]
             if position_ids is None:
                 raise ValueError(f"Positioned ids must be given if using subsegment_ids")
         else:
@@ -489,10 +501,16 @@ class HeMolmo(ModelBase):
                 # images cannot attend to one another
                 image_starts = input_ids == self._image_start_token_id
                 image_segment_ids = torch.cumsum(image_starts, -1)
-                can_attend_bk &= image_segment_ids[:, None, :] == image_segment_ids[:, :, None]
+                bi_dir_mask = can_attend_bk & (image_segment_ids[:, None, :] == image_segment_ids[:, :, None])
+            elif self.config.bi_directional_attn == "image-to-question":
+                raise NotImplementedError()
+                # bi_dir_mask = (is_image_token[:, :, None] & response_mask[:, None, :])
+                # image_starts = input_ids == self._image_start_token_id
+                # image_segment_ids = torch.cumsum(image_starts, -1)
+                # bi_dir_mask = bi_dir_mask & (image_segment_ids[:, None, :] == image_segment_ids[:, :, None])
             else:
                 raise NotImplementedError()
-            casual_mask = casual_mask | can_attend_bk[:, None, :, :]
+            casual_mask = casual_mask | bi_dir_mask[:, None, :, :]
 
         mask_len = seq_len
         if attention_mask is not None:
@@ -606,10 +624,12 @@ class HeMolmo(ModelBase):
                     low_res_features_sparse = low_res_x_features.view(-1, low_res_dim)[is_low_res_patch[:, :low_res_end].flatten()]
                     low_res_features = torch.zeros(([batch_size, n_low_res, low_res_dim]), device=x.device, dtype=x.dtype)
                     low_res_features.view(-1, low_res_dim)[low_image_mask.view(-1)] = low_res_features_sparse
-                    if ts_cfg.low_res_features_drop:
-                        low_res_features = F.dropout(low_res_features, ts_cfg.low_res_features_drop, self.training)
+                    if ts_cfg.importance_norm:
+                        low_res_features = self.importance_norm(low_res_features)
                     if ts_cfg.normalize_importance_scores:
                         low_res_features = low_res_features / np.sqrt(low_res_features.shape[-1])
+                    if ts_cfg.low_res_features_drop:
+                        low_res_features = F.dropout(low_res_features, ts_cfg.low_res_features_drop, self.training)
                     low_res_importance_flat = self.importance_ln(low_res_features)
 
                     # features are for the low-res patches and need to interpolates
@@ -629,6 +649,8 @@ class HeMolmo(ModelBase):
                     features = high_image_features
                     if not ts_cfg.bp_patch_prior:
                         features = features.detach()
+                    if ts_cfg.importance_norm:
+                        features = self.patch_importance_norm(features)
                     if ts_cfg.high_res_patch_prior_drop:
                         features = F.dropout(features, ts_cfg.high_res_patch_prior_drop, training=self.training)
 

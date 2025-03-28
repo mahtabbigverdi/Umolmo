@@ -43,6 +43,13 @@ class HfTokenizerWrapper:
             self.bos_token_id = bos_token_id
         self.eos_token_id = self.tokenizer.eos_token_id
         self.pad_id = -1
+        special_tokens = get_special_token_ids(self)
+        self.image_end_token_id = special_tokens[IM_END_TOKEN]
+        self.image_start_token_id = special_tokens[IM_START_TOKEN]
+        self.image_col_token_id = special_tokens[IM_COL_TOKEN]
+        self.image_patch_token_id = special_tokens[IMAGE_PATCH_TOKEN]
+        self.image_low_res_token_id = special_tokens[IMAGE_LOW_RES_TOKEN]
+        self.image_prompt_token_id = special_tokens[IMAGE_PROMPT]
 
     def encode(self, x: str):
         return self.tokenizer.encode(x, add_special_tokens=False)
