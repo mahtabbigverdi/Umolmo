@@ -8,7 +8,8 @@ from olmo.data.academic_datasets_manual import (
     TextVqa, AOkVqa, Vqa2, PlotQa, TallyQa
 )
 from olmo.data.video_datasets import (
-    InternVid, Koala, LLaVAVideo178K, MVBench, TempCompass
+    InternVid, Koala, LLaVAVideo178K, MVBench, TempCompass,
+    VideoMME, EgoSchema, PerceptionTest, MLVU, LongVideoBench
 )
 from olmo.data.dataset import Dataset
 from olmo.data.pixmo_datasets import (
@@ -44,6 +45,19 @@ def get_dataset_by_name(dataset_name, split) -> Dataset:
         dataset_name = dataset_name.replace("_disable_api", "")
         task = '_'.join(dataset_name.split("_")[2:]) if len(dataset_name.split("_")) > 2 else "all"
         return TempCompass(split=split, task=task)
+    if dataset_name.startswith("video_mme"):
+        duration = "all" if len(dataset_name.split("_")) == 2 else dataset_name.split("_")[2]
+        return VideoMME(split=split, duration=duration)
+    if dataset_name == "perception_test":
+        return PerceptionTest(split=split)
+    if dataset_name == "ego_schema":
+        return EgoSchema(split=split)
+    if dataset_name == "mlvu_mc":
+        return MLVU(split=split, task="multiple-choice")
+    if dataset_name == "mlvu_gen":
+        return MLVU(split=split, task="generation")
+    if dataset_name == "long_video_bench":
+        return LongVideoBench(split=split)
     if dataset_name in ["scifi_document_qa", "pixmo_docs_other"]:
         return PixMoDocs("other", split=split)
     elif dataset_name in ["scifi_table_qa", "pixmo_docs_tables"]:

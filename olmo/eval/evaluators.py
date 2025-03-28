@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import re
+import random
 from collections import defaultdict, Counter
 from concurrent.futures import ThreadPoolExecutor
 from html import escape as html_escape
@@ -21,8 +22,10 @@ from scipy.spatial.distance import cdist
 from torchmetrics import MeanMetric
 
 from .vqa import vqa_score, anls_metric, relaxed_correctness, scifi_relaxed_correctness, \
-    a_okvqa_score, select_mc_option, mmmu_score, real_world_qa_score, math_vista_score
+    a_okvqa_score, select_mc_option, mmmu_score, real_world_qa_score, math_vista_score, \
+    select_perception_test_option, select_ego_schema_option
 from .temp_compass_utils import temp_compass_score
+from .mlvu_utils import mlvu_ssc_score, mlvu_summary_score
 from ..html_utils import build_html_table, postprocess_prompt, BoxesToVisualize, \
     get_html_image_with_boxes
 from ..io import write_file
@@ -104,7 +107,7 @@ def gather_examples_as_html(
                 image_data = image_data.getvalue()
             image_src = f'data:image/jpeg;base64,{base64.b64encode(image_data).decode()}'
 
-        row = dict()        
+        row = dict()
         if image_src is not None:
             ex_pred_points, gt_pred_points = None, None
             if pred_points is not None:
@@ -708,6 +711,13 @@ class VqaEval(Evaluator):
                     options = metadata["option_names"]
                     get_answer_idx = select_mc_option(pred, options)
                     score = get_answer_idx == metadata["answer_idx"]
+                elif metric == "perception_test_mc":
+                    get_answer_idx = select_perception_test_option(pred)
+                    score = get_answer_idx == metadata["answer_idx"]
+                elif metric == "ego_schema_mc":
+                    options = metadata["options"]
+                    get_answer_idx = select_ego_schema_option(pred, options)
+                    score = get_answer_idx == metadata["answer_idx"]
                 elif metric in ["mc_ai2d_transparent", "mc_ai2d_opaque"]: # mc split by transparency
                     has_transparent_box = metadata["has_transparent_box"]
                     abc_label = metadata["abc_label"]
@@ -1020,6 +1030,7 @@ class RefExpEval:
             out[k] = mean_metric(vals)
         return out
 
+
 TEMPORAL_ASPECTS = [
     "action",
     "direction",
@@ -1072,6 +1083,274 @@ class TempCompassEval(Evaluator):
         out = {}
         for k in self.tasks:
             out[k] = mean_metric(score_lists[k])
+        out["all"] = mean_metric(score_lists["all"])
+
+        if self.n_to_log:
+            out["predictions"] = gather_examples_as_html(
+                self.n_to_log, vocab, metadatas, predictions, score_lists["all"]
+            )
+        return out
+
+
+VIDEO_MME_CATEGORIES = [
+    "Knowledge",
+    "Film & Television",
+    "Sports Competition",
+    "Artistic Performance",
+    "Life Record",
+    "Multilingual"
+]
+
+
+VIDEO_MME_SUB_CATEGORIES = [
+    "Humanity & History",
+    "Literature & Art",
+    "Biology & Medicine",
+    "Finance & Commerce",
+    "Astronomy",
+    "Geography",
+    "Law",
+    "Life Tip",
+    "Technology",
+    "Animation",
+    "Movie & TV Show",
+    "Documentary",
+    "News Report",
+    "Esports",
+    "Basketball",
+    "Football",
+    "Athletics",
+    "Other Sports",
+    "Stage Play",
+    "Magic Show",
+    "Variety Show",
+    "Acrobatics",
+    "Handicraft",
+    "Food",
+    "Fashion",
+    "Daily Life",
+    "Travel",
+    "Pet & Animal",
+    "Exercise",
+    "Multilingual"
+]
+
+
+VIDEO_MME_TASK_CATEGORIES = [
+    "Temporal Perception",
+    "Spatial Perception",
+    "Attribute Perception",
+    "Action Recognition",
+    "Object Recognition",
+    "OCR Problems",
+    "Counting Problem",
+    "Temporal Reasoning",
+    "Spatial Reasoning",
+    "Action Reasoning",
+    "Object Reasoning",
+    "Information Synopsis",
+]
+
+
+class VideoMMEEval(Evaluator):
+
+    def __init__(self, duration="all", n_to_log=None):
+        self.durations = ["short", "medium", "long"] if duration == "all" else [duration]
+        self.n_to_log = n_to_log
+    
+    def extract_characters_regex(self, s):
+        s = s.strip()
+        answer_prefixes = [
+            "The best answer is",
+            "The correct answer is",
+            "The answer is",
+            "The answer",
+            "The best option is"
+            "The correct option is",
+            "Best answer:"
+            "Best option:",
+            "Answer:",
+            "Option:",
+            "The correct answer",
+            "The correct option",
+        ]
+        for answer_prefix in answer_prefixes:
+            s = s.replace(answer_prefix, "")
+
+        if len(s.split()) > 10 and not re.search("[ABCD]", s):
+            return ""
+        matches = re.search(r'[ABCD]', s)
+        if matches is None:
+            return ""
+        return matches[0]
+    
+    def __call__(self, metadatas, predictions, tokenizer, step=None):
+        new_tokens = predictions["predictions"]
+        prompt_tokens = predictions["prompts"]
+        vocab = tokenizer
+        score_lists = defaultdict(list)
+
+        for ex_ix, pred_seq in enumerate(new_tokens):
+            metadata = metadatas[ex_ix]
+            pred = vocab.decode(pred_seq[pred_seq >= 0]).strip()
+            pred = self.extract_characters_regex(pred)
+            answer = metadata["answer"]
+            if pred == "":
+                # I am not sure why, but the original code skipped if the extraction is an empty string
+                continue 
+            score = pred == answer
+
+            duration = metadata["duration"]
+
+            score_lists[f"{duration}"].append(score)
+            score_lists["all"].append(score)
+        
+        out = {}
+        for k in self.durations:
+            out[f"{k}"] = mean_metric(score_lists[f"{k}"])
+        out["all"] = mean_metric(score_lists["all"])
+
+        if self.n_to_log:
+            out["predictions"] = gather_examples_as_html(
+                self.n_to_log, vocab, metadatas, predictions, score_lists["all"]
+            )
+        return out
+
+
+def _mlvu_gen_score(args):
+    task_type = args.pop("task_type")
+    if task_type == "sub_scene":
+        return mlvu_ssc_score(**args)
+    else:
+        return mlvu_summary_score(**args)
+
+
+class MLVUGenEval(Evaluator):
+    
+    def __init__(self, n_to_log=None, n_threads=4):
+        self.n_to_log = n_to_log
+        self.n_threads = n_threads
+
+    def __call__(self, metadatas, predictions, tokenizer, step=None):
+        new_tokens = predictions["predictions"]
+        prompt_tokens = predictions["prompts"]
+        vocab = tokenizer
+
+        _args = []
+        for ex_ix, pred_seq in enumerate(new_tokens):
+            pred = vocab.decode(pred_seq[pred_seq >= 0]).strip()
+            _args.append(
+                dict(
+                    task_type=metadatas[ex_ix]["task_type"],
+                    prediction=pred,
+                    metadata=metadatas[ex_ix],
+                    openai_api_key=get_openai_key()
+                )
+            )
+
+        scores = []
+        barrier()
+        with ThreadPoolExecutor(max_workers=self.n_threads) as pool:
+            for score in pool.map(_mlvu_gen_score, _args):
+                scores.append(score)
+        barrier()
+
+        score_lists = defaultdict(list)
+        for score in scores:
+            for k, v in score.items():
+                score_lists[k].append(v)
+        out = {k: mean_metric(v) for k, v in score_lists.items()}
+        if self.n_to_log:
+            out["predictions"] = gather_examples_as_html(
+                self.n_to_log, vocab, metadatas, predictions, [sum(score.values()) for score in scores]
+            )
+        return out
+
+
+class LongVideoBenchEval(Evaluator):
+    DURATIONS = [15, 60, 600, 3600]
+    
+    def __init__(self, n_to_log=None):
+        self.n_to_log = n_to_log
+
+    def parse_multi_choice_response(self, response, all_choices, index2ans):
+        """
+        Changed from MMMU-style complex parsing into simple parsing.
+        Fixed to avoid 'D. A book' be parsed as A.
+        Same as original LongVideoBench paper (from author Haoning Wu), if parsing failed, it will assign a random choice to model.
+        """
+        s = response.strip()
+        answer_prefixes = [
+            "The best answer is",
+            "The correct answer is",
+            "The answer is",
+            "The answer",
+            "The best option is",
+            "The correct option is",
+            "Best answer:",
+            "Best option:",
+        ]
+        for answer_prefix in answer_prefixes:
+            s = s.replace(answer_prefix, "")
+
+        if len(s.split()) > 10 and not re.search("[ABCDE]", s):
+            return random.choice(all_choices)
+
+        matches = re.search(r"[ABCDE]", s)
+        if matches is None:
+            return random.choice(all_choices)
+        return matches[0]
+    
+    def eval_multi_choice(self, gold_i, pred_i):
+        correct = False
+        # only they are exactly the same, we consider it as correct
+        if isinstance(gold_i, list):
+            for answer in gold_i:
+                if answer == pred_i:
+                    correct = True
+                    break
+        else:  # gold_i is a string
+            if gold_i == pred_i:
+                correct = True
+        return correct
+    
+    def get_multi_choice_info(self, options):
+        """
+        Given the list of options for multiple choice question
+        Return the index2ans and all_choices
+        https://github.com/MMMU-Benchmark/MMMU/blob/51ce7f3e829c16bb44bc5445782686b4c3508794/eval/data_utils.py#L54
+        """
+
+        start_chr = "A"
+        all_choices = []
+        index2ans = {}
+        for i, option in enumerate(options):
+            index2ans[chr(ord(start_chr) + i)] = option
+            all_choices.append(chr(ord(start_chr) + i))
+
+        return index2ans, all_choices
+
+    def __call__(self, metadatas, predictions, tokenizer, step=None):
+        new_tokens = predictions["predictions"]
+        prompt_tokens = predictions["prompts"]
+        vocab = tokenizer
+        score_lists = defaultdict(list)
+
+        for ex_ix, pred_seq in enumerate(new_tokens):
+            metadata = metadatas[ex_ix]
+            pred = vocab.decode(pred_seq[pred_seq >= 0]).strip()
+            index2ans, all_choices = self.get_multi_choice_info(metadata["options"])
+
+            parsed_pred = self.parse_multi_choice_response(pred, all_choices, index2ans)
+            score = self.eval_multi_choice(metadata["answer"], parsed_pred)
+
+            duration_group = metadata["duration_group"]
+            score_lists[f"duration_{duration_group}"].append(score)
+            score_lists["all"].append(score)
+        
+        out = {}
+        for k in self.DURATIONS:
+            out[f"duration_{k}"] = mean_metric(score_lists[f"duration_{k}"])
         out["all"] = mean_metric(score_lists["all"])
 
         if self.n_to_log:

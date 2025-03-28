@@ -84,10 +84,10 @@ def llm_output_to_rating(llm_output: str) -> int:
 
 
 def get_llm_output(
-    prompt: str, openai_api_key: str, sys_prompt: str=None, max_tokens: int=128, maxtry: int=10
+    prompt: str, openai_api_key: str, system_prompt: str=None, max_tokens: int=128, maxtry: int=10
 ) -> str:
-    if sys_prompt is None:
-        sys_prompt = "You are an AI assistant for question answering."
+    if system_prompt is None:
+        system_prompt = "You are an AI assistant for question answering."
     gen_params = dict(
         model="gpt-3.5-turbo-1106",
         max_tokens=max_tokens,
@@ -96,12 +96,12 @@ def get_llm_output(
         presence_penalty=1,
         patience=maxtry,
     )
-    llm_output = get_chat_response(prompt, openai_api_key, sys_prompt=sys_prompt, **gen_params)
+    llm_output = get_chat_response(prompt, openai_api_key, system_prompt=system_prompt, **gen_params)
     return llm_output
 
 
-def get_eval_result(prompt: str, openai_api_key: str, maxtry: int=10, sys_prompt: str=None) -> int:
-    llm_output = get_llm_output(prompt, openai_api_key, sys_prompt, maxtry=maxtry)
+def get_eval_result(prompt: str, openai_api_key: str, maxtry: int=10, system_prompt: str=None) -> int:
+    llm_output = get_llm_output(prompt, openai_api_key, system_prompt, maxtry=maxtry)
     rating = llm_output_to_rating(llm_output)
     return rating
 

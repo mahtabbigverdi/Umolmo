@@ -2,8 +2,8 @@
 import re
 import string
 from collections import Counter
-from typing import Optional, List
-
+from typing import Optional, List, Tuple
+import random
 import editdistance
 import numpy as np
 
@@ -372,3 +372,120 @@ def math_vista_score(
     true_false = math_vista_utils.safe_equal(prediction, target)
 
     return true_false
+
+
+def mlvu_mc(target: str, prediction: str) -> bool:
+    
+    def _extract_characters_regex(s: str) -> str:
+        s = s.strip()
+        if ")" in s:
+            index = s.index(")")
+            pred = s[index - 1 : index]
+            return pred
+        else:
+            return s
+    
+    pred_ans = _extract_characters_regex(prediction)
+    return target == pred_ans
+
+
+def select_perception_test_option(prediction: str) -> int:
+    pred = prediction.strip() # raw text prediction
+
+    # Use regex to match A, B, C, or D
+    match = re.search(r"\b([A-D])\b", pred)
+
+    if match:
+        pred = match.group(1)  # Extract the matched letter
+        pred = pred.upper()
+    else:
+        pred = ""  # Set to empty string if no match found
+
+    # Map the prediction to an index
+    pred_to_index = {"A": 0, "B": 1, "C": 2, "D": 3}
+    index = pred_to_index.get(pred, -1)  # Default to -1 if the prediction is not found
+    return index
+
+
+def ego_schema_get_multi_choice_info(options: List[str]) -> Tuple[dict, List[str]]:
+    all_choices = []
+    index2ans = {}
+    OPTIONS = ["A", "B", "C", "D", "E"]
+    for i in range(5):
+        index2ans[OPTIONS[i]] = options[i].strip()
+        all_choices.append(OPTIONS[i])
+    
+    return index2ans, all_choices
+
+
+def ego_schema_parse_multi_choice_response(
+    response: str,
+    all_choices: List[str],
+    index2ans: dict,
+) -> Tuple[str, bool]:
+    """
+    Parse the prediction from the generated response.
+    Return the predicted index e.g., A, B, C, D.
+    https://github.com/MMMU-Benchmark/MMMU/blob/51ce7f3e829c16bb44bc5445782686b4c3508794/eval/eval_utils.py#L10
+    """
+    for char in [",", ".", "!", "?", ";", ":", "'"]:
+        response = response.strip(char)
+    response = " " + response + " "  # add space to avoid partial match
+
+    index_ans = True
+    ans_with_brack = False
+    ans_with_space = False
+    ans_with_dot = False
+    candidates = []
+
+    for choice in all_choices:  # e.g., (A) (B) (C) (D)
+        if f"({choice})" in response:
+            candidates.append(f"({choice})")
+            ans_with_brack = True
+
+    for choice in all_choices:  # e.g., A B C D
+        if f"{choice} " in response:
+            candidates.append(f"{choice} ")
+            ans_with_space = True
+
+    for choice in all_choices:  # e.g., A. B. C. D.
+        if f"{choice}." in response:
+            candidates.append(f"{choice}.")
+            ans_with_dot = True
+
+    # if all above doesn't get candidates, check if the content is larger than 5 tokens and try to parse the example
+    if len(candidates) == 0 and len(response.split()) > 5:
+        for index, ans in index2ans.items():
+            if ans.lower() in response.lower():
+                candidates.append(index)
+                index_ans = False  # it's content ans.
+
+    if len(candidates) == 0:  # still not get answer, randomly choose one.
+        pred_index = random.choice(all_choices)
+    elif len(candidates) > 1:
+        start_indexes = []
+        if index_ans:
+            for can in candidates:
+                index = response.rfind(can)
+                start_indexes.append(index)  # -1 will be ignored anyway
+        else:
+            for can in candidates:
+                index = response.lower().rfind(index2ans[can].lower())
+                start_indexes.append(index)
+        # get the first one
+        pred_index = candidates[np.argmin(start_indexes)]
+        pred_index = pred_index.replace("(", "").replace(")", "").replace(".", "").strip()
+    else:  # if only one candidate, use it.
+        pred_index = candidates[0]
+        pred_index = pred_index.replace("(", "").replace(")", "").replace(".", "").strip()
+    
+    return pred_index, len(candidates) > 0
+
+
+def select_ego_schema_option(prediction: str, options: List[str]) -> int:
+    index2ans, all_choices = ego_schema_get_multi_choice_info(options)
+    parsed_pred, matched_tag = ego_schema_parse_multi_choice_response(prediction, all_choices, index2ans)
+    
+    pred_to_index = {"A": 0, "B": 1, "C": 2, "D": 3, "E": 4}
+    index = pred_to_index.get(parsed_pred, -1)  # Default to -1 if the prediction is not found
+    return index
