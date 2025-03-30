@@ -17,9 +17,6 @@ class HeVideoPreprocessorConfig(BaseConfig):
     max_text_tokens: Optional[int] = None
     """Max query length"""
 
-    max_query_tokens: Optional[int] = None
-    """Max query length"""
-
     low_res_pooling: Optional[int] = 9
     """Pooling for low-res features"""
 
@@ -48,9 +45,9 @@ class HeVideoPreprocessorConfig(BaseConfig):
         return seq_len
 
     def get_padding_lens(self, vision_backbone_config: MolmoVisionBackboneConfig):
-        return self.build(None, vision_backbone_config).get_video_padding_lens(self.max_frames)
+        return self.build(None, vision_backbone_config, None).get_video_padding_lens(self.max_frames)
 
-    def build(self, tokenizer, vision_backbone_config: MolmoVisionBackboneConfig):
+    def build(self, tokenizer, vision_backbone_config: MolmoVisionBackboneConfig, max_sequence_length):
         vit = vision_backbone_config.vit
         return HeMultiModalPreprocessor(
             loss_token_weighting=self.loss_token_weighting,
@@ -64,7 +61,7 @@ class HeVideoPreprocessorConfig(BaseConfig):
             use_col_tokens=self.use_col_tokens,
             use_high_res_col_tokens=self.use_col_tokens,
             max_text_tokens=self.max_text_tokens,
-            max_query_tokens=self.max_query_tokens,
+            max_sequence_length=max_sequence_length,
             video_low_res=self.low_res_pooling,
             video_high_res=self.high_res_pooling,
             num_high_res_features=self.num_high_res_features

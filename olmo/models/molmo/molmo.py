@@ -96,6 +96,7 @@ class MolmoConfig(BaseModelConfig):
         """Collators for tensors from the preprocessor produces"""
         padding_lens = self.mm_preprocessor.get_image_padding_lens(self.vision_backbone)
         if pad_mode:
+            assert sequence_length <= self.max_sequence_length
             log.info(f"Building collator, pad={pad_mode} seq_len={sequence_length} " +
                      " ".join(f"{k}={v}" for k, v in padding_lens.items()))
         return MMCollator(
