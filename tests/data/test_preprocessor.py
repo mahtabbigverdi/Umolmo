@@ -99,7 +99,7 @@ def test_max_seq_len():
         [" a"*rng.randint(1, 5), " b"*rng.randint(1, 5)]
         for i in range(20)
     ]
-    n_mm_tokens = 17
+    n_mm_tokens = 27
     mm_tokens = [np.zeros([n_mm_tokens], dtype=np.int32)]
     max_len = len(preprocessor.tokenizer.encode("".join("".join(x) for x in messages))) + n_mm_tokens
     for max_seq_len in range(n_mm_tokens+2, max_len+2):
