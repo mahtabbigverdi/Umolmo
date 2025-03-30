@@ -120,6 +120,7 @@ class HeMolmoConfig(BaseModelConfig):
         """Collators for tensors from the preprocessor produces"""
         padding_lens = self.mm_preprocessor.get_padding_lens(self.vision_backbone)
         if pad_mode:
+            assert self.max_sequence_length >= sequence_length
             log.info(f"Building collator, pad={pad_mode} seq_len={sequence_length} " +
                      " ".join(f"{k}={v}" for k, v in padding_lens.items()))
         return HeMMCollator(
@@ -204,7 +205,7 @@ class HeMolmo(ModelBase):
         elif ts_config.learned_rescaling is not None:
             raise NotImplementedError(ts_config.learned_rescaling)
 
-        assert ts_config.source is None or (ts_config.source in ["all_layers", "prior-only"])
+        assert ts_config.source is None or (ts_config.source in ["all_layers"])
         if ts_config.source in ["all_layers"]:
             n_layers = ts_config.n_low_res_layers or llm_cfg.n_layers
             n_low_features = llm_cfg.d_model*n_layers
@@ -217,7 +218,9 @@ class HeMolmo(ModelBase):
                 out_dim += 2
             self.image_query_ln = nn.Linear(n_low_features, out_dim, bias=True)
 
-        if ts_config.selection_model == "linear":
+        if ts_config.selection_model == "prior_only":
+            pass
+        elif ts_config.selection_model == "linear":
             self.importance_ln = nn.Linear(n_low_features, 4, bias=False)
         else:
             self.importance_ln = MLP(n_low_features, 1024, 4,
@@ -456,6 +459,7 @@ class HeMolmo(ModelBase):
             attention_mask = attention_mask | torch.eye(seq_len, device=attention_mask.device, dtype=torch.bool)[None, :, :]
             if position_ids is None:
                 raise ValueError(f"Positioned ids must be given if using subsegment_ids")
+            position_ids = torch.clamp(position_ids, 0)
         else:
             if position_ids is None:
                 position_ids = torch.clamp(
@@ -577,7 +581,7 @@ class HeMolmo(ModelBase):
                     low_res_bias = torch.where(is_image_token[:, None, None, :low_res_end], low_res_bias, torch.finfo(attention_bias.dtype).min)
 
                 low_res_x_in = low_res_x
-                if ts_cfg.source != "prior-only":
+                if ts_cfg.selection_model != "prior-only":
                     low_res_layer_outputs = []
                     for block_idx, block in enumerate(self.transformer.blocks[:ts_cfg.n_low_res_layers]):
                         enable_grad = ts_cfg.bp_low_res_start <= block_idx < ts_cfg.bp_low_res_end and self.training
@@ -674,7 +678,7 @@ class HeMolmo(ModelBase):
                     elif ts_cfg.vector_query is not None:
                         raise NotImplementedError(ts_cfg.vector_query)
 
-                    if ts_cfg.source == "prior_only":
+                    if ts_cfg.selection_model == "prior_only":
                         high_res_importance = self.patch_importance_ln(features).squeeze(-1)
                     elif ts_cfg.high_res_patch_prior:
                         high_res_importance = high_res_importance + self.patch_importance_ln(features).squeeze(-1)
