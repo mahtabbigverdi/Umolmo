@@ -13,6 +13,7 @@ from moviepy import VideoFileClip
 
 import ast
 import decord
+from olmo import tokenizer
 from torchvision.datasets.utils import list_dir
 from tqdm import tqdm
 
@@ -475,7 +476,7 @@ class TempCompass(DatasetBase):
         meta_infos = json.loads(read_file(os.path.join(self.data_path, "meta_info.json")))
         data = []
         for task in target_tasks:
-            parquet_file = os.path.join(self.data_path, task, "test-00000-of-00001.parquet")
+            parquet_file = resource_path(join(self.data_path, task), "test-00000-of-00001.parquet")
             df = pd.read_parquet(parquet_file)
             if task == "captioning":
                 style = "demo"
@@ -699,74 +700,47 @@ class LLaVAVideo178K(DatasetBase):
                     example_id = f"{qa_data['id']}_{qa_data['data_source']}_{qa_data['video']}_{question_type}"
 
                     conversations = qa_data['conversations']
-                    if self.split == "train":
-                        if example_id not in data:
-                            messages = []
-                        else:
-                            messages = data[example_id]['message_list']
+                    if example_id not in data:
+                        messages = []
+                    else:
+                        messages = data[example_id]['message_list']
 
-                        for conv_idx in range(0, len(conversations), 2):
-                            question = conversations[conv_idx]['value']
-                            if question.startswith("<image>\n"):
-                                question = question[len("<image>\n"):]
-                            answer = conversations[conv_idx + 1]['value']
-                            answer = answer.lstrip().strip()
-
-                            messages.append(dict(
-                                question=question,
-                                answer=answer,
-                                style=style,
-                            ))
-
-                        data[example_id] = {
-                            'video': video_path,
-                            'prefix': data_file['path'],
-                            'message_list': messages
-                        }
-
-                    else:  # for validation set, we only use one QA
-                        if example_id in data:
-                            continue
-
-                        question = conversations[0]['value']
+                    for conv_idx in range(0, len(conversations), 2):
+                        question = conversations[conv_idx]['value']
+                        if tokenizer.IMAGE_PROMPT in question:
+                            raise ValueError()
                         if question.startswith("<image>\n"):
                             question = question[len("<image>\n"):]
-                        answer = conversations[1]['value']
+                        answer = conversations[conv_idx + 1]['value']
                         answer = answer.lstrip().strip()
 
-                        data[example_id] = {
-                            "video": video_path,
-                            "prefix": data_file['path'],
-                            "question": question,
-                            "answer": answer,
-                            "style": style,
-                        }
+                        messages.append(dict(
+                            question=question,
+                            answer=answer,
+                            style=style,
+                        ))
 
-        if self.split == "validation":
-            for example_id, example in data.items():
-                data_list_format.append({
-                    "video": example["video"],
-                    "metadata": dict(
-                        example_id=example_id,
-                        prefix=example["prefix"],
-                    ),
-                    "question": example["question"],
-                    "answer": example["answer"],
-                    "style": example["style"],
-                })
-        else:
-            for example_id, example in data.items():
-                data_list_format.append({
-                    "video": example["video"],
-                    "metadata": dict(
-                        example_id=example_id,
-                        prefix=example["prefix"],
-                    ),
-                    "message_list": example["message_list"],
-                })
+                    data[example_id] = {
+                        'video': video_path,
+                        'prefix': data_file['path'],
+                        'message_list': messages
+                    }
+
+        for example_id, example in data.items():
+            data_list_format.append({
+                "video": example["video"],
+                "metadata": dict(
+                    example_id=example_id,
+                    prefix=example["prefix"],
+                ),
+                "message_list": example["message_list"],
+            })
 
         if self.flat:
-            data_list_format = flatten_lists([dict(ex, message_list=[message]) for message in ex["message_list"]] for ex in data_list_format)
+            data_list_format = flatten_lists(
+                [dict(ex, message_list=[message]) for message in ex["message_list"]]
+                for ex in data_list_format
+            )
         elif self.max_per_video:
             flat = []
             for ex in tqdm(data_list_format):

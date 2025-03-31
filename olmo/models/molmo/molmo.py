@@ -28,6 +28,7 @@ from olmo.nn.legacy_config import convert_legacy_config
 from olmo.nn.llm import LlmConfig, OLMoBlock, Llm
 from olmo.models.model_config import BaseModelConfig
 from olmo.nn.vision_backbone import MolmoVisionBackbone, MolmoVisionBackboneConfig
+from olmo.tokenizer import get_special_token_ids
 from olmo.torch_util import BufferCache, get_default_device
 from torch.distributed.fsdp import fully_shard
 
@@ -79,6 +80,7 @@ class MolmoConfig(BaseModelConfig):
         for_inference,
         is_training=True,
         include_image: bool = False,
+        max_seq_len: Optional[int] = None,
     ) -> Preprocessor:
         """
         Build a preprocessor that converts 'raw' image/text data from various tasks into tensors
@@ -86,7 +88,7 @@ class MolmoConfig(BaseModelConfig):
         """
         return Preprocessor(
             self.data_formatter,
-            self.mm_preprocessor.build(self.build_tokenizer(), self.vision_backbone),
+            self.mm_preprocessor.build(self.build_tokenizer(), self.vision_backbone, max_seq_len),
             for_inference=for_inference,
             is_training=is_training,
             include_image=include_image,
@@ -96,9 +98,11 @@ class MolmoConfig(BaseModelConfig):
         """Collators for tensors from the preprocessor produces"""
         padding_lens = self.mm_preprocessor.get_image_padding_lens(self.vision_backbone)
         if pad_mode:
+            assert sequence_length <= self.max_sequence_length
             log.info(f"Building collator, pad={pad_mode} seq_len={sequence_length} " +
                      " ".join(f"{k}={v}" for k, v in padding_lens.items()))
         return MMCollator(
+            get_special_token_ids(self.build_tokenizer()),
             sequence_length,
             padding_lens,
             include_metadata=include_metadata,
@@ -356,12 +360,7 @@ class Molmo(ModelBase):
         if subsegment_ids is not None:
             assert not use_cache, "Subsegment_ids cannot be used with cache."
             subsegment_mask = subsegment_ids.unsqueeze(2) <= subsegment_ids.unsqueeze(1)
-            attention_mask = (
-                subsegment_mask.to(attention_mask.dtype) *
-                attention_mask.unsqueeze(2) *
-                attention_mask.unsqueeze(1))
-            # Allow self-attention for padding tokens, this prevents NaNs
-            # for some SDPA implementations
+            attention_mask = subsegment_mask & attention_mask[:, :, None] & attention_mask[:, None, :]
             attention_mask = attention_mask | torch.eye(seq_len, device=attention_mask.device, dtype=torch.bool)[None, :, :]
             if position_ids is None:
                 raise ValueError(f"Positioned ids must be given if using subsegment_ids")

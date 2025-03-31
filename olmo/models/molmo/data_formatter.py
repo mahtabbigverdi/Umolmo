@@ -10,6 +10,7 @@ from typing import Optional, Dict, Tuple
 import numpy as np
 from olmo import tokenizer
 
+from olmo import tokenizer
 from olmo.config import BaseConfig
 
 GENERAL_PROMPTS_V1 = {
@@ -318,6 +319,8 @@ class DataFormatter(BaseConfig):
     select_answer: str = "best"  # How to select answer for questions with many answers
     debug: bool = False  # deterministic mode for debugging
     image_last: bool = False
+    format_message_list: Optional[str] = None
+    p_one_message: float = 0
 
     def points_to_text(self, points, scale, label_text, alt_text):
         if isinstance(scale, (tuple, list)):
@@ -608,9 +611,9 @@ class DataFormatter(BaseConfig):
         if (
             self.image_last and
             ("image" in example or "video" in example) and
-            tokenizer.IMAGE_PROMPT not in message[0]
+            tokenizer.IMAGE_PROMPT not in messages[0]
         ):
-            messages[0] = message[0] + tokenizer.IMAGE_PROMPT
+            messages[0] = messages[0] + tokenizer.IMAGE_PROMPT
 
         # Add the role annotations such as "User:" and "Assistant:"
         messages = self.format_messages(messages)
@@ -618,6 +621,18 @@ class DataFormatter(BaseConfig):
 
     def __call__(self, ex: Dict, is_training, for_inference, rng) -> Tuple[Dict, Dict]:
         """Returns a formatted example and example metadata"""
+
+        if "message_list" in ex:
+            if self.p_one_message and rng.random() < self.p_one_message:
+                ex["message_list"] = ex["message_list"][:1]
+            elif self.format_message_list == "numbered_qa":
+                ex["message_list"] = [dict(x) for x in ex["message_list"]]
+                for ix, msg_list in enumerate(ex["message_list"], start=1):
+                    msg_list["question"] = f"{' ' if ix != 0 else ''}Q{ix}: {msg_list['question']}"
+                    msg_list["answer"] = f"A{ix}: " + msg_list["answer"]
+            else:
+                assert self.format_message_list is None
+
         if "message_list" in ex:
             # Does not support returning metadata, which is fine since we are not doing inference
             return [self._format_example(msg, ex, is_training, for_inference, rng)[0]

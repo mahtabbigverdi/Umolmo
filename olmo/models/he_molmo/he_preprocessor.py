@@ -9,8 +9,9 @@ from torchvision.transforms import InterpolationMode
 from transformers.image_utils import ImageInput
 
 from olmo import tokenizer
-from olmo.config import BaseConfig
+from olmo.config import BaseConfig, D
 from olmo.data.image_preprocessor import ImagePreprocessor
+from olmo.data.interleaved_text_preprocessor import InterleavedTextPreprocessor
 from olmo.models.molmo.model_preprocessor import arange_for_pooling, batch_pixels_to_patches
 from olmo.nn.vision_backbone import MolmoVisionBackboneConfig
 from olmo.tokenizer import get_special_token_ids
@@ -19,7 +20,7 @@ from olmo.tokenizer import get_special_token_ids
 def build_pos_ids(subsegment_ids):
     position_ids = np.zeros_like(subsegment_ids)
     for subsegment_id in np.unique(subsegment_ids):
-        segment_position_ids = np.cumsum(subsegment_ids <= subsegment_id) - 1
+        segment_position_ids = np.cumsum((subsegment_ids == subsegment_id) | (subsegment_ids == 10000)) - 1
         position_ids = np.where(subsegment_ids == subsegment_id, segment_position_ids, position_ids)
     return position_ids
 
@@ -44,7 +45,7 @@ class HePreprocessorConfig(BaseConfig):
     indicate_k: Optional[str] = None
     """Indicate the amount of high-res tokens to use in the query"""
 
-    max_query_len: Optional[int] = None
+    max_text_len: Optional[int] = None
     """Max query length"""
 
     num_high_res_features: Optional[int] = 512
@@ -54,6 +55,12 @@ class HePreprocessorConfig(BaseConfig):
     image_pooling_h: Optional[int] = 2
     low_res_from_high: Optional[int] = None
     low_res_from_low: Optional[int] = 2
+
+    @classmethod
+    def update_legacy_settings(cls, config: D) -> D:
+        if "max_query_len" in config:
+            config.max_text_len = config.pop("max_query_len")
+        return config
 
     def get_max_crops(self) -> int:
         """Max numbers of that can be built for one image"""
@@ -68,17 +75,22 @@ class HePreprocessorConfig(BaseConfig):
         else:
             return self.max_crops
 
-    def get_image_padding_lens(self, vision_backbone_config: MolmoVisionBackboneConfig):
+    def get_padding_lens(self, vision_backbone_config: MolmoVisionBackboneConfig):
         """Max numbers of image tokens can be built for one image"""
         return self.build(None, vision_backbone_config).get_image_padding_lens()
 
     def build(
-        self, tokenizer, vision_backbone_config: MolmoVisionBackboneConfig):
+        self,
+        tokenizer,
+        vision_backbone_config: MolmoVisionBackboneConfig,
+        max_seq_len=None
+    ):
         vit = vision_backbone_config.vit
+        assert self.image_pooling_w == self.image_pooling_h
 
         return HeMultiModalPreprocessor(
             tokenizer=tokenizer,
-            max_query_len=self.max_query_len,
+            max_text_tokens=self.max_text_len,
             num_high_res_features=self.num_high_res_features,
             loss_token_weighting=self.loss_token_weighting,
             normalize=vit.normalize,
@@ -89,52 +101,65 @@ class HePreprocessorConfig(BaseConfig):
             use_col_tokens=self.use_col_tokens,
             use_high_res_col_tokens=self.use_col_tokens,
             base_image_input_size=vit.image_default_input_size,
-            image_pooling_w=self.image_pooling_w,
-            image_pooling_h=self.image_pooling_h,
             image_patch_size=vit.image_patch_size,
             image_padding_mask=vision_backbone_config.image_padding_embed is not None,
             pad_value=vit.pad_value,
-            low_res_from_high=self.low_res_from_high,
-            low_res_from_low=self.low_res_from_low
+            max_sequence_length=max_seq_len,
+            image_high_res_from_crops=self.image_pooling_w,
+            image_low_res_from_crops=self.low_res_from_high,
+            image_low_res_from_resized=self.low_res_from_low
         )
 
 
+def arange_frames_for_pooling(idx_arr, pool_f, pool_h, pool_w):
+    patches = np.prod(idx_arr.shape)
+    idx = arange_for_pooling(idx_arr, pool_h, pool_w)
+    idx = np.tile(np.expand_dims(idx, axis=0), [pool_f, 1, 1, 1])
+    return np.where(
+        idx <= 0,
+        idx,
+        idx + (patches * np.arange(pool_f))[:, None, None, None]
+    )
+
+
 @dataclasses.dataclass
-class HeMultiModalPreprocessor(ImagePreprocessor):
-    tokenizer: Any = None
-    loss_token_weighting: Optional[str] = None
+class HeMultiModalPreprocessor(InterleavedTextPreprocessor, ImagePreprocessor):
     num_high_res_features: Optional[int] = None
     multi_res_min: Optional[int] = None
     multi_res_selection: Optional[int] = None
 
     # How to crops/resize images
-    crop_mode: str = "default"
+    crop_mode: str = "resize"
     use_col_tokens: bool = True
-    max_query_len: int = None
 
-    # Data about the ViT and connector we need when deciding the crops
-    image_pooling_w: int = 2
-    image_pooling_h: int = 2
-    low_res_from_high: Optional[int] = None
-    low_res_from_low: Optional[int] = 2
+    # For video
+    video_high_res: int = 3
+    video_low_res: int = 9
+    time_mode: str = "fps-prefix"
+
+    # For multi-crop image
+    image_low_res_from_crops: Optional[int] = None
+    image_low_res_from_resized: Optional[int] = 2
+    image_high_res_from_crops: int = 2
+
+    # Other settings
     image_padding_mask: Union[bool, int] = False
     indicate_k: bool = False
     use_high_res_col_tokens: bool = True
 
-    image_patch_token_id: int = dataclasses.field(init=False)
-    image_col_token_id: int = dataclasses.field(init=False)
-    image_start_token_id: int = dataclasses.field(init=False)
-    image_end_token_id: int = dataclasses.field(init=False)
-
-    def __post_init__(self):
-        if self.tokenizer is not None:
-            special_tokens = get_special_token_ids(self.tokenizer)
-            self.image_end_token_id = special_tokens[tokenizer.IM_END_TOKEN]
-            self.image_start_token_id = special_tokens[tokenizer.IM_START_TOKEN]
-            self.image_col_token_id = special_tokens[tokenizer.IM_COL_TOKEN]
-            self.image_patch_token_id = special_tokens[tokenizer.IMAGE_PATCH_TOKEN]
-            self.image_low_res_token_id = special_tokens[tokenizer.IMAGE_LOW_RES_TOKEN]
-            self.image_prompt_token_id = special_tokens[tokenizer.IMAGE_PROMPT]
+    def get_video_padding_lens(self, max_frames=None):
+        crop_h = self.base_image_input_size[0]//self.image_patch_size
+        crop_w = self.base_image_input_size[1]//self.image_patch_size
+        tmp = np.zeros([crop_h, crop_w])
+        low_res_idx = arange_for_pooling(tmp, self.video_low_res, self.video_low_res)
+        high_res_idx = arange_for_pooling(tmp, self.video_high_res, self.video_high_res)
+        n_high = np.prod(high_res_idx.shape[:2])*max_frames
+        return dict(
+            images=max_frames,
+            low_res_tokens_idx=np.prod(low_res_idx.shape[:2])*max_frames,
+            high_res_tokens_idx=n_high,
+            high_res_pos_ids=n_high
+        )
 
     def get_image_padding_lens(self):
         base_h, base_w = self.base_image_input_size
@@ -143,7 +168,7 @@ class HeMultiModalPreprocessor(ImagePreprocessor):
             [base_h, base_w*self.max_crops],
             [base_h*self.max_crops, base_w]
         ]:
-            new_high, new_low = self.compute_num_tokens(h, w)
+            new_high, new_low = self._compute_num_tokens(h, w)
             high = max(high, new_high)
             low = max(low, new_low)
         return dict(
@@ -153,24 +178,25 @@ class HeMultiModalPreprocessor(ImagePreprocessor):
             high_res_tokens_idx=new_high,
         )
 
-    def compute_num_tokens(self, image_h, image_w) -> int:
-        """Return the number of pooled image tokens produced for an image of size image_w, image_h"""
+    def _compute_num_tokens(self, image_h, image_w) -> int:
         image_patch_size = self.image_patch_size
         crop_patch_w = self.base_image_input_size[1] // image_patch_size
         crop_patch_h = self.base_image_input_size[0] // image_patch_size
 
+        if self.crop_mode == "resize":
+            raise NotImplementedError()
         h, w = self.compute_overlapping_crops_size(image_h, image_w)
         idx_arr = arange_for_pooling(
-            torch.zeros([h, w]), self.image_pooling_h, self.image_pooling_w)
+            torch.zeros([h, w]), self.image_high_res_from_crops, self.image_high_res_from_crops)
         high_res_tokens = idx_arr.shape[0] * idx_arr.shape[1]
 
         low_res_tokens = 0
-        if self.low_res_from_low:
+        if self.image_low_res_from_resized:
             resize_idx = np.arange(crop_patch_w*crop_patch_h).reshape([crop_patch_h, crop_patch_w])
-            idx_arr = arange_for_pooling(resize_idx, self.low_res_from_low, self.low_res_from_low)
+            idx_arr = arange_for_pooling(resize_idx, self.image_low_res_from_resized, self.image_low_res_from_resized)
             low_res_tokens += idx_arr.shape[0] * idx_arr.shape[1]
-        if self.low_res_from_high:
-            idx_arr = arange_for_pooling(torch.zeros([h, w]), self.low_res_from_high, self.low_res_from_high)
+        if self.image_low_res_from_crops:
+            idx_arr = arange_for_pooling(torch.zeros([h, w]), self.image_low_res_from_crops, self.image_low_res_from_crops)
             low_res_tokens += idx_arr.shape[0] * idx_arr.shape[1]
         return high_res_tokens, low_res_tokens
 
@@ -181,12 +207,6 @@ class HeMultiModalPreprocessor(ImagePreprocessor):
         is_training=False,
         rng=None,
     ):
-        """
-        :return image_tokens, the token IDS for this image
-        :return crops, the image crops to processes with the ViT
-        :return mask, the padding mask for each crop
-        :return pooled_patch_idx, the padding mask for each crop
-        """
         max_crops = self.max_crops
         overlap_margins = self.overlap_margins
         base_image_input_size = self.base_image_input_size
@@ -206,9 +226,9 @@ class HeMultiModalPreprocessor(ImagePreprocessor):
             crop_arr, mask_arr, patch_idx_arr = self.build_overlapping_crops(image, is_training=is_training, rng=rng)
 
             # Now arrange `patch_idx_arr` so it ready for pooling, possibly padding it
-            high_res_idx = arange_for_pooling(patch_idx_arr, self.image_pooling_w, self.image_pooling_h)
+            high_res_idx = arange_for_pooling(patch_idx_arr, self.image_high_res_from_crops, self.image_high_res_from_crops)
             h, w = high_res_idx.shape[:2]
-            high_res_idx = high_res_idx.reshape([-1, self.image_pooling_w*self.image_pooling_h])
+            high_res_idx = high_res_idx.reshape([-1, self.image_high_res_from_crops * self.image_high_res_from_crops])
 
             # Now build the output tokens
             image_k = n_high_res
@@ -217,10 +237,10 @@ class HeMultiModalPreprocessor(ImagePreprocessor):
             if self.use_high_res_col_tokens:
                 col_token_positions = np.arange(1, h + 1) * (w + 1)
                 joint = [
-                    [self.image_start_token_id],
-                    np.full(image_k, self.image_patch_token_id, dtype=np.int32),
-                    np.full(h, self.image_col_token_id, dtype=np.int32),
-                    [self.image_end_token_id]
+                    [self.tokenizer.image_start_token_id],
+                    np.full(image_k, self.tokenizer.image_patch_token_id, dtype=np.int32),
+                    np.full(h, self.tokenizer.image_col_token_id, dtype=np.int32),
+                    [self.tokenizer.image_end_token_id]
                 ]
                 high_res_pos_ids = [
                     np.zeros([1], dtype=np.int32),  # IMG start
@@ -234,9 +254,9 @@ class HeMultiModalPreprocessor(ImagePreprocessor):
                 high_res_patch_pos_ids = high_res_patch_pos_ids.reshape([-1])
             else:
                 joint = [
-                    [self.image_start_token_id],
-                    np.full(image_k, self.image_patch_token_id, dtype=np.int32),
-                    [self.image_end_token_id]
+                    [self.tokenizer.image_start_token_id],
+                    np.full(image_k, self.tokenizer.image_patch_token_id, dtype=np.int32),
+                    [self.tokenizer.image_end_token_id]
                 ]
                 high_res_pos_ids = [
                     np.zeros([1], dtype=np.int32),  # IMG start
@@ -245,21 +265,21 @@ class HeMultiModalPreprocessor(ImagePreprocessor):
                 ]
                 high_res_patch_pos_ids = np.arange(h*w)
 
-            if self.low_res_from_high:
-                low_idx = arange_for_pooling(patch_idx_arr, self.low_res_from_high, self.low_res_from_high)
+            if self.image_low_res_from_crops:
+                low_idx = arange_for_pooling(patch_idx_arr, self.image_low_res_from_crops, self.image_low_res_from_crops)
                 low_h, low_w = low_idx.shape[:2]
-                low_res_pooling_idx = low_idx.reshape([-1, self.low_res_from_high**2])
+                low_res_pooling_idx = low_idx.reshape([-1, self.image_low_res_from_crops ** 2])
             else:
-                assert not self.low_res_from_high
+                assert not self.image_low_res_from_crops
                 # Finally do the same for the global image
                 resized, resized_mask, resize_idx = self.build_resized_image(image, is_training=is_training, rng=rng)
                 crop_arr = np.concatenate([resized, crop_arr], 0)
                 mask_arr = np.concatenate([resized_mask, mask_arr], 0)
 
                 low_idx = np.arange(crop_patch_h*crop_patch_w).reshape([crop_patch_h, crop_patch_w])
-                low_idx = arange_for_pooling(low_idx, self.low_res_from_low, self.low_res_from_low)
+                low_idx = arange_for_pooling(low_idx, self.image_low_res_from_resized, self.image_low_res_from_resized)
                 low_h, low_w = low_idx.shape[:2]
-                low_res_pooling_idx = low_idx.reshape([-1, self.low_res_from_low*self.low_res_from_low])
+                low_res_pooling_idx = low_idx.reshape([-1, self.image_low_res_from_resized * self.image_low_res_from_resized])
 
                 # Global image goes first, so the order of patches in previous crops gets increased
                 high_res_idx = np.where(
@@ -281,16 +301,16 @@ class HeMultiModalPreprocessor(ImagePreprocessor):
 
             per_row = np.full(
                 (low_w,),
-                self.image_low_res_token_id,
+                self.tokenizer.image_low_res_token_id,
                 dtype=np.int32
             )
             if self.use_col_tokens:
-                per_row = np.concatenate([per_row, [self.image_col_token_id]], 0)
+                per_row = np.concatenate([per_row, [self.tokenizer.image_col_token_id]], 0)
             extra_tokens = np.tile(per_row, [low_h])
             low_res_tokens = np.concatenate([
-                [self.image_start_token_id],
+                [self.tokenizer.image_start_token_id],
                 extra_tokens,
-                [self.image_end_token_id],
+                [self.tokenizer.image_end_token_id],
             ])
             all_pos_ids = np.concatenate([
                 np.arange(len(low_res_tokens)),
@@ -308,6 +328,101 @@ class HeMultiModalPreprocessor(ImagePreprocessor):
             )
         else:
             raise NotImplementedError(self.crop_mode)
+
+    def video_to_patches_and_tokens(
+        self,
+        image: ImageInput,
+        max_high_res_tokens,
+        is_training=False,
+        rng=None,
+    ):
+        base_image_input_size = self.base_image_input_size
+        image_patch_size = self.image_patch_size
+        if len(image.shape) == 3:
+            image = np.expand_dims(image, 0)
+        n_frames = len(image)
+
+        if isinstance(base_image_input_size, int):
+            base_image_input_size = (base_image_input_size, base_image_input_size)
+
+        base_image_input_d = image_patch_size
+        crop_patch_w = base_image_input_size[1] // base_image_input_d
+        crop_patch_h = base_image_input_size[0] // base_image_input_d
+
+        original_image_h, original_image_w = image.shape[:2]
+        crop_size = base_image_input_size[0]
+
+        if self.crop_mode == "resize":
+            resized, _, low_res_idx = self.build_resized_image(image, is_training=is_training, rng=rng)
+            low_res_idx = arange_frames_for_pooling(
+                low_res_idx, len(image), self.video_low_res, self.video_low_res)
+            low_h, low_w = low_res_idx.shape[1:3]
+
+            per_row = np.full(
+                (low_w,),
+                self.tokenizer.image_low_res_token_id,
+                dtype=np.int32
+            )
+            if self.use_col_tokens:
+                per_row = np.concatenate([per_row, [self.tokenizer.image_col_token_id]], 0)
+            extra_tokens = np.tile(per_row, [low_h])
+            low_res_joint = [
+                [self.tokenizer.image_start_token_id],
+                extra_tokens,
+            ] * len(resized) + [[self.tokenizer.image_end_token_id]]
+
+            high_res_idx = np.arange(crop_patch_w*crop_patch_h).reshape([crop_patch_h, crop_patch_w])
+            high_res_idx = arange_frames_for_pooling(high_res_idx, len(image), self.video_high_res, self.video_high_res)
+            high_h, high_w = high_res_idx.shape[1:3]
+            max_high_res_per_crop = high_w * high_h
+            max_high_res_tokens = min(max_high_res_tokens, max_high_res_per_crop*len(image))
+
+            low_to_high = np.eye((low_h*2*low_w*2), dtype=np.float32)
+            low_to_high = low_to_high.reshape([low_h*low_w*4, low_h*2, low_w*2])
+            low_to_high = torchvision.transforms.Resize(
+                [high_h, high_w], InterpolationMode.BILINEAR, antialias=False)(
+                torch.from_numpy(low_to_high)).numpy().astype(np.float32)
+
+            low_to_high_frames = np.zeros([n_frames, n_frames] + list(low_to_high.shape), dtype=np.float32)
+            low_to_high_frames[np.arange(n_frames), np.arange(n_frames)] = np.tile(low_to_high[None, :, :, :], [n_frames, 1, 1, 1])
+
+            # Re-arrange to match how the importance scores are predicted (four per a patch)
+            # This save us having to transpose it in the model
+            low_to_high_frames = einops.rearrange(
+                low_to_high_frames, "fi fo (lh dh lw dw) h w -> (fi lw lh dw dh) (fo h w) ",
+                dh=2, dw=2, lh=low_h, lw=low_w)
+
+            n_low = sum(len(x) for x in low_res_joint)
+            high_res_pos_ids = np.ones(np.prod(high_res_idx.shape[:-1]), dtype=np.int32)
+            high_res_per_crop = high_res_idx.shape[1] * high_res_idx.shape[2]
+            high_res_pos_ids[::high_res_per_crop] = 2
+            high_res_pos_ids[0] -= 1
+            high_res_pos_ids = np.cumsum(high_res_pos_ids)
+
+            joint_pos_ids = [
+                np.arange(n_low),  # low res tokens
+                n_low + np.arange(len(image)) * (max_high_res_per_crop + 1),  # frame starts
+                np.full([max_high_res_tokens], n_low),  # high res
+                [n_low + high_res_pos_ids.max() + 1]  # frame end
+            ]
+            joint = low_res_joint + [
+                [self.tokenizer.image_start_token_id] * len(image),
+                np.full([max_high_res_tokens], self.tokenizer.image_patch_token_id),
+                [self.tokenizer.image_end_token_id],
+            ]
+            return (
+                batch_pixels_to_patches(resized, image_patch_size),
+                np.concatenate(joint, 0),
+                np.concatenate(joint_pos_ids, 0),
+                low_res_idx.reshape(-1, low_res_idx.shape[-1]),
+                high_res_idx.reshape(-1, high_res_idx.shape[-1]),
+                (
+                    low_to_high_frames,
+                    high_res_pos_ids
+                )
+            )
+        else:
+            raise ValueError()
 
     def _sample(self, rng: np.random, min_k, max_k, num_k=None, sample_k=None):
         if min_k is None:
@@ -330,6 +445,7 @@ class HeMultiModalPreprocessor(ImagePreprocessor):
         self,
         images,
         messages: Union[List[str], List[List[str]]],
+        frame_times=None,
         weight=None,
         is_training=False,
         rng=None,
@@ -340,232 +456,62 @@ class HeMultiModalPreprocessor(ImagePreprocessor):
         sample_k: Optional[str] = None,
     ):
         """Interleave images and text tokens into multi-modal features for the model"""
-        if len(messages) == 0:
-            raise ValueError("Given empty messages")
-        if not isinstance(messages[0], str) and len(messages) == 1:
-            messages = messages[0]
-
-        if isinstance(messages[0], str):
-            # List of user/system/user/system ect. prompts
-            loss_masks = []
-            token_ids = []
-            for msg_ix, message in enumerate(messages):
-                has_loss = msg_ix % 2 == 1
-                message_ids = self.tokenizer.encode(message)
-                if self.max_query_len and msg_ix == 0:
-                    message_ids = message_ids[:self.max_query_len]
-                if has_loss:
-                    message_ids.append(self.tokenizer.eos_token_id)
-                token_ids += message_ids
-                if weight is None:
-                    loss_masks += [has_loss]*len(message_ids)
-                else:
-                    loss_masks += [weight if has_loss else 0]*len(message_ids)
-            tokens = np.array(token_ids, dtype=np.int32)
-            loss_masks = np.array(loss_masks, dtype=np.float32)
-            subsegment_ids = None
-        else:
-            if weight is not None:
-                raise NotImplementedError("Multi-messages with weights")
-            # List of lists of user/system/user/system ect. prompts
-            subsegments = []
-            loss_masks = []
-            token_ids = []
-            for message_set_ix, message_set in enumerate(messages):
-                n = 0
-                for msg_ix, message in enumerate(message_set):
-                    has_loss = msg_ix % 2 == 1
-                    message_ids = self.tokenizer.encode(message)
-                    if has_loss:
-                        message_ids.append(self.tokenizer.eos_token_id)
-                    token_ids += message_ids
-                    loss_masks.append(np.full(len(message_ids), has_loss, dtype=np.bool_))
-                    n += len(message_ids)
-                subsegments.append(np.full(n, message_set_ix+1, dtype=np.int32))
-            tokens = np.array(token_ids, dtype=np.int32)
-            loss_masks = np.concatenate(loss_masks, dtype=np.float32)
-            subsegment_ids = np.concatenate(subsegments, dtype=np.int32)
-            if weight is not None:
-                loss_masks *= weight
-            if self.loss_token_weighting == "root_subsegments":
-                loss_masks *= math.sqrt(1/len(messages))
-            elif self.loss_token_weighting is not None:
-                raise NotImplementedError(self.loss_token_weighting)
-
-        if images is None or (
-            isinstance(images, (list, tuple)) and len(images) == 0
-        ):
-            bos = self.tokenizer.bos_token_id or self.tokenizer.eos_token_id
-            decoder_input_tokens = np.pad(tokens, [[1, 0]], constant_values=bos)[:-1]
-            data = {"input_tokens": tokens, "loss_masks": loss_masks, "target_tokens": tokens}
-            if subsegment_ids is not None:
-                subsegment_ids = np.pad(subsegment_ids, [[1, 0]], constant_values=subsegment_ids[0])[:-1]
-                data["subsegments"] = subsegment_ids
-            if require_image_features:
-                raise NotImplementedError()
-
-        if not isinstance(images, (list, tuple)):
-            images = [images]
-        image_idx = np.argwhere(tokens == self.image_prompt_token_id)
-        if len(image_idx) == 0:
-            image_idx = [-1] * len(images)
-        else:
-            image_idx = image_idx[:, 0]
-            assert len(image_idx) == len(images)
-
         max_k = max_k or self.num_high_res_features
         min_k = min_k or self.multi_res_min
         num_k = num_k or self.multi_res_selection
 
         if num_k is not None and num_k != 1:
-            assert min_k is not None
-            # Everything after the image get repeated `self.multi_res_selection` times
-            # Add EOS now since the EOS should also get repeated
-            assert len(image_idx) == 1
-            image_start = image_idx[0]
-            before_img_tokens = tokens[:image_start+1]
-            after_img_tokens = tokens[image_start+1:]
-            before_img_loss = loss_masks[:image_start+1]
-            after_img_loss = loss_masks[image_start+1:]
-
-            # This token can get the EOS token as a label, so it should not be trained on
-            # We could handle this case by repeating the image end token but that makes
-            # life even more complex so for now we don't support it
-            assert after_img_loss[0] == 0
-            tokens = np.concatenate([before_img_tokens, np.tile(after_img_tokens, [num_k])])
-            loss_masks = np.concatenate([before_img_loss, np.tile(after_img_loss, [num_k])])
-            
-            # Now build the subsegment ids, before image tokens are subsegment 0 and
-            # tokens after the image are a random id reflect how many high res tokens to attend to
-            subsegment_ixs = self._sample(rng, min_k, max_k, num_k, sample_k)
-            subsegment_ixs.sort()
-            ks = subsegment_ixs[::-1]
-            ks = np.concatenate([[0], ks])
-            subsegment_ids = np.repeat(ks, [len(before_img_tokens)] + [len(after_img_tokens)]*num_k)
-            image_token_weights = np.zeros([max_k], dtype=np.float32)
-            image_token_weights[subsegment_ixs] = 1
-            image_token_weights = np.cumsum(image_token_weights[::-1])[::-1]
-            n_high_res = subsegment_ixs.max() + 1
+            raise NotImplementedError()
         else:
             n_high_res = self._sample(rng, min_k, max_k, num_k, sample_k)
+        if isinstance(images, (list, tuple)):
+            if len(images) > 1:
+                raise NotImplementedError("Multi-image input")
+            images = images[0]
 
-        max_total_crops = self.max_crops
-        image_patch_size = self.image_patch_size
-        base_image_input_size = self.base_image_input_size
-        image_num_patch = (
-            base_image_input_size[0] // image_patch_size,
-            base_image_input_size[1] // image_patch_size,
+        if len(images.shape) == 4:
+            (
+                crops,
+                image_tokens,
+                image_pos_ids,
+                low_pooled_idx,
+                pooled_idx,
+                _high_res_data
+            ) = self.video_to_patches_and_tokens(images, n_high_res, is_training, rng)
+            if self.time_mode == "fps-prefix":
+                tmp = np.array(frame_times)
+                deltas = tmp[1:] - tmp[:-1]
+                fps = np.mean(deltas)
+                prefix = self.tokenizer.encode(f"FPS {fps:0.2f}")
+                image_tokens = np.concatenate([prefix, image_tokens])
+                image_pos_ids = np.concatenate([np.arange(len(prefix)), len(prefix) + image_pos_ids])
+            elif self.time_mode is not None:
+                raise NotImplementedError(self.time_mode)
+        else:
+            (
+                image_tokens,
+                image_pos_ids,
+                crops,
+                img_mask,
+                low_pooled_idx,
+                pooled_idx,
+                _high_res_data
+            ) = self.image_to_patches_and_tokens(images, n_high_res, is_training, rng)
+
+        out = self.tokenize_and_interleave(
+            messages,
+            [image_tokens],
+            [image_pos_ids],
         )
-        n_pixels = image_patch_size * image_patch_size * 3
-        n_patches = image_num_patch[0] * image_num_patch[1]
-
-        n = len(images)
-        all_crops = []
-        out_tokens = []
-        all_loss_masks = []
-        high_res_features_weights = []
-        low_pooled_patches_idx = []
-        pooled_patches_idx = []
-        all_subsegment_ids = []
-        all_position_ids = []
-        _high_res_data = None
-        current_position = 0
-        for ix in range(n):
-            token_ix = image_idx[ix]
-            image_tokens, image_pos_ids, crops, img_mask, low_pooled_idx, pooled_idx, _high_res_data = self.image_to_patches_and_tokens(images[ix], n_high_res, is_training, rng)
-
-            if token_ix == -1:  # -1 is an image inserted at the very start
-                start = 0
-                token_ix = 0
-                end = 0
-            else:
-                start = 0 if ix == 0 else image_idx[ix-1] + 1
-                end = token_ix + 1
-
-            n_high_res_tokens = (image_tokens == self.image_patch_token_id).sum()
-
-            offset = sum(np.prod(x.shape[:2]) for x in all_crops)
-            low_pooled_patches_idx.append(low_pooled_idx + offset)
-            pooled_patches_idx.append(pooled_idx + offset)
-            all_crops.append(crops)
-            out_tokens.append(tokens[start:token_ix])
-            all_loss_masks.append(loss_masks[start:token_ix])
-
-            n = len(out_tokens[-1])
-            all_position_ids.append(np.arange(current_position, current_position+n))
-            current_position += n
-
-            out_tokens.append(image_tokens)
-            all_position_ids.append(image_pos_ids + current_position)
-            current_position += image_pos_ids.max() + 1
-
-            all_loss_masks.append(np.zeros(image_tokens.shape[0], dtype=np.float32))
-
-        end = image_idx[-1] + 1
-        out_tokens.append(tokens[end:])
-        all_loss_masks.append(loss_masks[end:])
-        n = len(out_tokens[-1])
-        if subsegment_ids is not None:
-            all_position_ids.append(current_position + build_pos_ids(subsegment_ids[end:]))
-        else:
-            all_position_ids.append(np.arange(current_position, current_position+n))
-        if subsegment_ids is not None:
-            all_subsegment_ids.append(subsegment_ids[end:])
-
-        input_ids = np.concatenate(out_tokens, 0)
-        images = np.concatenate(all_crops, 0)
-        all_loss_masks = np.concatenate(all_loss_masks, 0)
-
-        target_tokens = input_ids
-        ends_with_eos = input_ids[-1] == self.tokenizer.eos_token_id
-        if not ends_with_eos and loss_masks[-1]:
-            raise RuntimeError("EOS should not be masked")
-
-        bos = self.tokenizer.bos_token_id or self.tokenizer.eos_token_id
-        input_ids = np.pad(input_ids, [[1, 0]], constant_values=bos)
-        if ends_with_eos:
-            input_ids = input_ids[:-1]
-        else:
-            # We are presumably doing inference since the messages end with user response instead
-            # of a target response, so these fields should not be used, but pad them anyway
-            # just so everything is a consistent length
-            all_loss_masks = np.pad(all_loss_masks, [[0, 1]], constant_values=-1)
-            target_tokens = np.pad(target_tokens, [[0, 1]], constant_values=-1)
-
-        out = {
-            "images": images,
-            "low_res_tokens_idx": np.concatenate(low_pooled_patches_idx, 0),
-            "high_res_tokens_idx": np.concatenate(pooled_patches_idx, 0),
-            "input_tokens": input_ids,
-            "loss_masks": all_loss_masks,
-            "target_tokens": target_tokens,
-            "high_res_features_weights": np.ones(n_high_res_tokens, dtype=np.float32),
+        n_high_res_tokens = (image_tokens == self.tokenizer.image_patch_token_id).sum()
+        out.update({
+            "images": crops,
+            "low_res_tokens_idx": low_pooled_idx,
+            "high_res_tokens_idx": pooled_idx,
             "low_to_high": _high_res_data[0],
-            "high_res_pos_ids": _high_res_data[1]
-        }
-
-        if subsegment_ids is not None:
-            pos_ids = np.concatenate(all_position_ids, -1)
-            # Add BOS as the new position 0
-            pos_ids += 1
-            pos_ids = np.pad(pos_ids, [[1, 0]], constant_values=0)
-            if ends_with_eos:
-                pos_ids = pos_ids[:-1]
-
-            all_subsegments = np.concatenate(all_subsegment_ids, 0)
-            all_subsegments = np.pad(all_subsegments, [[1, 0]], constant_values=all_subsegments[0])
-            if ends_with_eos:
-                all_subsegments = all_subsegments[:-1]
-            out["subsegment_ids"] = all_subsegments
-            out["position_ids"] = pos_ids
-
-        pos_ids = np.concatenate(all_position_ids, -1)
-        # Add BOS as the new position 0
-        pos_ids += 1
-        pos_ids = np.pad(pos_ids, [[1, 0]], constant_values=0)
-        if ends_with_eos:
-            pos_ids = pos_ids[:-1]
-        assert pos_ids.shape[0] == input_ids.shape[0]
-        out["position_ids"] = pos_ids
+            "high_res_pos_ids": _high_res_data[1],
+            "high_res_features_weights": np.ones(n_high_res_tokens, dtype=np.float32),
+        })
         return out
+
 

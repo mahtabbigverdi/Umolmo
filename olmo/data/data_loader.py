@@ -89,8 +89,9 @@ class DataLoaderConfig(BaseConfig):
                 # exactly the same number of batches
                 n_pad = (n_steps*global_batch_size) - len(dataset)
 
+        max_seq_len = self.sequence_length if self.pad else None
         preprocessor = model_config.build_preprocessor(
-            for_inference=for_inference, is_training=False, include_image=include_image)
+            for_inference=for_inference, is_training=False, include_image=include_image, max_seq_len=max_seq_len)
         dataset = DeterministicDataset(
             dataset=dataset,
             seed=self.seed,
@@ -163,8 +164,9 @@ class DataLoaderConfig(BaseConfig):
             for ix in np.argsort(rates)[::-1]:
                 log.info(f"{names[ix]}: {100*rates[ix]:0.2f}")
 
+        max_seq_len = self.sequence_length if self.pad else None
         preprocessor = model_config.build_preprocessor(
-            for_inference=False, is_training=True)
+            for_inference=False, is_training=True, max_seq_len=max_seq_len)
         datasets = [DeterministicDataset(ds, preprocessor, self.seed) for ds in datasets]
 
         dataset = IterableDatasetMixture(

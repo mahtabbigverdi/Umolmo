@@ -1,7 +1,11 @@
+import logging
 from typing import Dict, Any, List
 
 import numpy as np
 import torch
+
+from olmo import tokenizer
+from olmo.tokenizer import get_special_token_ids
 
 numpy_to_torch_dtype_dict = {
     np.dtype("bool"): torch.bool,
@@ -23,6 +27,8 @@ def _collate(tensors, max_sequence_length=None, dtype=None, pad=None, pad_value=
     if pad == "to_max":
         max_len = max_sequence_length
         if not allow_truncate:
+            if not all(x.shape[0] <= max_len for x in tensors if x is not None):
+                import pdb; pdb.set_trace()
             assert all(x.shape[0] <= max_len for x in tensors if x is not None)
     elif pad is None:
         max_len = max((0 if x is None else x.shape[0]) for x in tensors)
@@ -48,7 +54,7 @@ class MMCollator:
     TEXT_KEYS = ["input_tokens", "target_tokens", "loss_masks", "subsegment_ids", "position_ids"]
     IMAGE_KEYS = ["images", "image_masks"]
 
-    def __init__(self, max_sequence_length=None, image_padding_lens=None, include_metadata=True, pad=None):
+    def __init__(self, special_tokens, max_sequence_length=None, image_padding_lens=None, include_metadata=True, pad=None):
         """
         :param max_sequence_length: truncate examples longer than this length
         :param include_metadata: whether to include the metadata in the out batch
@@ -61,23 +67,40 @@ class MMCollator:
         self.image_padding_lens = image_padding_lens
         self.include_metadata = include_metadata
         self.pad = pad
+        self._special_tokens = np.array([
+            special_tokens[tokenizer.IM_END_TOKEN],
+            special_tokens[tokenizer.IM_START_TOKEN],
+            special_tokens[tokenizer.IM_COL_TOKEN],
+            special_tokens[tokenizer.IMAGE_LOW_RES_TOKEN],
+            special_tokens[tokenizer.IMAGE_PATCH_TOKEN],
+        ])[None, :]
 
     def __call__(self, batch: List[Dict[str, Any]]) -> Dict[str, Any]:
         assert len(batch) > 0, "Given an empty batch"
         keys = batch[0].keys()
+
+        # Sanity checks
+        for ex in batch:
+            if self.pad:
+                if np.any(self._special_tokens == ex["input_tokens"][self.max_sequence_length:][:, None]):
+                    raise ValueError("An image would have gotten truncated!")
+                if np.any(ex["loss_masks"] != 0) and np.all(ex["loss_masks"][:self.max_sequence_length] == 0):
+                    raise ValueError("All loss tokens truncated!")
+
         out = {}
         for key in self.TEXT_KEYS:
-            # If one examples has subsegment_ids, all examples need it so with ones
-            # matching the input tokens
-            if any(key in ex for ex in batch):
-                if key == "subsegment_ids":
+            # If one example has subsegment_ids, all examples need it as well
+            if key == "subsegment_ids":
+                if any(key in ex for ex in batch):
                     for ex in batch:
                         if "subsegment_ids" not in ex:
                             ex["subsegment_ids"] = np.ones_like(ex["input_tokens"])
+                else:
+                    continue
 
-                dtype = np.float32 if key == "loss_masks" else np.int64
-                out[key] = _collate(
-                    [ex.get(key) for ex in batch], self.max_sequence_length, dtype, pad=self.pad)
+            dtype = np.float32 if key == "loss_masks" else np.int64
+            out[key] = _collate(
+                [ex.get(key) for ex in batch], self.max_sequence_length, dtype, pad=self.pad)
 
         for key, max_len in self.image_padding_lens.items():
             out[key] = _collate([ex.get(key) for ex in batch], max_len, pad=self.pad, allow_truncate=False,)

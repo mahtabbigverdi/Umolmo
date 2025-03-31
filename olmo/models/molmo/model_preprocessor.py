@@ -9,6 +9,7 @@ from einops import einops
 from olmo import tokenizer
 from olmo.config import BaseConfig
 from olmo.data.image_preprocessor import load_image, ImagePreprocessor
+from olmo.data.interleaved_text_preprocessor import InterleavedTextPreprocessor
 from olmo.tokenizer import get_special_token_ids
 from olmo.nn.vision_backbone import MolmoVisionBackboneConfig
 
@@ -59,7 +60,6 @@ def arange_for_pooling(idx_arr, pool_h, pool_w):
         idx_arr, "(h dh) (w dw) -> h w (dh dw)", dh=pool_h, dw=pool_w)
 
 
-
 @dataclasses.dataclass
 class MolmoPreprocessorConfig(BaseConfig):
     crop_mode: str = "resize"
@@ -103,11 +103,11 @@ class MolmoPreprocessorConfig(BaseConfig):
         )
         if vision_backbone_config.image_padding_embed:
             padding_lens["image_masks"] = self.get_max_crops()
-        preprocessor = self.build(None, vision_backbone_config)
+        preprocessor = self.build(None, vision_backbone_config, None)
         padding_lens["pooled_patches_idx"] = preprocessor.max_image_tokens()
         return padding_lens
 
-    def build(self, tokenizer, vision_backbone_config: MolmoVisionBackboneConfig):
+    def build(self, tokenizer, vision_backbone_config: MolmoVisionBackboneConfig, max_seq_len):
         vit = vision_backbone_config.vit
         return MolmoPreprocessor(
             tokenizer=tokenizer,
@@ -119,6 +119,7 @@ class MolmoPreprocessorConfig(BaseConfig):
             overlap_margins=self.overlap_margins,
             resize=vit.resize_mode,
             use_col_tokens=self.use_col_tokens,
+            max_sequence_length=max_seq_len,
 
             base_image_input_size=vit.image_default_input_size,
             image_pooling_w=self.pooling_w,
@@ -130,38 +131,21 @@ class MolmoPreprocessorConfig(BaseConfig):
 
 
 @dataclasses.dataclass
-class MolmoPreprocessor(ImagePreprocessor):
+class MolmoPreprocessor(InterleavedTextPreprocessor, ImagePreprocessor):
     """
     Converts text/images inputs into tensors that can be used in the forward method
     for the a model
     """
-    tokenizer: Any = None
-    loss_token_weighting: Optional[str] = None
     legacy_image_mask: bool = False
 
     # How to crops/resize images
-    crop_mode: str = "default"
+    crop_mode: str = "resize"
     use_col_tokens: bool = True
 
     # Data about the ViT and connector we need when deciding the crops
     image_pooling_w: int = 2
     image_pooling_h: int = 2
     image_padding_mask: Union[bool, int] = False
-
-    image_patch_token_id: int = dataclasses.field(init=False)
-    image_col_token_id: int = dataclasses.field(init=False)
-    image_start_token_id: int = dataclasses.field(init=False)
-    image_end_token_id: int = dataclasses.field(init=False)
-
-    def __post_init__(self):
-        if self.tokenizer is not None:
-            special_tokens = get_special_token_ids(self.tokenizer)
-            self.image_end_token_id = special_tokens[tokenizer.IM_END_TOKEN]
-            self.image_start_token_id = special_tokens[tokenizer.IM_START_TOKEN]
-            self.image_col_token_id = special_tokens[tokenizer.IM_COL_TOKEN]
-            self.image_patch_token_id = special_tokens[tokenizer.IMAGE_PATCH_TOKEN]
-            self.image_low_res_token_id = special_tokens[tokenizer.IMAGE_LOW_RES_TOKEN]
-            self.image_prompt_token_id = special_tokens[tokenizer.IMAGE_PROMPT]
 
     def max_image_tokens(self) -> int:
         """Return the max number of pooled image tokens this could produce for any image"""
@@ -241,12 +225,12 @@ class MolmoPreprocessor(ImagePreprocessor):
                 dtype=np.int32
             )
             if self.use_col_tokens:
-                per_row = np.concatenate([per_row, [self.image_col_token_id]], 0)
+                per_row = np.concatenate([per_row, [self.tokenizer.image_col_token_id]], 0)
             extra_tokens = np.tile(per_row, [h])
             joint = [
-                        [self.image_start_token_id],
-                        extra_tokens,
-                        [self.image_end_token_id],
+                [self.tokenizer.image_start_token_id],
+                extra_tokens,
+                [self.tokenizer.image_end_token_id],
             ]
             return (np.concatenate(joint, 0), batch_pixels_to_patches(resized, image_patch_size),
                     batch_pixels_to_patches(resized_mask, image_patch_size).mean(-1), pooling_idx)
@@ -258,14 +242,14 @@ class MolmoPreprocessor(ImagePreprocessor):
             pooling_idx = pooling_idx.reshape([-1, pooling_h*pooling_w])
 
             # Now build the output tokens
-            per_row = np.full(w, self.image_patch_token_id, dtype=np.int32)
+            per_row = np.full(w, self.tokenizer.image_patch_token_id, dtype=np.int32)
             if self.use_col_tokens:
-                per_row = np.concatenate([per_row, [self.image_col_token_id]], 0)
+                per_row = np.concatenate([per_row, [self.tokenizer.image_col_token_id]], 0)
             joint = np.tile(per_row, [h])
             joint = [
-                [self.image_start_token_id],
+                [self.tokenizer.image_start_token_id],
                 joint,
-                [self.image_end_token_id]
+                [self.tokenizer.image_end_token_id]
             ]
 
             if self.crop_mode == "overlap-and-resize":
@@ -300,12 +284,12 @@ class MolmoPreprocessor(ImagePreprocessor):
                 dtype=np.int32
             )
             if self.use_col_tokens:
-                per_row = np.concatenate([per_row, [self.image_col_token_id]], 0)
+                per_row = np.concatenate([per_row, [self.tokenizer.image_col_token_id]], 0)
             extra_tokens = np.tile(per_row, [h])
             joint = [
-                        [self.image_start_token_id],
+                        [self.tokenizer.image_start_token_id],
                         extra_tokens,
-                        [self.image_end_token_id],
+                        [self.tokenizer.image_end_token_id],
                     ] + joint
             mask_arr = batch_pixels_to_patches(mask_arr, image_patch_size).astype(np.float32).mean(axis=-1)
             return (np.concatenate(joint, 0), batch_pixels_to_patches(crop_arr, image_patch_size),
@@ -323,160 +307,33 @@ class MolmoPreprocessor(ImagePreprocessor):
         require_image_features=False
     ):
         """Interleave images and text tokens into multi-modal features for the model"""
-        if len(messages) == 0:
-            raise ValueError("Given empty messages")
-        if not isinstance(messages[0], str) and len(messages) == 1:
-            messages = messages[0]
-        if isinstance(messages[0], str):
-            # List of user/system/user/system ect. prompts
-            loss_masks = []
-            token_ids = []
-            for msg_ix, message in enumerate(messages):
-                has_loss = msg_ix % 2 == 1
-                message_ids = self.tokenizer.encode(message)
-                if has_loss:
-                    message_ids.append(self.tokenizer.eos_token_id)
-                token_ids += message_ids
-                if weight is None:
-                    loss_masks += [has_loss]*len(message_ids)
-                else:
-                    loss_masks += [weight if has_loss else 0]*len(message_ids)
-            tokens = np.array(token_ids, dtype=np.int32)
-            loss_masks = np.array(loss_masks, dtype=np.float32)
-            subsegments = None
-        else:
-            if weight is not None:
-                raise NotImplementedError("Multi-messages with weights")
-            # List of lists of user/system/user/system ect. prompts
-            subsegments = []
-            loss_masks = []
-            token_ids = []
-            for message_set_ix, message_set in enumerate(messages):
-                n = 0
-                for msg_ix, message in enumerate(message_set):
-                    has_loss = msg_ix % 2 == 1
-                    message_ids = self.tokenizer.encode(message)
-                    if has_loss:
-                        message_ids.append(self.tokenizer.eos_token_id)
-                    token_ids += message_ids
-                    loss_masks.append(np.full(len(message_ids), has_loss, dtype=np.bool_))
-                    n += len(message_ids)
-                subsegments.append(np.full(n, message_set_ix+1, dtype=np.int32))
-            tokens = np.array(token_ids, dtype=np.int32)
-            loss_masks = np.concatenate(loss_masks, dtype=np.float32)
-            subsegments = np.concatenate(subsegments, dtype=np.int32)
-            if weight is not None:
-                loss_masks *= weight
-            if self.loss_token_weighting == "root_subsegments":
-                loss_masks *= math.sqrt(1/len(messages))
-            elif self.loss_token_weighting is not None:
-                raise NotImplementedError(self.loss_token_weighting)
-
         if images is None or (
             isinstance(images, (list, tuple)) and len(images) == 0
         ):
-            bos = self.tokenizer.bos_token_id or self.tokenizer.eos_token_id
-            decoder_input_tokens = np.pad(tokens, [[1, 0]], constant_values=bos)[:-1]
-            data = {"input_tokens": tokens, "loss_masks": loss_masks, "target_tokens": tokens}
-            if subsegments is not None:
-                subsegments = np.pad(subsegments, [[1, 0]], constant_values=subsegments[0])[:-1]
-                data["subsegments"] = subsegments
+            out = self.tokenize_and_interleave(messages, [])
             if require_image_features:
                 raise NotImplementedError("")
-            return data
+            return out
 
         if not isinstance(images, (list, tuple)):
             images = [images]
-        image_idx = np.argwhere(tokens == self.image_prompt_token_id)
-        if len(image_idx) == 0:
-            image_idx = [-1] * len(images)
-        else:
-            image_idx = image_idx[:, 0]
-            assert len(image_idx) == len(images)
-
-        n = len(images)
-        all_crops = []
-        out_tokens = []
+        all_image_tokens = []
         all_crop_masks = []
-        all_subsegments = []
-        all_loss_masks = []
+        all_crops = []
         pooled_patches_idx = []
-
-        for ix in range(n):
-            token_ix = image_idx[ix]
+        for image in images:
             image_tokens, crops, img_mask, pooled_idx = self.image_to_patches_and_tokens(
-                images[ix], self.image_pooling_h, self.image_pooling_w,  self.image_patch_token_id, is_training, rng)
-            if token_ix == -1:  # -1 is an image inserted at the very start
-                start = 0
-                token_ix = 0
-                end = 0
-            else:
-                start = 0 if ix == 0 else image_idx[ix-1] + 1
-                end = token_ix + 1
-
+                image, self.image_pooling_h, self.image_pooling_w,  self.tokenizer.image_patch_token_id, is_training, rng)
             pooled_patches_idx.append(pooled_idx + sum(np.prod(x.shape[:2]) for x in all_crops))
             all_crops.append(crops)
-            out_tokens.append(tokens[start:token_ix])
-            all_loss_masks.append(loss_masks[start:token_ix])
+            all_image_tokens.append(image_tokens)
+            all_crop_masks.append(img_mask)
 
-            out_tokens.append(image_tokens)
-            all_loss_masks.append(np.zeros(image_tokens.shape[0], dtype=np.float32))
-            if subsegments is not None:
-                all_subsegments.append(subsegments[start:token_ix])
-                image_subsegment = 10000 if image_idx[ix] == -1 else token_ix
-                all_subsegments.append(np.full(len(image_tokens), image_subsegment, np.int32))
-            if self.image_padding_mask:
-                all_crop_masks.append(img_mask)
-
-        end = image_idx[-1] + 1
-        out_tokens.append(tokens[end:])
-        all_loss_masks.append(loss_masks[end:])
-        if subsegments is not None:
-            all_subsegments.append(subsegments[end:])
-
-        input_ids = np.concatenate(out_tokens, 0)
-        images = np.concatenate(all_crops, 0)
-        pooled_patches_idx = np.concatenate(pooled_patches_idx, 0)
-        all_loss_masks = np.concatenate(all_loss_masks, 0)
-
-        target_tokens = input_ids
-        ends_with_eos = input_ids[-1] == self.tokenizer.eos_token_id
-        if not ends_with_eos and loss_masks[-1]:
-            raise RuntimeError("EOS should not be masked")
-
-        bos = self.tokenizer.bos_token_id or self.tokenizer.eos_token_id
-        input_ids = np.pad(input_ids, [[1, 0]], constant_values=bos)
-        if ends_with_eos:
-            input_ids = input_ids[:-1]
-        else:
-            # We are presumably doing inference since the messages end with user response instead
-            # of a target response, so these fields should not be used, but pad them anyway
-            # just so everything is a consistent length
-            all_loss_masks = np.pad(all_loss_masks, [[0, 1]], constant_values=-1)
-            target_tokens = np.pad(target_tokens, [[0, 1]], constant_values=-1)
-
-        out = {
-            "input_tokens": input_ids,
-            "images": images,
-            "pooled_patches_idx": pooled_patches_idx,
-            "loss_masks": all_loss_masks,
-            "target_tokens": target_tokens,
-        }
+        out = self.tokenize_and_interleave(messages, all_image_tokens, weight=weight)
+        out["images"] = np.concatenate(all_crops)
+        out["pooled_patches_idx"] = np.concatenate(pooled_patches_idx)
         if self.image_padding_mask:
-            out["image_masks"] = np.concatenate(all_crop_masks, 0)
-        if subsegments is not None:
-            all_subsegments = np.concatenate(all_subsegments, 0)
-            all_subsegments = np.pad(all_subsegments, [[1, 0]], constant_values=all_subsegments[0])
-            if ends_with_eos:
-                all_subsegments = all_subsegments[:-1]
-            out["subsegment_ids"] = all_subsegments
-            position_ids = np.zeros_like(all_subsegments)
-            for subsegment_id in np.unique(all_subsegments):
-                segment_position_ids = np.cumsum(all_subsegments >= subsegment_id) - 1
-                position_ids = np.where(all_subsegments == subsegment_id, segment_position_ids, position_ids)
-            out["position_ids"] = position_ids
-        else:
-            out["position_ids"] = np.arange(len(input_ids), dtype=np.int64)
+            out["image_masks"] = np.concatenate(all_crop_masks)
         return out
 
 
