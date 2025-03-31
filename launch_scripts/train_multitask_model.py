@@ -115,7 +115,7 @@ if __name__ == "__main__":
             ["demo", [
                 "pixmo_ask_model_anything",
                 ("pixmo_cap", 50000),
-                "pixmo_cap_qa",
+                "pixmo_cap_qa_as_user_qa",
                 "pixmo_pointing_explanations"
             ], 0.15],
             ["aux", aux, 0.50],

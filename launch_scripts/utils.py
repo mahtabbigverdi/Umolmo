@@ -450,6 +450,50 @@ QWEN2_72B = ModelConfig(
 )
 
 
+OMLO_19_13B = ModelConfig(
+    d_model=5120,
+    n_heads=40,
+    n_kv_heads=None,
+    clip_qkv=None,
+    n_layers=40,
+    mlp_ratio=4,
+    mlp_hidden_size=27648,
+    activation_type="swiglu",
+    block_type="sequential",
+    block_group_size=1,
+    rope=True,
+    rope_full_precision=True,
+    rope_theta=500000,
+    attention_dropout=0.0,
+    attention_layer_norm=True,
+    layer_norm_type="rms",
+    layer_norm_with_affine=True,
+    layer_norm_eps=1.0e-06,
+    attention_layer_norm_with_affine=True,
+    max_sequence_length=4096,
+    include_bias=False,
+    bias_for_layer_norm=False,
+    scale_logits=False,
+    vocab_size=100278,
+    embedding_size=100352,
+    weight_tying=False,
+    attention_type=AttentionType.sdpa,
+    init_device="meta",
+    init_fn="normal",
+    init_std=0.02,
+    init_cutoff_factor=3.0,
+    precision="amp_bf16",
+    norm_after=True,
+    pad_tokenizer=True,
+    tokenizer=TokenizerConfig(
+        identifier="allenai/dolma2-tokenizer",
+    ),
+    embedding_dropout=0,
+    image_pooling_2d="attention_meanq",
+    image_padding_embed="pad_and_partial_pad",
+)
+
+
 DEFAULT_LOAD_PATHS = {
     "openai": "${oc.env:MOLMO_DATA_DIR}/pretrained_image_encoders/vit-l-14-336.pt",
     "siglip": "${oc.env:MOLMO_DATA_DIR}/pretrained_image_encoders/siglip-so400m-14-384.pt",
@@ -479,6 +523,7 @@ LLMS: Dict[str, ModelConfig] = {
     "qwen2_72b": QWEN2_72B,
     "qwen2.5_3b": QWEN25_3B,
     "qwen2.5_1.5b": QWEN25_15B,
+    "olmo1120_13b": OMLO_19_13B,
 }
 
 

@@ -192,9 +192,7 @@ if __name__ == "__main__":
     )
 
     conf = OmegaConf.create(cfg)
-    if other_args:
-        overrides = [clean_opt(arg) for arg in other_args]
-        conf = OmegaConf.merge(conf, OmegaConf.from_dotlist(overrides))
+    conf.merge_with_dotlist([clean_opt(arg) for arg in other_args])
     cfg = cast(TrainConfig, OmegaConf.to_object(conf))
     train(cfg)
 

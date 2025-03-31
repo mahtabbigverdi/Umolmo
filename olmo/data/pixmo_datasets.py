@@ -185,7 +185,7 @@ class PixMoPoints(Dataset):
             raise ValueError(kind)
         if split not in ["train", "validation"]:
             raise ValueError(f"Unknown split {split}")
-        mode = "pointing" if counting else "point_count"
+        mode = "point_count" if counting else "pointing"
         self.split = split
         self.kind = kind
         self.mode = mode
@@ -292,20 +292,21 @@ class PixMoCapQa(Dataset):
         filtered_dataset = filter_and_group_data(ds, filenames, check_sha)
         save_local_dataset(filtered_dataset, local_name, n_procs, n_val=n_val)
 
-    def __init__(self, split, prefix_how_many=True, keep_in_memory=False):
+    def __init__(self, split, prefix_how_many=True, keep_in_memory=False, style="synthetic_qa"):
         if split not in ["train", "validation"]:
             raise ValueError(f"Unknown split {split}")
         self.split = split
         self.prefix_how_many = prefix_how_many
         self.data = datasets.load_from_disk(
             join(PIXMO_DATASETS, "cap-qa"), keep_in_memory=keep_in_memory)[split]
+        self.style = style
 
     def __len__(self):
         return len(self.data)
 
     def get(self, item, rng):
         example = self.data[item]
-        messages = [dict(messages=msg, style="synthetic_qa") for msg in example["messages"]]
+        messages = [dict(messages=msg, style=self.style) for msg in example["messages"]]
 
         ex = dict(
             image=example["image"],
@@ -321,7 +322,7 @@ class PixMoCapQa(Dataset):
                 for user_question_ix in range(0, len(messages), 2):
                     if re.fullmatch("how many.*", messages[user_question_ix].lower()):
                         prefix = NO_POINT_PREFIX[rng.randint(0, len(NO_POINT_PREFIX))]
-                        messages[user_question_ix] = prefix + messages[0]
+                        messages[user_question_ix] = prefix + messages[user_question_ix]
         return ex
 
 
