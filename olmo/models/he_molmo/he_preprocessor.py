@@ -379,9 +379,9 @@ class HeMultiModalPreprocessor(InterleavedTextPreprocessor, ImagePreprocessor):
             low_to_high = low_to_high.reshape([low_h*low_w*4, low_h*2, low_w*2])
             low_to_high = torchvision.transforms.Resize(
                 [high_h, high_w], InterpolationMode.BILINEAR, antialias=False)(
-                torch.from_numpy(low_to_high)).numpy()
+                torch.from_numpy(low_to_high)).numpy().astype(np.float32)
 
-            low_to_high_frames = np.zeros([n_frames, n_frames] + list(low_to_high.shape))
+            low_to_high_frames = np.zeros([n_frames, n_frames] + list(low_to_high.shape), dtype=np.float32)
             low_to_high_frames[np.arange(n_frames), np.arange(n_frames)] = np.tile(low_to_high[None, :, :, :], [n_frames, 1, 1, 1])
 
             # Re-arrange to match how the importance scores are predicted (four per a patch)
