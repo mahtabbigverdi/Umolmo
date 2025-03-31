@@ -859,7 +859,7 @@ def _s3_get_bytes_range(
     elif bytes_start != 0:
         range_str = f"bytes={bytes_start}-",
     else:
-        range_str = None
+        range_str = "bytes=0-"
 
     try:
         return (

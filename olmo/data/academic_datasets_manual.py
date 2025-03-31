@@ -27,7 +27,9 @@ if DATA_HOME is not None:
     A_OKVQA_SOURCE = join(DATA_HOME, "a_okvqa")
     TEXT_VQA_SOURCE = join(DATA_HOME, "text_vqa")
     TALLY_QA_SOURCE = join(DATA_HOME, "tally_qa")
+    FIGURE_QA_SOURCE = join(DATA_HOME, "figure_qa")
     PLOT_QA_SOURCE = join(DATA_HOME, "plot_qa")
+    DVQA_SOURCE = join(DATA_HOME, "dvqa")
 else:
     CHARTQA_SOURCE = None
     DOCQA_SOURCE = None
@@ -37,7 +39,9 @@ else:
     A_OKVQA_SOURCE = None
     TEXT_VQA_SOURCE = None
     TALLY_QA_SOURCE = None
+    FIGURE_QA_SOURCE = None
     PLOT_QA_SOURCE = None
+    DVQA_SOURCE = None
 
 
 class Vqa2(Dataset):
@@ -459,6 +463,58 @@ class ChartQa(DatasetBase):
         return ex
 
 
+class FigureQa(Dataset):
+
+    def __init__(self, split):
+        assert split in ["train", "validation1", "test1", "validation2", "test2"]
+        self.split = split
+        self.hf_dataset = self.load()
+    
+    def load(self):
+        split = self.split
+        if file_exists(join(FIGURE_QA_SOURCE, f"molmo_{split}.json")):
+            return json.loads(read_file(join(FIGURE_QA_SOURCE, f"molmo_{split}.json")))
+
+        if split == "train":
+            folder_name = "train1"
+        elif "test" in split:
+            folder_name = "no_annot_" + split
+        else:
+            folder_name = split
+        source_dir = join(FIGURE_QA_SOURCE, folder_name)
+        data = json.loads(read_file(join(source_dir, "qa_pairs.json")))
+        grouped_by_image = defaultdict(list)
+        for question in data["qa_pairs"]:
+            grouped_by_image[question["image_index"]].append(question)
+        out = []
+        for image_index, questions_data in grouped_by_image.items():
+            questions = []
+            answers = []
+            for q in questions_data:
+                questions.append(q["question_string"])
+                answers.append(q.get("answer"))
+            out.append(
+                dict(
+                    image=join(source_dir, "png", str(image_index) + ".png"),
+                    image_index=image_index,
+                    questions=questions,
+                    answers=answers,
+                )
+            )
+        write_json(join(FIGURE_QA_SOURCE, f"molmo_{split}.json"), out)
+        return out
+
+    def __len__(self):
+        return len(self.hf_dataset)
+
+    def get(self, item, rng):
+        example = self.hf_dataset[int(item)]
+        messages = []
+        for q, a in zip(example["questions"], example["answers"]):
+            messages.append(dict(question=q, answer=str(a), style="figure_qa"))
+        return dict(image=example["image"], message_list=messages)
+
+
 class PlotQa(Dataset):
     SPLITS = ["train", "validation", "test"]
 
@@ -503,6 +559,53 @@ class PlotQa(Dataset):
 
     def __len__(self):
         return len(self.hf_dataset)
+
+
+class DvQa(Dataset):
+    SPLITS = ["train", "val_hard", "val_easy"]
+
+    def __init__(self, split):
+        assert split in self.SPLITS
+        self.split = split
+        self.hf_dataset = self.load()
+    
+    def load(self):
+        split = self.split
+        if file_exists(join(DVQA_SOURCE, f"molmo_{split}.json")):
+            return json.loads(read_file(join(DVQA_SOURCE, f"molmo_{split}.json")))
+
+        data = json.loads(read_file(join(DVQA_SOURCE, f"{split}_qa.json")))
+        grouped_by_image = defaultdict(list)
+        for question in data:
+            grouped_by_image[question["image"]].append(question)
+        out = []
+        for image, questions_data in grouped_by_image.items():
+            questions = [q["question"] for q in questions_data]
+            answers = [q["answer"] for q in questions_data]
+            out.append(
+                dict(
+                    image_id=image,
+                    image=join(DVQA_SOURCE, "images", image),
+                    questions=questions,
+                    answers=answers,
+                )
+            )
+        write_json(join(DVQA_SOURCE, f"molmo_{split}.json"), out)
+        return out
+
+    def __len__(self):
+        return len(self.hf_dataset)
+
+    def get(self, item, rng):
+        example = self.hf_dataset[int(item)]
+        messages = []
+        for q, a in zip(example["questions"], example["answers"]):
+            messages.append(dict(question=q, answer=a, style="dv_qa"))
+        return dict(
+            image=example["image"],
+            message_list=messages,
+            metadata=dict(image_id=example["image_id"]),
+        )
 
 
 class SceneTextQa(DatasetBase):

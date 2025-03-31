@@ -1,15 +1,15 @@
 from olmo.data.academic_datasets import (
     ScienceQAImageOnly, OkVqa,
-    FigureQa, DvQa, TabWMPDirectAnswer,
+    TabWMPDirectAnswer,
     AndroidControl, AI2D, CountBenchQa, RealWorldQa, MathVista, MMMU, ClockBench
 )
 from olmo.data.academic_datasets_manual import (
     ChartQa, InfoQa, SceneTextQa, DocQa,
-    TextVqa, AOkVqa, Vqa2, PlotQa, TallyQa
+    TextVqa, AOkVqa, Vqa2, PlotQa, TallyQa, FigureQa, DvQa,
 )
 from olmo.data.video_datasets import (
     InternVid, Koala, LLaVAVideo178K, MVBench, TempCompass,
-    VideoMME, EgoSchema, PerceptionTest, MLVU, LongVideoBench
+    VideoMME, EgoSchema, PerceptionTest, MLVU, LongVideoBench, NeXTQA
 )
 from olmo.data.dataset import Dataset
 from olmo.data.pixmo_datasets import (
@@ -58,6 +58,8 @@ def get_dataset_by_name(dataset_name, split) -> Dataset:
         return MLVU(split=split, task="generation")
     if dataset_name == "long_video_bench":
         return LongVideoBench(split=split)
+    if dataset_name == "nextqa_mc":
+        return NeXTQA(split=split, task="multiple-choice")
     if dataset_name in ["scifi_document_qa", "pixmo_docs_other"]:
         return PixMoDocs("other", split=split)
     elif dataset_name in ["scifi_table_qa", "pixmo_docs_tables"]:
@@ -177,7 +179,7 @@ def get_dataset_by_name(dataset_name, split) -> Dataset:
     if dataset_name == "figure_qa":
         return FigureQa(dict(train="train", validation="validation1")[split])
     if dataset_name == "dv_qa":
-        return DvQa(split, in_memory=False)
+        return DvQa(split)
     if dataset_name == "okvqa":
         return OkVqa(split)
     if dataset_name in ["mmmu"]:

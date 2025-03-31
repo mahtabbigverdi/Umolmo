@@ -229,9 +229,6 @@ class MultiModalVideoPreprocessorConfig(MolmoPreprocessorConfig):
     candidate_sampling_fps: Tuple[float] = (0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0)
     """Candidate sampling fps to sample the frames from the video"""
 
-    bi_directional_attn: Optional[str] = None
-    """Allow bidirectional attention for some tokens"""
-
     def get_image_padding_lens(self, vision_backbone_config: MolmoVisionBackboneConfig):
         """Max numbers of image tokens can be built for one image"""
         padding_lens = dict(

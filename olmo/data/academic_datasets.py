@@ -10,6 +10,7 @@ import numpy as np
 
 from olmo.data.dataset import DATA_HOME, DatasetBase, Dataset, HfDataset
 from olmo.data.pixmo_datasets import save_local_dataset
+from olmo.data.image_preprocessor import save_images
 from olmo.hf_datasets.a_okvqa import AOkVqaBuilder
 from olmo.hf_datasets.ai2d import Ai2dDatasetBuilder
 from olmo.hf_datasets.android_control import AndroidControlBuilder
@@ -25,9 +26,11 @@ from olmo.hf_datasets.vqa_v2 import VQAv2BuilderMultiQA
 if DATA_HOME is not None:
     DOWNLOADS = join(DATA_HOME, "downloads")
     ACADEMIC_DATASETS = join(DATA_HOME, "academic_datasets")
+    ANDROID_IMAGES = join(DATA_HOME, "android_images")
 else:
     DOWNLOADS = None
     ACADEMIC_DATASETS = None
+    ANDROID_IMAGES = None
 
 
 class Vqa2(Dataset):
@@ -502,10 +505,25 @@ class AndroidControl(Dataset):
     @classmethod
     def download(cls, n_procs=1):
         local_name = join(ACADEMIC_DATASETS, "android_control")
-        AndroidControlBuilder().download_and_prepare(num_proc=n_procs)
+        # AndroidControlBuilder().download_and_prepare(num_proc=n_procs)
         all_data = datasets.DatasetDict()
         for split in ["train", "val", "test"]:
             ds = AndroidControlBuilder().as_dataset(split)
+            ds = ds.add_column("id", list(range(len(ds))))
+            pil_images = (ex["image"] for ex in ds)
+            filenames = [
+                join(ANDROID_IMAGES, f"{split}_{example_id:05d}.png")
+                for example_id in ds["id"]
+            ]
+            saved_images = save_images(pil_images, filenames, n_procs)
+            assert len(saved_images) == len(filenames)
+            def pil_to_path(ex):
+                ex["image"] = join(ANDROID_IMAGES, f"{split}_{ex['id']:05d}.png")
+                return ex
+            new_features = ds.features.copy()
+            new_features["image"] = datasets.Value(dtype="string")
+            ds = ds.map(pil_to_path, features=new_features)
+            ds = ds.remove_columns(["id"])
             all_data[split] = ds
         save_local_dataset(all_data, local_name, n_procs)
 

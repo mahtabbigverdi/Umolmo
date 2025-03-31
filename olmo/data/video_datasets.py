@@ -112,6 +112,62 @@ def save_bounded_video(video_path, start_time, end_time, task_type):
     return output_path
 
 
+class NeXTQA(DatasetBase):
+    data_path = os.path.join(VIDEO_DATA_HOME, "NeXTQA")
+
+    def __init__(self, split, task):
+        # implement MC task for now
+        if task == "multiple-choice":
+            assert split in ["test"]
+        else:
+            raise NotImplementedError(f"Task {task} not implemented")
+        self.task = task
+        super().__init__(split)
+    
+    def mc_qoa_template(self, data):
+        options = [data[f'a{idx}'].strip() for idx in range(5)]
+        option_text = "\n".join(
+            f"{chr(ord('A') + idx)}. {options[idx]}" for idx in range(5)
+        )
+        answer = f"{chr(ord('A') + int(data['answer']))}"
+        question = "\n".join(
+            [
+                data["question"].strip(),
+                option_text,
+                "Answer with the option's letter from the given choices directly.",
+            ]
+        )
+        return question, options, answer
+    
+    def load(self):
+        task = self.task
+        data = []
+        if task == "multiple-choice":
+            df = pd.read_parquet(os.path.join(self.data_path, "MC", "test-00000-of-00001.parquet"))
+            for idx, row in df.iterrows():
+                video_path = os.path.join(self.data_path, "NExTVideo", f"{row['video']}.mp4")
+                quesiton, options, answer = self.mc_qoa_template(row)
+                example = {
+                    "question": quesiton,
+                    "answer": answer,
+                    "video": video_path,
+                    "style": "video_eval_multiple_choice",
+                    "metadata": dict(
+                        question_id=str(idx),
+                        question_type=row["type"],
+                        video_id=row["video"],
+                        options=options,
+                    )
+                }
+                data.append(example)
+        else:
+            raise NotImplementedError(f"Task {task} not implemented")
+        return data
+
+    def get(self, idx, rng):
+        return self.data[idx]
+
+
 class LongVideoBench(DatasetBase):
     data_path = os.path.join(VIDEO_DATA_HOME, "LongVideoBench")
 

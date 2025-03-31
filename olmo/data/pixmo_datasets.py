@@ -12,18 +12,19 @@ import torchvision
 from cached_path import cached_path
 from torchvision.transforms import functional as VF
 from PIL import ImageOps
-import PIL
 from torchvision.transforms.functional import affine, InterpolationMode
 
 from olmo.data.dataset import DATA_HOME, Dataset, DatasetBase
 from olmo.data.download_urls import download_pixmo_urls, filter_and_group_data, add_internal_urls
-from olmo.data.image_preprocessor import load_pil_image
+from olmo.data.image_preprocessor import load_pil_image, save_images
 from olmo.util import transpose_dict_of_lists
 
 if DATA_HOME is not None:
     PIXMO_DATASETS = join(DATA_HOME, "pixmo_datasets")
+    COSYN_IMAGES = join(DATA_HOME, "cosyn_images")
 else:
     PIXMO_DATASETS = None
+    COSYN_IMAGES = None
 """Where to save local version of the data after URLs filtering"""
 
 
@@ -761,7 +762,27 @@ class CoSyn(Dataset):
             "document", "graphic", "math", "music",
             "nutrition", "table"
         ]:
-            datasets.load_dataset_builder("allenai/CoSyn-400K", name=name).download_and_prepare()
+            local_name = join(PIXMO_DATASETS, f"cosyn-{name}")
+            if exists(local_name):
+                continue
+            all_data = datasets.DatasetDict()
+            for split in ["train", "validation"]:
+                ds = datasets.load_dataset("allenai/CoSyn-400K", name=name, split=split)
+                pil_images = (ex["image"] for ex in ds)
+                filenames = [
+                    join(COSYN_IMAGES, name, f"{img_id}.png")
+                    for img_id in ds["id"]
+                ]
+                saved_images = save_images(pil_images, filenames, n_procs)
+                assert len(saved_images) == len(filenames)
+                def pil_to_path(ex):
+                    ex["image"] = join(COSYN_IMAGES, name, f"{ex['id']}.png")
+                    return ex
+                new_features = ds.features.copy()
+                new_features["image"] = datasets.Value("string")
+                ds = ds.map(pil_to_path, features=new_features)
+                all_data[split] = ds
+            save_local_dataset(all_data, local_name, n_procs)
     
     def __init__(self, doc_type, split, use_exp=True, keep_in_memory=False):
         assert doc_type in [
@@ -773,8 +794,10 @@ class CoSyn(Dataset):
         self.doc_type = doc_type
         self.split = split
         self.use_exp = use_exp
-        self.dataset = datasets.load_dataset(
-            "allenai/CoSyn-400K", name=doc_type, split=split, keep_in_memory=keep_in_memory)
+        self.dataset = datasets.load_from_disk(
+            join(PIXMO_DATASETS, f"cosyn-{doc_type}"), keep_in_memory=keep_in_memory)[split]
+        # self.dataset = datasets.load_dataset(
+        #     "allenai/CoSyn-400K", name=doc_type, split=split, keep_in_memory=keep_in_memory)
 
     def __len__(self):
         return len(self.dataset)
@@ -819,6 +842,19 @@ class CoSynPoint(Dataset):
         all_data = datasets.DatasetDict()
         for split in ["train", "validation"]:
             ds = datasets.load_dataset("allenai/CoSyn-point", split=split)
+            pil_images = (ex["image"] for ex in ds)
+            filenames = [
+                join(COSYN_IMAGES, "point", f"{img_id}.png")
+                for img_id in ds["id"]
+            ]
+            saved_images = save_images(pil_images, filenames, n_procs)
+            assert len(saved_images) == len(filenames)
+            def pil_to_path(ex):
+                ex["image"] = join(COSYN_IMAGES, "point", f"{ex['id']}.png")
+                return ex
+            new_features = ds.features.copy()
+            new_features["image"] = datasets.Value("string")
+            ds = ds.map(pil_to_path, features=new_features)
             ds = ds.add_column("names", [id2data[x]["names"] for x in ds["id"]])
             all_data[split] = ds
         save_local_dataset(all_data, local_name, n_procs)

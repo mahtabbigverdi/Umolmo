@@ -109,6 +109,8 @@ def get_evaluator(name) -> EvaluatorConfig:
         return EvaluatorConfig(video_mme_eval=duration)
     elif name == "long_video_bench":
         return EvaluatorConfig(long_video_bench_eval=True)
+    elif name == "nextqa_mc":
+        return EvaluatorConfig(vqa_eval="nextqa_mc")
     elif name in ["dense_caption_eval", "user_qa", "vqa_v2_test", "intern_vid"]:
         # No metrics, but still save prediction file
         return EvaluatorConfig()

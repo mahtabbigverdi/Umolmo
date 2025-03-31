@@ -1,28 +1,25 @@
 """Evals a checkpoint on multiple tasks, run this script with 'torchrun'."""
 import argparse
 import logging
-import re
 from dataclasses import replace
-from pathlib import Path
 from typing import cast
 
-import torch.distributed as dist
-import torch.multiprocessing as mp
 from omegaconf import OmegaConf
 
-from olmo.config import EvalConfig, FSDPConfig, FSDPWrapStrategy, FSDPPrecision
-from olmo.torch_util import get_world_size
-from olmo.util import (
-    add_cached_path_clients,
-    clean_opt,
-    prepare_cli_environment, )
-from scripts.mm_eval import ModelEvaluator
 from launch_scripts.utils import get_evaluation
+from olmo.train.trainer_config import FSDPConfig, FSDPPrecision
+from olmo.models.model import FSDPWrapStrategy
+from olmo.util import (
+    clean_opt,
+    prepare_torchrun_environment, select_checkpoint, )
+from scripts.mm_eval import ModelEvaluator, DatasetEvaluatorConfig, EvalConfig
 
 log = logging.getLogger(__name__)
 
 
 def main():
+    prepare_torchrun_environment()
+
     parser = argparse.ArgumentParser(prog="Evaluate a model on downstream tasks")
     parser.add_argument("checkpoint",
                         help="Checkpoint to evaluate, should contain a config file and unshared model file")
@@ -35,43 +32,37 @@ def main():
                         help="Override models default number of crops")
     parser.add_argument("--candidate_sampling_fps", type=float, nargs="+", default=None,
                         help="Override models default candidate sampling fps")
-    parser.add_argument("--seed", default=6198, type=int)
-    parser.add_argument("--seq_len", default=6400, type=int,
+    parser.add_argument("--seq_len", default=1536, type=int,
                         help="Max sequence length to use")
     parser.add_argument("--device_batch_size", default=4, type=int)
-    parser.add_argument("--save_dir", default=None,
-                        help="Directory to save the evaluation results")
-    parser.add_argument("--save_to_checkpoint_dir", action="store_true",
-                        help="Save to the checkpoint directory")
     parser.add_argument("--eval_name",
                         help="Name to use as a prefix when saving results")
-    parser.add_argument("--pbar", action="store_true",
-                        help="Show a progress bar")
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--fsdp", action="store_true",
                         help="Load with FSDP, can be used to avoid OOMs")
     parser.add_argument("--max_new_tokens", type=int, default=None,
                         help="Override max new tokens, otherwise use task-specific default")
-    # Set num_workers to 0 to debug without multiprocessing
-    parser.add_argument("--num_workers", type=int, default=2,
-                        help="Number of workers to use for evaluation")
+    parser.add_argument("--include_image", action="store_true",
+                        help="Include image in the evaluation outputs")
     args, other_args = parser.parse_known_args()
-
-    try:
-        mp.set_start_method("spawn", force=True)
-    except RuntimeError as e:
-        print(f"failed to set multiprocessing start method: {e}")
-    log.info(f"Multiprocessing start method set to '{mp.get_start_method()}'")
-
-    dist.init_process_group(backend="nccl")
-    log.info("Process group initialized")
-
-    add_cached_path_clients()
-    prepare_cli_environment()
 
     tasks = []
     for task in args.tasks:
-        if "," in task:
+        if task == "short-video":
+            task += [
+                "mvbench",
+                "temp_compass",
+                "perception_test",
+                "ego_schema",
+                "nextqa_mc:test",
+            ]
+        elif task == "long-video":
+            task += [
+                "video_mme",
+                "mlvu_mc",
+                "long_video_bench",
+            ]
+        elif "," in task:
             tasks += task.split(",")   # support comma seperator just because the jax code does
         else:
             tasks.append(task)
@@ -79,42 +70,24 @@ def main():
 
     inf_evaluators = []
     for task in tasks:
-        eval_config = get_evaluation(
-            name=task, seq_len=args.seq_len,
-            batch_size=args.device_batch_size * get_world_size(),
-            max_examples=args.max_examples,
-            num_workers=args.num_workers,
-        )
-        if args.max_new_tokens:
-            eval_config = replace(eval_config, max_new_tokens=args.max_new_tokens)
-        inf_evaluators.append(replace(
-            eval_config,
-            mm_evaluator=replace(
-                eval_config.mm_evaluator,
+        base_config = get_evaluation(name=task, seq_len=args.seq_len, max_examples=args.max_examples)
+        eval_config = DatasetEvaluatorConfig(
+            label=base_config.label,
+            data=replace(base_config.data, pad="to_max" if args.fsdp else None),
+            generative_evaluator=replace(
+                base_config.evaluator,
                 n_to_log=4,
                 num_wandb_examples=300,
                 save_predictions="_default",
             ),
-            save_to_checkpoint_dir=args.save_to_checkpoint_dir,
-            save_dir=args.save_dir,
-            eval_name=args.eval_name,
-            skip_if_metrics_cached=not args.overwrite,
-        ))
+            device_batch_size=args.device_batch_size,
+            subset_num_batches=None,
+            max_examples=args.max_examples,
+            max_new_tokens=args.max_new_tokens or base_config.max_new_tokens,
+        )
+        inf_evaluators.append(eval_config)
 
-    checkpoint_dir = Path(args.checkpoint)
-    if not (checkpoint_dir / "model.pt").exists() and args.checkpoint != "debug":
-        candidates = []
-        for file in checkpoint_dir.iterdir():
-            match = re.match("^step([0-9]+)-unsharded.*", file.name)
-            if match:
-                candidates.append((file, int(match.group(1))))
-        if len(candidates) == 0:
-            raise FileNotFoundError(f"{checkpoint_dir} is a directory but it did not "
-                                    f"contain any unsharded checkpoints")
-        checkpoint_dir = max(candidates, key=lambda x: x[1])[0].absolute().as_posix()
-        logging.info(f"Selected {checkpoint_dir} as oldest checkpoint in {checkpoint_dir}")
-    else:
-        checkpoint_dir = args.checkpoint
+    checkpoint_dir = "debug" if args.checkpoint == "debug" else select_checkpoint(args.checkpoint)
 
     cfg = EvalConfig(
         max_frames_override=args.max_frames,
@@ -122,22 +95,23 @@ def main():
         candidate_sampling_fps_override=args.candidate_sampling_fps,
         evaluations=inf_evaluators,
         load_path=checkpoint_dir,
-        seed=args.seed,
-        device_inf_eval_batch_size=args.device_batch_size,
-        pbar=args.pbar,
         console_log_interval=10,
+        precision="amp_bf16",
+        pbar=False,
+        eval_name=args.eval_name,
         fsdp=FSDPConfig(
             wrapping_strategy=FSDPWrapStrategy.by_block_and_size,
             precision=FSDPPrecision.float,
+            fsdp2=True
         ) if args.fsdp else None,
+        skip_if_metrics_cached=not args.overwrite,
+        include_image=args.include_image,
     )
 
-    if other_args:
-        config = OmegaConf.create(cfg)
-        overrides = [clean_opt(arg) for arg in other_args]
-        config = OmegaConf.merge(config, OmegaConf.from_dotlist(overrides))
-        cfg = cast(EvalConfig, OmegaConf.to_object(config))
-    ModelEvaluator(cfg).run()
+    config = OmegaConf.create(cfg)
+    config.merge_with_dotlist([clean_opt(arg) for arg in other_args])
+    cfg = cast(EvalConfig, OmegaConf.to_object(config))
+    cfg.build().run()
 
 
 if __name__ == "__main__":
