@@ -173,7 +173,7 @@ class LossDatasetEvaluatorConfig(BaseConfig):
         eval_loader = self.data.build_eval_dataloader(
             model_config, self.device_batch_size, for_inference=False)
         if self.max_examples is not None:
-            num_batches = self.max_examples // (self.device_batch_size*get_world_size())
+            num_batches = max(1, self.max_examples // (self.device_batch_size*get_world_size()))
         elif self.subset_num_batches is not None:
             num_batches = self.subset_num_batches
         else:
