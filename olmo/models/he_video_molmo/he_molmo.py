@@ -41,7 +41,7 @@ log = logging.getLogger(__name__)
 class HeVideoMolmoConfig(BaseModelConfig):
     """Molmo model configuration"""
 
-    _model_name: ClassVar[str] = "he_molmo"
+    _model_name: ClassVar[str] = "he_video_molmo"
 
     llm: LlmConfig = field(default_factory=LlmConfig)
     """LLM to use for generation"""
