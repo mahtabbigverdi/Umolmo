@@ -84,6 +84,7 @@ class HeVideoMolmoConfig(BaseModelConfig):
         self,
         for_inference,
         is_training=True,
+        include_image=False,
         max_seq_len: Optional[int] = None,
     ) -> Preprocessor:
         """
