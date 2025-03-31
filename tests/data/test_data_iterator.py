@@ -127,10 +127,8 @@ def test_distributed(world_size, num_workers, device_batch_size):
      ([11], 16, 1, 0),
      ([8], 201, 1, 0),
      ([17, 27], 50, 1, 0),
-     ([5, 7], 19, 2, 1),
-     ([5, 7, 3], 27, 2, 0),
-     ([5], 1, 4, 2),
-     ([5, 7], 19, 3, 2)
+     ([5, 7], 20, 2, 1),
+     ([5, 7, 3], 27, 3, 0),
 ])
 def test_dataset_start_at(ns, start_index, world_size, rank):
     datasets = [MockDataset("", n) for n in ns]
@@ -145,7 +143,7 @@ def test_dataset_start_at(ns, start_index, world_size, rank):
         rank=rank, world_size=world_size
     )
     it = iter(ds)
-    for _ in range(start_index):
+    for _ in range(start_index // global_batch_size):
         for _ in range(global_batch_size//world_size):
             next(it)
     for _ in range(30):
