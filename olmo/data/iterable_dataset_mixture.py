@@ -74,7 +74,10 @@ class IterableDatasetMixture(torch.utils.data.IterableDataset[Dict[str, Any]]):
 
         # How often each dataset has been sampled globally across all devices/workers
         counts = np.zeros(len(self.datasets), dtype=np.int64)
+
         if self.start_index != 0:
+            # Fast forward by re-computing what to sample (so the RNG state updates) but
+            # without actually requesting the data from the data loader
             assert self.start_index % self.global_batch_size == 0
             start_batch = self.start_index // self.global_batch_size
             if worker_info is None:

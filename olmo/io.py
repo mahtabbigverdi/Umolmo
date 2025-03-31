@@ -1,14 +1,17 @@
 import io
+import json
 import logging
 import os
 import re
 import shutil
+import tempfile
 import time
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import wraps
+from os.path import dirname, basename
 from pathlib import Path
-from typing import Callable, Generator, Optional, Tuple, Type, Union
+from typing import Callable, Generator, Optional, Tuple, Type, Union, Any
 
 try:
     from functools import cache
@@ -19,7 +22,6 @@ import requests
 from cached_path import cached_path
 from cached_path.schemes import S3Client, SchemeClient, add_scheme_client
 
-from .aliases import PathOrStr
 from .exceptions import OLMoEnvironmentError, OLMoNetworkError
 
 log = logging.getLogger(__name__)
@@ -29,6 +31,9 @@ log = logging.getLogger(__name__)
 ############################################
 # Ported from
 # https://github.com/allenai/OLMo-core/blob/2b43d59bff28f83fba39980a4ad9e53041ba56f7/src/olmo_core/utils.py
+
+
+PathOrStr = Union[str, os.PathLike]
 
 
 def normalize_path(path: PathOrStr) -> str:
@@ -104,6 +109,24 @@ def get_file_size(path: PathOrStr) -> int:
         return os.stat(path).st_size
 
 
+def read_file(path: PathOrStr, mode="r") -> Union[str, bytes]:
+    data = get_bytes_range(path, 0, None)
+    if mode == "r":
+        return data.decode("utf-8")
+    elif mode == "rb":
+        return data
+    else:
+        raise NotImplementedError(mode)
+
+
+def read_json(path: PathOrStr) -> Any:
+    return json.loads(read_file(path))
+
+
+def write_json(path: PathOrStr, data: Any, **kwargs):
+    write_file(dirname(path), basename(path), json.dumps(data, **kwargs), True)
+
+
 def get_bytes_range(path: PathOrStr, bytes_start: int, num_bytes: Optional[int]) -> bytes:
     """
     Get a range of bytes from a local or remote file.
@@ -165,6 +188,52 @@ def upload(source: PathOrStr, target: str, save_overwrite: bool = False):
         )
     else:
         raise NotImplementedError(f"Upload not implemented for '{parsed.scheme}' scheme")
+
+
+def write_file(dir: PathOrStr, fname: str, contents: Union[str, bytes, Callable], save_overwrite) -> PathOrStr:
+    """
+    Write something to a file in a local or remote directory.
+
+    :param dir: The path/URL of the directory to write the file to.
+    :param fname: The name of the file to write, relative to ``dir``.
+    :param contents: The contents of the file to write, or function that writes to a byte file handle
+    :param save_overwrite: Overwrite any existing file.
+
+    :returns: The path/URL of the file.
+    """
+    dir = normalize_path(dir)
+    fname = normalize_path(fname)
+
+    if not is_url(dir):
+        Path(dir).mkdir(exist_ok=True, parents=True)
+
+    mode = "wt" if isinstance(contents, str) else "wb"
+    tmp_path = None
+    try:
+        tmp_file = tempfile.NamedTemporaryFile(
+            mode=mode, delete=False, dir=None if is_url(dir) else dir
+        )
+        tmp_path = Path(tmp_file.name)
+        if isinstance(contents, (str, bytes)):
+            tmp_file.write(contents)
+        else:
+            contents(tmp_file)
+        tmp_file.flush()
+
+        target: PathOrStr
+        if is_url(dir):
+            target = f"{dir}/{fname}"
+            upload(tmp_path, target, save_overwrite=save_overwrite)
+        else:
+            target = Path(dir) / fname
+            if target.is_file() and not save_overwrite:
+                raise FileExistsError(target)
+            target.parent.mkdir(exist_ok=True, parents=True)
+            tmp_path.rename(target)
+        return target
+    finally:
+        if tmp_path is not None:
+            tmp_path.unlink(missing_ok=True)
 
 
 def copy_file(source: PathOrStr, target: PathOrStr, save_overwrite: bool = False):
@@ -234,6 +303,13 @@ def copy_dir(
                 executor.submit(copy_file, source_path, target_path, save_overwrite=save_overwrite)
             )
         deque(as_completed(futures), maxlen=0)
+
+
+def is_dir(path: PathOrStr) -> bool:
+    if is_url(path):
+        return not dir_is_empty(path)
+    else:
+        return Path(path).is_dir()
 
 
 def dir_is_empty(dir: PathOrStr) -> bool:
@@ -615,6 +691,27 @@ def _gcs_clear_directory(bucket_name: str, prefix: str):
         return
 
 
+def glob(path):
+    from urllib.parse import urlparse
+    parsed = urlparse(path)
+    if parsed.scheme == "gs":
+        storage_client = _get_gcs_client()
+        bucket = storage_client.bucket(parsed.netloc)
+        blobs = bucket.list_blobs(
+            delimiter="/",
+            match_glob=parsed.path.lstrip("/"),
+            retry=_get_gcs_retry(),
+        )
+        for blob in blobs:
+            yield f"gs://{parsed.netloc}/{blob.name}"
+    elif parsed.scheme in ["file", '']:
+        from glob import iglob
+        for file in iglob(path):
+            yield file
+    else:
+        raise NotImplementedError(parsed.scheme)
+
+
 def _gcs_list_directory(
     bucket_name: str,
     prefix: str,
@@ -863,7 +960,7 @@ def _s3_list_directory(
 
 def add_cached_path_clients():
     """
-    Add additional cached-path clients.
+    Add additional cached-path clients, the enables files with the `weka://` prefix
     """
     add_scheme_client(_WekaClient)
 

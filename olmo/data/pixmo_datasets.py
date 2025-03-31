@@ -1,12 +1,15 @@
 import json
 import logging
+import os
 import re
 import shutil
 from os.path import join, exists
+from typing import Iterable
 
 import datasets
 import numpy as np
 import torchvision
+from cached_path import cached_path
 from torchvision.transforms import functional as VF
 from PIL import ImageOps
 import PIL
@@ -14,12 +17,14 @@ from torchvision.transforms.functional import affine, InterpolationMode
 
 from olmo.data.dataset import DATA_HOME, Dataset, DatasetBase
 from olmo.data.download_urls import download_pixmo_urls, filter_and_group_data, add_internal_urls
+from olmo.util import transpose_dict_of_lists
 
 if DATA_HOME is not None:
     PIXMO_DATASETS = join(DATA_HOME, "pixmo_datasets")
 else:
     PIXMO_DATASETS = None
 """Where to save local version of the data after URLs filtering"""
+
 
 VERIFY = True
 """Verify SSL certificates when downloading"""
@@ -97,12 +102,21 @@ class PixMoCount(Dataset):
         self.split = split
 
     def __len__(self):
-        return len(self.dataset)
+        if self.counting == "both":
+            return len(self.dataset) * 2
+        else:
+            return len(self.dataset)
 
     def get(self, item, rng):
+        if self.counting == "both":
+            mode = "point_count" if (item%2==0) else "pointing"
+            item = item // 2
+        else:
+            mode = "point_count" if self.counting else "pointing"
+
         example = self.dataset[item]
         out = dict(
-            style="point_count" if self.counting else "pointing",
+            style=mode,
             image=example["image"],
             label=example["label"],
             metadata=dict(
@@ -117,35 +131,93 @@ class PixMoCount(Dataset):
 
 
 class PixMoDocs(Dataset):
-    V1_STYLE = {
-        "pixmo_docs_other": "scifi_document",
-        "pixmo_docs_charts": "scifi_charts",
-        "pixmo_docs_diagrams": "scifi_diagram",
-        "pixmo_docs_tables": "scifi_table"
-    }
+
+    @staticmethod
+    def save_image(images: Iterable):
+        raise NotImplementedError()
+        keys = []
+        for image in images:
+            key = compute_hash(image["bytes"])
+            keys.append(key)
+            with open(join(DATA_HOME, "pixmo_docs_images", key), "wb") as f:
+                f.write(image["bytes"])
+        return dict(image_path=keys)
 
     @classmethod
     def download(cls, n_procs=1):
         for name in ["other", "charts", "diagrams", "tables"]:
+            local_name = join(PIXMO_DATASETS, f"pixmo_docs_{name}")
+            if exists(local_name):
+                continue
             datasets.load_dataset_builder("allenai/pixmo-docs", name=name).download_and_prepare()
+            all_data = datasets.DatasetDict()
+            for split in ["validation", "train"]:
+                ds = datasets.load_dataset("allenai/pixmo-docs", split=split, name=name)
+                ds = ds.cast_column("image", datasets.Image(decode=False))
+                # Doing this inplace causes issue with the column feature type,
+                # so just map to a new column and then replace the old one
+                ds = ds.map(
+                    cls.save_image,
+                    input_columns="image",
+                    batched=True,
+                    batch_size=256,
+                    num_proc=n_procs if len(ds) > 10000 else 1,
+                    desc=f"{name}-{split}-images",
+                    remove_columns="image",
+                    load_from_cache_file=False
+                )
+                ds = ds.rename_column("image_path", "image")
+                all_data[split] = ds
+            save_local_dataset(all_data, local_name, n_procs)
 
-    def __init__(self, doc_type, split, sample=None, keep_in_memory=False, v1_style=False):
+    def __init__(self, doc_type, split, sample=None, keep_in_memory=False, flat=False, use_image_files=True):
         assert doc_type in ["other", "charts", "diagrams", "tables"]
-        assert split in ["train", "validation", "test"]
+        assert split in ["train", "validation"]
         self.doc_type = doc_type
-        self.v1_style = v1_style
-        self.dataset = datasets.load_dataset(
-            "allenai/pixmo-docs", name=doc_type, split=split, keep_in_memory=keep_in_memory)
+        self.flat = flat
+        self.use_image_files = use_image_files
+        if use_image_files:
+            # Load a local version of the data that contains filenames instead of the images directly
+            local_name = join(PIXMO_DATASETS, f"pixmo_docs_{doc_type}")
+            self.dataset = datasets.load_from_disk(local_name, keep_in_memory=keep_in_memory)[split]
+        else:
+            self.dataset = datasets.load_dataset(
+                "allenai/pixmo-docs", name=doc_type, split=split, keep_in_memory=keep_in_memory)
+        if flat:
+            # Use an index so we don't have to load the images into memory if `keep_in_memory=False`
+            # FIXME just switch to the JSON dataset
+            logging.info("Building flat index")
+            offset = 0
+            n_questions = [len(x["question"]) for x in self.dataset["questions"]]
+            image_index = np.repeat(np.arange(len(self.dataset), dtype=np.int32), n_questions)
+            question_index = np.concatenate([np.arange(x, dtype=np.int32) for x in n_questions], 0)
+            self.flat_index = np.stack([image_index, question_index], 1)
+            logging.info("Done")
 
     def __len__(self):
-        return len(self.dataset)
+        return len(self.flat_index) if self.flat else len(self.dataset)
 
     def get(self, item, rng):
         style = f"pixmo_docs_{self.doc_type}"
-        if self.v1_style:
-            style = self.V1_STYLE[style]
+        if self.flat:
+            image_ix, question_ix = self.flat_index[item]
+            example = self.dataset[int(image_ix)]
+            if self.use_image_files:
+                example["image"] = join(DATA_HOME, "pixmo_docs_images", example["image"])
+            qas = example["questions"]
+            return dict(
+                image=example["image"],
+                question=qas["question"][question_ix],
+                answer=qas["answer"][question_ix],
+                style=style,
+                metadata=dict(
+                    image_id=example["image_id"]
+                )
+            )
         example = self.dataset[item]
         qas = example["questions"]
+        if self.use_image_files:
+            example["image"] = join(DATA_HOME, "pixmo_docs_images", example["image"])
         return dict(
             image=example["image"],
             message_list=[
@@ -180,15 +252,19 @@ class PixMoPoints(Dataset):
             name = "high_frequency" if method == "counting" else "basic"
             save_local_dataset(filtered_dataset, local_name, n_procs=n_procs, n_val=n_val)
 
-    def __init__(self, split, kind="both", counting=False, keep_in_memory=False):
+    def __init__(self, split, kind="both", counting=False, keep_in_memory=False,
+                 max_points=None, max_total_points_per_example=None):
         if kind not in ["high_frequency", "basic", "both"]:
             raise ValueError(kind)
         if split not in ["train", "validation"]:
             raise ValueError(f"Unknown split {split}")
-        mode = "point_count" if counting else "pointing"
+        self.counting = counting
+        if counting == "both":
+            self.mode = ["point_count", "pointing"]
+        else:
+            self.mode = "point_count" if counting else "pointing"
         self.split = split
         self.kind = kind
-        self.mode = mode
         if kind == "both":
             data1 = datasets.load_from_disk(
                 join(PIXMO_DATASETS, "points-counting"), keep_in_memory=keep_in_memory)[split]
@@ -201,11 +277,53 @@ class PixMoPoints(Dataset):
         else:
             self.data = datasets.load_from_disk(
                 join(PIXMO_DATASETS, f"points-counting"), keep_in_memory=keep_in_memory)[split]
+        if max_total_points_per_example or max_points:
+            data = transpose_dict_of_lists(self.data[:])
+            flattened = []
+            n_filtered = 0
+            total_points = 0
+            for ex in data:
+                sub_batches = []
+                on = []
+                total_on = 0
+                total_points += len(ex["points"])
+                for ix, points in enumerate(ex["points"]):
+                    n = len(points)
+                    if max_points and n > max_points:
+                        n_filtered += 1
+                        continue
+                    if max_total_points_per_example and (total_on + n > max_total_points_per_example):
+                        if on:
+                            sub_batches.append(on)
+                            total_on = 0
+                            on = []
+                    on.append(ix)
+                    total_on += n
+                if on:
+                    sub_batches.append(on)
+                for ix in sub_batches:
+                    flattened.append(dict(
+                        ex,
+                        label=[ex["label"][i] for i in ix],
+                        points=[ex["points"][i] for i in ix],
+                    ))
+            logging.info(f"Filtered {n_filtered} ({n_filtered}/{total_points}) points")
+            logging.info(f"Split {len(data)} examples into {len(flattened)} parts")
+            self.data = flattened
 
     def __len__(self):
-        return len(self.data)
+        if self.counting == "both":
+            return len(self.data)*2
+        else:
+            return len(self.data)
 
     def get(self, item, rng):
+        if self.counting == "both":
+            mode = self.mode[item % 2]
+            item = item // 2
+        else:
+            mode = self.mode
+
         ex = self.data[item]
         messages = []
         for label, points in zip(ex["label"], ex["points"]):
@@ -213,7 +331,7 @@ class PixMoPoints(Dataset):
                 label=label,
                 points=np.stack([[x["x"] for x in points], [x["y"] for x in points]], -1),
                 point_scale=100,
-                style=self.mode
+                style=mode
             ))
         return dict(
             image=ex["image"],
@@ -474,7 +592,7 @@ class DenseCaptionEval(Dataset):
         raise NotImplementedError()
 
     def __init__(self):
-        with open(join(PIXMO_DATASETS, "dense-caption-eval", "test.jsonl"), "r") as f:
+        with open(cached_path(join(PIXMO_DATASETS, "dense-caption-eval", "test.jsonl")), "r") as f:
             self.lines = f.readlines()
 
     def __len__(self):
@@ -483,7 +601,7 @@ class DenseCaptionEval(Dataset):
     def get(self, item, rng):
         ex = json.loads(self.lines[item])
         return dict(
-            image=join("/weka/oe-training-default/mm-olmo/torch_datasets/pixmo_images", ex["image"]),
+            image=join(DATA_HOME, "pixmo_images", ex["image"]),
             style="long_caption",
             metadata=dict(
                 image_url=ex["url"],
@@ -630,4 +748,103 @@ class PixMoClocks(DatasetBase):
             text=text,
             metadata=dict(hour=hour, second=second, minute=minute),
             style="clocks"
+        )
+
+
+class CoSyn(Dataset):
+
+    @classmethod
+    def download(cls, n_procs=1):
+        for name in [
+            "chart", "chemical", "circuit", "diagram",
+            "document", "graphic", "math", "music",
+            "nutrition", "table"
+        ]:
+            datasets.load_dataset_builder("allenai/CoSyn-400K", name=name).download_and_prepare()
+    
+    def __init__(self, doc_type, split, use_exp=True, keep_in_memory=False):
+        assert doc_type in [
+            "chart", "chemical", "circuit", "diagram",
+            "document", "graphic", "math", "music",
+            "nutrition", "table"
+        ]
+        assert split in ["train", "validation"]
+        self.doc_type = doc_type
+        self.split = split
+        self.use_exp = use_exp
+        self.dataset = datasets.load_dataset(
+            "allenai/CoSyn-400K", name=doc_type, split=split, keep_in_memory=keep_in_memory)
+
+    def __len__(self):
+        return len(self.dataset)
+    
+    def get(self, item, rng):
+        style = f"cosyn_{self.doc_type}"
+        example = self.dataset[item]
+        qeas = example["qa_pairs"]
+        if self.use_exp:
+            style += "_exp"
+            message_list = [
+                dict(question=q, explanation=e, answer=a, style=style) for q, e, a in
+                zip(qeas["question"], qeas["explanation"], qeas["answer"])
+            ]
+        else:
+            message_list = [
+                dict(question=q, answer=a, style=style) for q, a in
+                zip(qeas["question"], qeas["answer"])
+            ]
+        return dict(
+            image=example["image"],
+            message_list=message_list,
+            metadata=dict(
+                image_id=example["id"]
+            )
+        )
+
+
+class CoSynPoint(Dataset):
+
+    @classmethod
+    def download(cls, n_procs=1):
+        local_name = join(PIXMO_DATASETS, "cosyn-point")
+        if exists(local_name):
+            return
+        local_data_name = cached_path(
+            join(PIXMO_DATASETS, "cosyn-point-data.json"), cache_dir=os.environ.get("MOLMO_CACHE_DIR"),
+        )
+        with open(local_data_name, 'r') as f:
+            data = json.load(f)
+        id2data = {ex["id"]: ex for ex in data}
+        all_data = datasets.DatasetDict()
+        for split in ["train", "validation"]:
+            ds = datasets.load_dataset("allenai/CoSyn-point", split=split)
+            ds = ds.add_column("names", [id2data[x]["names"] for x in ds["id"]])
+            all_data[split] = ds
+        save_local_dataset(all_data, local_name, n_procs)
+
+    def __init__(self, split, keep_in_memory=False):
+        assert split in ["train", "validation"]
+        self.dataset = datasets.load_from_disk(
+            join(PIXMO_DATASETS, "cosyn-point"), keep_in_memory=keep_in_memory)[split]
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def get(self, item, rng):
+        example = self.dataset[item]
+        messages = []
+        for question, points, name in zip(example["questions"], example["answer_points"], example["names"]):
+            messages.append(dict(
+                question=question,
+                points=np.stack([points['x'], points['y']], -1),
+                label=name,
+                point_scale=100,
+                style="cosyn_point",
+            ))
+        return dict(
+            image=example["image"],
+            message_list=messages,
+            metadata=dict(
+                image_id=example["id"]
+            )
         )

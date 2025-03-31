@@ -2,42 +2,40 @@
 import dataclasses
 import json
 import logging
+import os
 import re
 import sys
 from datetime import datetime
-from os import makedirs
-from os.path import dirname, join, exists
-from typing import Optional
+from os.path import dirname, join
+from typing import Optional, List, Tuple
 
+import omegaconf
 import torch
-import torch.distributed as dist
-import torch.multiprocessing as mp
 import wandb
-from packaging import version
-from torch.distributed.fsdp import FullyShardedDataParallel as FSDP, MixedPrecision
-from torch.distributed.fsdp import ShardingStrategy
-from transformers import AutoModelForCausalLM
 
-from olmo.checkpoint import load_model_state
-from olmo.config import EvalConfig, TokenizerConfig, ModelConfig, DatasetEvaluatorConfig, \
-    VisionBackboneConfig
-from olmo.data import build_torch_mm_eval_dataloader
-from olmo.eval import LossDatasetEvaluator, LossMetrics
-from olmo.eval.inf_evaluator import InfDatasetEvaluator, build_inf_evaluator
-from olmo.exceptions import OLMoCliError, OLMoConfigurationError
-from olmo.model import Molmo
+from olmo.config import BaseConfig
+from olmo.data.data_loader import DataLoaderConfig
+from olmo.eval.inf_evaluator import InfDatasetEvaluator, EvaluatorConfig, \
+    InfDatasetEvaluatorConfig
+from olmo.eval.loss_evaluator import LossDatasetEvaluatorConfig, LossDatasetEvaluator
+from olmo.exceptions import OLMoCliError
+from olmo.io import file_exists, write_file, get_bytes_range, read_file
+from olmo.models.molmo.model_preprocessor import MolmoPreprocessorConfig
+from olmo.nn.image_vit import VitConfig
+from olmo.nn.llm import LlmConfig
+from olmo.models.molmo.molmo import Molmo, MolmoConfig
+from olmo.nn.vision_backbone import MolmoVisionBackboneConfig
+from olmo.tokenizer import TokenizerConfig
 from olmo.torch_util import (
     barrier,
-    get_default_device,
     get_global_rank,
     get_local_rank,
     peak_gpu_memory,
-    seed_all, get_world_size,
-)
+    seed_all, )
+from olmo.train.checkpointer import load_model_state
+from olmo.train.trainer_config import FSDPConfig
 from olmo.util import (
-    add_cached_path_clients,
-    clean_opt,
-    prepare_cli_environment, resource_path, log_metrics_to_console,
+    resource_path, log_metrics_to_console, prepare_torchrun_environment, clean_opt,
 )
 
 log = logging.getLogger(__name__)
@@ -68,19 +66,135 @@ def get_gcs_url(output_file):
 
 
 @dataclasses.dataclass
-class ModelEvaluator:
-    """Evaluates a model on possibly multiple tasks"""
-    config: EvalConfig
+class DatasetEvaluatorConfig(BaseConfig):
+    """Configuration for an offline dataset evaluation, it could be for loss or generation"""
 
-    def get_save_dir(self, cfg: DatasetEvaluatorConfig) -> Optional[str]:
+    label: str = omegaconf.MISSING
+
+    data: DataLoaderConfig = dataclasses.field(default_factory=DataLoaderConfig)
+    """Data to evaluate on"""
+
+    device_batch_size: Optional[int] = None
+    """Batch size"""
+
+    subset_num_batches: Optional[int] = None
+    """Number of matches to run on, if None use the entire dataset"""
+
+    max_examples: Optional[int] = None
+    """Max number of examples to run on, overrides `subset_num_batches`"""
+
+    max_new_tokens: Optional[int] = 448
+    """Max number of tokens to generate"""
+
+    generative_evaluator: Optional[EvaluatorConfig] = None
+    """Specifies how to compute metrics and save the predictions if doing a generative eval"""
+
+    @property
+    def generative(self):
+        return self.generative_evaluator is not None
+
+    def build_evaluator(self, model_config, device, default_save_dir, console_log_interval):
+        if self.generative:
+            cfg = InfDatasetEvaluatorConfig(
+                self.label, self.data, self.generative_evaluator,
+                max_new_tokens=self.max_new_tokens,
+                device_batch_size=self.device_batch_size,
+                subset_num_batches=self.subset_num_batches,
+                max_examples=self.max_examples,
+                console_log_interval=console_log_interval
+            )
+            return cfg.build_dataset_evaluator(
+                model_config=model_config, device=device, default_save_dir=default_save_dir)
+        else:
+            cfg = LossDatasetEvaluatorConfig(
+                self.label, self.data,
+                device_batch_size=self.device_batch_size,
+                subset_num_batches=self.subset_num_batches,
+                max_examples=self.max_examples,
+                console_log_interval=console_log_interval
+            )
+            return cfg.build_dataset_evaluator(model_config=model_config, device=device)
+
+
+@dataclasses.dataclass
+class EvalConfig(BaseConfig):
+    """Configuration for an offline dataset evaluation, it could be for loss or generation"""
+
+    evaluations: List[DatasetEvaluatorConfig] = dataclasses.field(default_factory=list)
+    """Inference Evaluation configurations."""
+
+    load_path: str = "./"
+    """The directory to load the model from"""
+
+    max_crops_override: Optional[int] = None
+    """Override the max crops used in the model"""
+
+    max_frames_override: Optional[int] = None
+    """Override the max frames used in the model"""
+
+    candidate_sampling_fps_override: Optional[Tuple[float]] = None
+    """Override the candidate sampling fps used in the model"""
+
+    console_log_interval: int = 10
+    """How often to log what step we are on to console"""
+
+    fsdp: Optional[FSDPConfig] = None
+    """Runs models with FSPD, needed for large models or large sequence lengths to reduce memory"""
+
+    precision: Optional[str] = "fp32"
+    """Autocase precision"""
+
+    pbar: bool = True
+    """Whether to show a tqdm progress bar"""
+
+    seed: int = 6198
+    """Random seed to torch/numpy, typically will not effect results"""
+
+    save_to_checkpoint_dir: Optional[bool] = False
+    """Use the checkpoint directory as `self.save_dir`"""
+
+    eval_name: Optional[str] = None
+    """Name to post-fix the evaluation outputs with"""
+
+    skip_if_metrics_cached: bool = True
+    """Skip a the metric file already exists in the save location, otherwise override it"""
+
+    save_dir: Optional[str] = None
+    """Where to save prediction, metrics, and visualizations"""
+
+    @property
+    def autocast_precision(self) -> torch.dtype:
+        if self.precision == "amp_bf16":
+            return torch.bfloat16
+        elif self.precision == "amp_fp16":
+            return torch.float16
+        elif self.precision == "fp32":
+            return torch.float32
+        else:
+            raise ValueError(f"Unexpected precision type '{self.precision}'")
+
+    def __post_init__(self):
+        if self.candidate_sampling_fps_override is not None:
+            self.candidate_sampling_fps_override = tuple(self.candidate_sampling_fps_override)  # type: ignore[assignment]
+
+    def build(self) -> 'ModelEvaluator':
+        return ModelEvaluator(self)
+
+
+@dataclasses.dataclass
+class ModelEvaluator:
+    """Evaluates a model on multiple datasets"""
+    config: 'EvalConfig'
+
+    def get_save_dir(self, cfg: 'DatasetEvaluatorConfig') -> Optional[str]:
         """Get directory to save the eval results"""
-        if not cfg.save_dir and not cfg.save_to_checkpoint_dir:
+        if not self.config.save_dir and not self.config.save_to_checkpoint_dir:
             return None
 
-        if cfg.save_to_checkpoint_dir:
+        if self.config.save_to_checkpoint_dir:
             base = dirname(self.config.load_path)
         else:
-            base = cfg.save_dir
+            base = self.config.save_dir
 
         # If the load path has a step indicator, use it in the save dir name
         step_match = re.match(".*/step([0-9]+).*",  self.config.load_path)
@@ -91,20 +205,20 @@ class ModelEvaluator:
 
         mixture_or_task_name = cfg.data.dataset
         split = cfg.data.split
-        if cfg.loss:
-            name = f"loss"
-        else:
+        if cfg.generative:
             name = f"predictions"
+        else:
+            name = f"loss"
         if step is not None:
             name = f"{name}-ck{step}-{mixture_or_task_name}-{split}"
         else:
             name = f"{name}-{mixture_or_task_name}-{split}"
-        if cfg.eval_name:
-            name += "-" + cfg.eval_name
+        if self.config.eval_name:
+            name += "-" + self.config.eval_name
         default_prediction_dir = join(base, name)
         return default_prediction_dir
 
-    def get_metric_file(self, cfg: DatasetEvaluatorConfig):
+    def get_metric_file(self, cfg: 'DatasetEvaluatorConfig'):
         save_dir = self.get_save_dir(cfg)
         if save_dir:
             return join(self.get_save_dir(cfg), "metrics.json")
@@ -117,96 +231,73 @@ class ModelEvaluator:
         device = torch.device("cuda")
 
         if cfg.load_path == "debug":
+            assert not self.config.fsdp
             logging.warning("Loading debugging model")
-            model_cfg = ModelConfig(
-                d_model=128,
-                n_heads=2,
-                n_layers=1,
-                max_sequence_length=4096,
-                additional_vocab_size=128,
-                vocab_size=50280,
-                embedding_size=50304,
-                rope=True,
-                weight_tying=False,
-                vision_backbone=VisionBackboneConfig(
-                    image_num_layers=1,
+            model_cfg = MolmoConfig(
+                LlmConfig(
+                    d_model=128,
+                    n_heads=2,
+                    n_layers=1,
+                    max_sequence_length=4096,
+                    additional_vocab_size=128,
+                    vocab_size=50280,
+                    embedding_size=50304,
+                    rope=True,
+                    weight_tying=False,
+                    tokenizer=TokenizerConfig(
+                        identifier='allenai/OLMoE-1B-7B-0924'
+                    )
                 ),
-                pad_tokenizer=True,
-                crop_mode="resize",
-                tokenizer=TokenizerConfig(
-                    identifier='allenai/OLMoE-1B-7B-0924'
-                )
+                vision_backbone=MolmoVisionBackboneConfig(
+                    vit=VitConfig(
+                        image_num_layers=1, image_emb_dim=128,
+                        image_num_heads=2, image_head_dim=64,
+                        image_num_key_value_heads=2
+                    )
+                ),
+                mm_preprocessor=MolmoPreprocessorConfig(crop_mode="resize")
             )
-            olmo_model = Molmo(model_cfg).to(device)
-            olmo_model.reset_parameters()
-        elif cfg.fsdp is None:
-            log.info("Loading model without FSDP...")
-            olmo_model = Molmo.from_checkpoint(cfg.load_path, device=device)
-            model_cfg = olmo_model.config
+            with torch.device("meta"):
+                model = model_cfg.build_model()
+            model.to_empty(device=device)
+            model.reset_parameters()
         else:
-            log.info("Building FSDP model...")
             model_cfg_path = resource_path(cfg.load_path, "config.yaml")
-            model_cfg = ModelConfig.load(model_cfg_path, key="model", validate_paths=False)
-            olmo_model = Molmo(model_cfg)
+            model_cfg = MolmoConfig.load(model_cfg_path, key="model", validate_paths=False)
+            with torch.device("meta"):
+                model: Molmo = model_cfg.build_model()
 
-            # We always have only rank0 load the checkpoint, and then use `sync_module_states`
-            # in FSDP to broadcast the weights to the other processes
-            if get_global_rank() == 0:
-                is_unsharded = resource_path(cfg.load_path, "model.pt").is_file()
-                if is_unsharded:
-                    log.info("Loading state dict...")
-                    state_dict_path = resource_path(cfg.load_path, "model.pt")
-                    olmo_model.to_empty(device="cpu")
-                    state_dict = torch.load(state_dict_path, map_location="cpu")
-                    olmo_model.load_state_dict(state_dict, assign=True)
-                else:
-                    olmo_model.to_empty(device="cpu")
-                    load_model_state(cfg.load_path, olmo_model)
+            if self.config.fsdp:
+                assert self.config.fsdp.fsdp2
+                model.apply_fsdp2(**self.config.fsdp.get_fsd2_args(self.config.autocast_precision))
 
-            log.info("Wrapping model with FDSP...")
-            wrap_policy = olmo_model.get_fsdp_wrap_policy(cfg.fsdp.wrapping_strategy)
-            hybrid_sharding_fsdp_kwargs = {}
-            if cfg.fsdp.sharding_strategy in (ShardingStrategy.HYBRID_SHARD, ShardingStrategy._HYBRID_SHARD_ZERO2):
-                raise NotImplementedError()
-            if version.parse(torch.__version__) < version.parse("2.1.0"):
-                raise NotImplementedError()
-
-            def dummy_init_fn(module: torch.nn.Module) -> None:
-                # Prevent FSDP from re-initializing the parameters
-                module.to_empty(device=get_default_device(), recurse=False)
-
-            param_init_fn = dummy_init_fn
-            olmo_model = FSDP(
-                olmo_model,
-                sharding_strategy=cfg.fsdp.sharding_strategy,
-                mixed_precision=MixedPrecision(
-                    param_dtype=cfg.autocast_precision,
-                    buffer_dtype=cfg.autocast_precision
-                ),
-                auto_wrap_policy=wrap_policy,
-                use_orig_params=False,
-                limit_all_gathers=True,
-                device_id=get_local_rank(),
-                sync_module_states=True,
-                param_init_fn=param_init_fn,
-                **hybrid_sharding_fsdp_kwargs,
-            )
-            olmo_model.eval()
-            torch.cuda.empty_cache()  # For the 70B this can prevent OOMs by reduce memory fragmentation
+            model.to_empty(device=device)
+            load_model_state(cfg.load_path, model)
+            model.eval()
+            torch.cuda.empty_cache()
 
         if self.config.max_crops_override:
-            logging.info(f"Overriding max crops from {olmo_model.config.max_crops} to {self.config.max_crops_override}")
-            olmo_model.config.max_crops = self.config.max_crops_override
+            logging.info(f"Overriding max crops from {model.config.mm_preprocessor.max_crops} to {self.config.max_crops_override}")
+            model.config.mm_preprocessor.max_crops = self.config.max_crops_override
+        
+        if self.config.max_frames_override:
+            logging.info(f"Overriding max frames from {model.config.mm_preprocessor.max_frames} to {self.config.max_frames_override}")
+            model.config.mm_preprocessor.max_frames = self.config.max_frames_override
+        
+        if self.config.candidate_sampling_fps_override:
+            logging.info(f"Overriding candidate sampling fps from {model.config.mm_preprocessor.candidate_sampling_fps} to {self.config.candidate_sampling_fps_override}")
+            model.config.mm_preprocessor.candidate_sampling_fps = self.config.candidate_sampling_fps_override
 
+        # Just in case the model is doing randomization even during eval
         seed_all(cfg.seed)
 
-        dtype = olmo_model.transformer.wte.embedding.dtype
+        dtype = model.transformer.wte.embedding.dtype
         log.info(f"Model weight dtype: {dtype}")
-        log.info(f"Total number of parameters: {olmo_model.num_params():,d}")
-        log.info(f"Number of non-embedding parameters: {olmo_model.num_params(include_embedding=False):,d}")
+        log.info(f"Total number of parameters: {model.num_params():,d}")
+        log.info(f"Number of non-embedding parameters: {model.num_params(include_embedding=False):,d}")
         log.info(f"Peak GPU Memory (MB) before FSDP: {int(peak_gpu_memory() or 0)}")
         barrier()
-        return olmo_model, device
+        return model, device
 
     def run(self):
         config = self.config
@@ -215,13 +306,12 @@ class ModelEvaluator:
         # Load any metrics that were cached
         cfg_to_metrics = {}
         for cfg in config.evaluations:
-            if cfg.skip_if_metrics_cached:
+            if self.config.skip_if_metrics_cached:
                 metric_file = self.get_metric_file(cfg)
-                if metric_file and exists(metric_file):
+                if metric_file and file_exists(metric_file):
                     logging.info(f"Loading pre-computed metrics for {cfg.label} from {metric_file}")
                     if get_global_rank() == 0:
-                        with open(metric_file, "r") as f:
-                            cfg_to_metrics[cfg.label] = json.load(f)["metrics"]
+                        cfg_to_metrics[cfg.label] = json.loads(read_file(metric_file))["metrics"]
                     else:
                         # Still set with a empty dict to mark that this eval can can be skipped
                         cfg_to_metrics[cfg.label] = {}
@@ -250,86 +340,53 @@ class ModelEvaluator:
                 logging.info(f"Starting inference {evaluation.label} ({eval_ix+1}/{len(config.evaluations)})")
 
             metrics_file = self.get_metric_file(evaluation)
-            if metrics_file and exists(metrics_file):
-                assert not evaluation.skip_if_metrics_cached
+            if metrics_file and file_exists(metrics_file):
+                assert not self.config.skip_if_metrics_cached
                 logging.warning(f"{metrics_file} already exists! File will be overwritten")
 
-            device_batch_size = evaluation.device_eval_batch_size or config.device_inf_eval_batch_size
-            global_batch_size = device_batch_size * get_world_size()
-            if evaluation.max_examples is not None and evaluation.max_examples >= 0:
-                max_steps = max(evaluation.max_examples // global_batch_size, 1)
-            elif evaluation.subset_num_batches:
-                max_steps = evaluation.subset_num_batches
-            else:
-                max_steps = None
-
-            if evaluation.data.multi_modal == "torch":
-                dataloader = build_torch_mm_eval_dataloader(
-                    device_batch_size,
-                    config.seed,
-                    model.config,
-                    evaluation.data,
-                    config.fsdp is not None,
-                    max_steps=max_steps
-                )
-            else:
-                raise NotImplementedError()
-            if evaluation.loss:
-                if evaluation.mm_evaluator is not None:
-                    logging.info("Doing a loss eval but a evaluator was set, the evaluator will be ignored")
-                loss_evaluator = LossDatasetEvaluator(
-                    "eval",
-                    dataloader,
-                    LossMetrics(device),
-                    num_batches=evaluation.subset_num_batches,
-                    z_loss=1e-4,
-                    console_log_interval=self.config.console_log_interval,
-                )
-                metrics = loss_evaluator.run(
-                    model, device, self.config.autocast_precision, pbar=self.config.pbar)
-            else:
-                mm_evaluation = InfDatasetEvaluator(
-                    dataloader,
-                    build_inf_evaluator(evaluation.mm_evaluator, self.get_save_dir(evaluation)),
-                    label=evaluation.label,
-                    n_steps=max_steps,
-                    max_new_tokens=evaluation.max_new_tokens,
-                    console_log_interval=config.console_log_interval
-                )
-                metrics = mm_evaluation.evaluate_model(
-                    model,
-                    device,
+            save_dir = self.get_save_dir(evaluation)
+            if evaluation.generative:
+                evaluator: InfDatasetEvaluator = evaluation.build_evaluator(
+                    model.config, device, save_dir, self.config.console_log_interval)
+                metrics = evaluator.run(
+                    model, device,
                     autocast_precision=self.config.autocast_precision,
                     is_distributed=self.config.fsdp is not None,
                     pbar=self.config.pbar,
                 )
+            else:
+                evaluator: LossDatasetEvaluator = evaluation.build_evaluator(
+                    model.config, device, save_dir, self.config.console_log_interval)
+                metrics = evaluator.run(
+                    model, device,
+                    autocast_precision=self.config.autocast_precision,
+                    pbar=self.config.pbar
+                )
 
             # Post-process the metrics by saving the wandb.Html outputs to disk
-            save_dir = self.get_save_dir(evaluation)
-
             if save_dir and get_global_rank() == 0:
-                if not save_dir.startswith("gs://"):
-                    makedirs(save_dir, exist_ok=True)
-
                 for k, v in list(metrics.items()):
+                    if k in ["HighResSelection", "HighResVals"]:
+                        # FIXME Ideally we would save the histogram as a PNG
+                        del metrics[k]
+                        continue
                     if isinstance(v, wandb.Html):
-                        file_name = join(save_dir, f"{evaluation.label}-{k}.html")
-                        with open(file_name, "w") as f:
-                            f.write(v.html)
-                        if file_name.startswith("gs://"):
-                            metrics[k] = get_gcs_url(file_name)
+                        filename = f"{evaluation.label}-{k}.html"
+                        write_file(save_dir, filename, v.html, True)
+                        if save_dir.startswith("gs://"):
+                            metrics[k] = get_gcs_url(join(save_dir, filename))
                         else:
-                            metrics[k] = file_name
+                            metrics[k] = join(save_dir, filename)
 
             to_print = {k: v for k, v in metrics.items() if isinstance(v, (int, float, str))}
             if metrics_file and get_global_rank() == 0:
                 to_save = dict(
                     metrics=metrics,
-                    date=datetime.now().strftime("%m/%d/%Y, %H:%M:%S"),
+                    beaker_experiment_id=os.environ.get("BEAKER_EXPERIMENT_ID"),
+                    date=datetime.now().strftime("%m/%d/%Y, %H:%M"),
                     eval_config=dataclasses.asdict(evaluation),
                 )
-                with open(metrics_file, "w") as f:
-                    json.dump(to_save, f, indent=2)
+                write_file(save_dir, "metrics.json", json.dumps(to_save, indent=2), True)
             log_metrics_to_console(evaluation.label, to_print)
             cfg_to_metrics[evaluation.label] = metrics
 
@@ -344,25 +401,12 @@ class ModelEvaluator:
 
 
 if __name__ == "__main__":
-    try:
-        mp.set_start_method("spawn", force=True)
-    except RuntimeError as e:
-        print(f"failed to set multiprocessing start method: {e}")
-    log.info(f"Multiprocessing start method set to '{mp.get_start_method()}'")
-
-    # Initialize process group.
-    dist.init_process_group(backend="nccl")
-    log.info("Process group initialized")
-
-    prepare_cli_environment()
-    log.info("CLI environment prepared")
-
-    add_cached_path_clients()
+    prepare_torchrun_environment()
 
     try:
         yaml_path, args_list = sys.argv[1], sys.argv[2:]
     except IndexError:
         raise OLMoCliError(f"Usage: {sys.argv[0]} [CONFIG_PATH] [OPTIONS]")
 
-    eval_config = EvalConfig.load(yaml_path, [clean_opt(s) for s in args_list])
-    ModelEvaluator(eval_config).run()
+    cfg = EvalConfig.load(yaml_path, [clean_opt(s) for s in args_list])
+    cfg.build().run()

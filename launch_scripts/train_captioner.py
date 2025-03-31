@@ -5,22 +5,21 @@ from typing import cast
 
 from omegaconf import omegaconf, OmegaConf
 
-from olmo.data import PixMoCap
-from launch_scripts.utils import DEBUG_MODEL, VISION_BACKBONES, LLMS, DEFAULT_LOAD_PATHS
-from olmo.torch_util import get_world_size
-from scripts.train import main as train
+from olmo.models.molmo.data_formatter import DataFormatter
+from olmo.models.molmo.model_preprocessor import MolmoPreprocessorConfig
+from olmo.data.pixmo_datasets import PixMoCap
+from launch_scripts.utils import DEBUG_MODEL, VISION_BACKBONES, LLMS
+from olmo.eval.loss_evaluator import LossDatasetEvaluatorConfig
+from olmo.models.molmo.molmo import MolmoConfig
+from olmo.models.model import FSDPWrapStrategy
+from olmo.train.optim import OptimizerConfig, OptimizerType, SchedulerConfig, SchedulerType
+from olmo.nn.vision_backbone import MolmoVisionBackboneConfig, ImagePaddingEmbed
+from scripts.train import run_trainer
 
-from olmo import TrainConfig, WandbConfig, DataConfig, OptimizerConfig, OptimizerType, \
-    SchedulerConfig, SchedulerType, FSDPConfig, FSDPPrecision, FSDPWrapStrategy
-from olmo.config import BatchDivisor, SpeedMonitorConfig, ActivationCheckpointingStrategy, \
-    DatasetEvaluatorConfig, CompilerConfig
-from olmo.util import (
-    add_cached_path_clients,
-    clean_opt,
-    prepare_cli_environment, prepare_torchrun_environment,
-)
-import torch.multiprocessing as mp
-import torch.distributed as dist
+from olmo.data.data_loader import DataLoaderConfig
+from olmo.train.trainer_config import BatchDivisor, SpeedMonitorConfig, \
+    CompilerConfig, TrainConfig, WandbConfig, FSDPConfig, FSDPPrecision
+from olmo.util import clean_opt, prepare_torchrun_environment
 
 
 log = logging.getLogger("train")
@@ -31,7 +30,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(prog="Train a captioner")
     parser.add_argument("llm", choices=["debug"] + list(LLMS.keys()))
-    parser.add_argument("--vision_backbone", choices=list(VISION_BACKBONES.keys()), default="openai")
+    parser.add_argument("--vision_backbone", choices=list(VISION_BACKBONES.keys()), default="siglip2")
     parser.add_argument("--global_batch_size", default=128, type=int)
     parser.add_argument("--n_eval_examples", default=2048, type=int)
     parser.add_argument("--device_eval_batch_size", default=4, type=int)
@@ -44,9 +43,9 @@ if __name__ == "__main__":
     if debug:
         model_cfg = DEBUG_MODEL
         if args.llm == "debug-12crop":
-            model_cfg.max_crops = 12
-            model_cfg.crop_mode = "overlap-and-resize-c2"
-        model_cfg.system_prompt_kind = 'style_and_length'
+            model_cfg.mm_preprocessor.max_crops = 12
+            model_cfg.mm_preprocessor.crop_mode = "overlap-and-resize-c2"
+        model_cfg.data_formatter.system_prompt = 'style_and_length'
 
         global_batch_size = 8
         model_init = None
@@ -62,27 +61,38 @@ if __name__ == "__main__":
         duration = 4 * (n + global_batch_size - 1) // global_batch_size
         eval_interval = 1000
         vit_layers = [-2, -9] if args.vision_backbone == "openai" else [-3, -9]
-        model_cfg = replace(
-            LLMS[args.llm],
-            vision_backbone=VISION_BACKBONES[args.vision_backbone],
-            llm_load_path=DEFAULT_LOAD_PATHS.get(args.llm, omegaconf.MISSING),
-            vit_load_path=DEFAULT_LOAD_PATHS.get(args.vision_backbone, omegaconf.MISSING),
-            crop_mode="overlap-and-resize-c2",
-            system_prompt_kind='style_and_length',
-            residual_dropout=0.0,
-            response_residual_dropout=0.1,
-            max_crops=12,
-            vit_layers=vit_layers,
-            # overlap_margins=(2, 2),
-            additional_vocab_size=128,
+
+        image_vit = VISION_BACKBONES[args.vision_backbone]
+        model_cfg = MolmoConfig(
+            llm=replace(
+                LLMS[args.llm],
+                residual_dropout=0.0,
+                response_residual_dropout=0.1,
+                additional_vocab_size=128,
+            ),
+            vision_backbone=MolmoVisionBackboneConfig(
+                vit=VISION_BACKBONES[args.vision_backbone],
+                vit_layers=vit_layers,
+                image_padding_embed=ImagePaddingEmbed.pad_and_partial_pad if args.vision_backbone == "openai" else None
+            ),
+            data_formatter=DataFormatter(
+                system_prompt='style_and_length',
+            ),
+            mm_preprocessor=MolmoPreprocessorConfig(
+                crop_mode="overlap-and-resize-c2",
+                max_crops=8 if args.vision_backbone in ["siglip", "siglip2"] else 12,
+                overlap_margins=(4, 4)
+            )
         )
 
-    evaluator = DatasetEvaluatorConfig(
+    evaluator = LossDatasetEvaluatorConfig(
         label="val",
-        subset_num_batches=eval_examples//(args.device_eval_batch_size*get_world_size()),
-        data=DataConfig(
+        max_examples=eval_examples,
+        device_batch_size=args.device_eval_batch_size,
+        console_log_interval="${console_log_interval}",
+        data=DataLoaderConfig(
+            seed="${seed}",
             dataset=args.dataset,
-            for_inference=False,
             shuffle=False,
             split="validation",
             drop_last=True,
@@ -90,13 +100,10 @@ if __name__ == "__main__":
             num_workers=2,
             pin_memory=True,
             persistent_workers=True,
-            shuffle_messages=False,
         ),
     )
 
     cfg = TrainConfig(
-        run_name="multitask_train",
-        no_pre_train_checkpoint=True,
         save_folder="debug_run" if debug else omegaconf.MISSING,
         seed=6198,
         dry_run=False,
@@ -107,12 +114,12 @@ if __name__ == "__main__":
             entity="${oc.env:WANDB_ENTITY}",
             log_interval=log_interval
         ),
-        compile=CompilerConfig(mode="default", target="blocks", dynamic=False),
+        compile=CompilerConfig(mode="default", dynamic=False),
         fused_loss=False,
+        compile_loss=True,
         model=model_cfg,
-        data=DataConfig(
+        data=DataLoaderConfig(
             dataset=args.dataset,
-            for_inference=False,
             shuffle=True,
             split="train",
             drop_last=True,
@@ -121,7 +128,6 @@ if __name__ == "__main__":
             num_workers=2,
             pad="to_max",
             pin_memory=True,
-            shuffle_messages=False,
         ),
         ft_connector=True,
         ft_llm=True,
@@ -140,7 +146,7 @@ if __name__ == "__main__":
             connector_eps=1e-6,
             vit_eps=1e-6,
             llm_eps=1e-6,
-            metrics_log_interval=20
+            metrics_log_interval=-1
         ),
         scheduler=SchedulerConfig(
             name=SchedulerType.multimodal,
@@ -158,12 +164,11 @@ if __name__ == "__main__":
         load_path=None,
         initial_model_checkpoint=None,
         save_overwrite=debug,
-        save_dataloader_state=False,
         save_interval=4000,
+        allow_resume=True,
         save_num_checkpoints_to_keep=1,
-        save_interval_unsharded="${max_duration}",
+        save_final_unsharded_checkpoint=False,
         global_train_batch_size=global_batch_size,
-        device_eval_batch_size=args.device_eval_batch_size,
         device_train_microbatch_size=4,
         time_limit=None,
         max_duration=duration,
@@ -175,24 +180,17 @@ if __name__ == "__main__":
         speed_monitor=SpeedMonitorConfig(window_size=20),
         softmax_auxiliary_loss=True,
         softmax_auxiliary_loss_scale=1e-4,
-        activation_checkpointing=ActivationCheckpointingStrategy.whole_layer,
         eval_interval=eval_interval,
         evaluators=[
-            # Evaluate loss on data with and without the transcripts
             evaluator,
-            replace(
-                evaluator,
-                label="caption_val",
-                data=replace(
-                    evaluator.data,
-                    dataset="pixmo_cap"
-                )
-            )
+            replace(evaluator, data=replace(evaluator.data, dataset="pixmo_cap"), label="caption_val")
         ]
     )
 
     conf = OmegaConf.create(cfg)
     conf.merge_with_dotlist([clean_opt(arg) for arg in other_args])
     cfg = cast(TrainConfig, OmegaConf.to_object(conf))
-    train(cfg)
+    run_trainer(cfg)
+
+
 

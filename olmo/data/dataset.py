@@ -7,9 +7,11 @@ import numpy as np
 
 if "MOLMO_DATA_DIR" in os.environ:
     DATA_HOME = join(os.environ["MOLMO_DATA_DIR"], "torch_datasets")
+    VIDEO_DATA_HOME = join(os.environ["MOLMO_DATA_DIR"], "video_datasets")
 else:
     warnings.warn("MOLMO_DATA_DIR is not set, data loading might fail")
     DATA_HOME = None
+    VIDEO_DATA_HOME = None
 
 
 class Dataset:
@@ -53,7 +55,8 @@ class DeterministicDataset:
             yield self[i]
 
     def get(self, idx, epoch=0):
-        rng = np.random.RandomState(self.seed + idx + len(self.dataset)*epoch)
+        rng = np.random.RandomState(
+            (self.seed * 195172 + idx + len(self.dataset)*epoch) % (2 ** 32 - 1))
         if idx >= len(self.dataset):
             # Padding example
             item = self.dataset.get(0, rng)

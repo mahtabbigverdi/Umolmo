@@ -1,11 +1,15 @@
+from __future__ import annotations
+
 import gc
 import os
 import logging
 from datetime import timedelta
-from typing import Optional, TypeVar, List, Tuple
+from typing import Optional, TypeVar, List, Tuple, MutableMapping
 
 import torch
 import torch.distributed as dist
+from torch import nn
+from torch.distributed.tensor import DTensor
 
 T = TypeVar("T")
 
@@ -181,17 +185,41 @@ def freeze_module(module: torch.nn.Module, exclude_params: Optional[List[str]] =
         param.requires_grad = False
 
 
-def freeze_parameters_by_name(model: torch.nn.Module, freeze_names: Tuple[str], warn=True):
-    for name in freeze_names:
-        try:
-            module_or_param = model.get_submodule(name)
-        except:
-            try:
-                module_or_param = model.get_parameter(name)
-            except:
-                if warn:
-                    log.warning(f"Could not find module or parameter with name {name}")
-        if isinstance(module_or_param, torch.nn.Module):
-            freeze_module(module_or_param)
-        else:
-            module_or_param.requires_grad = False
+class BufferCache(dict, MutableMapping[str, torch.Tensor]):
+    """
+    Cache for attention biases and other things that would normally be stored as buffers.
+    We avoid using buffers because we've run into various issues doing so with FSDP.
+    In general it appears the way FSDP handles buffers is not well-defined.
+    It doesn't shard them but apparently it does synchronize them across processes, which we want to avoid
+    since (A) it isn't necessary, and (B) we sometimes have `-inf` in these biases which might get turned into
+    NaNs when they're synchronized due to casting or some other issue.
+    """
+
+
+def get_element_size(dtype: torch.dtype) -> int:
+    """
+    Get the size in bytes of element of the given PyTorch dtype.
+    """
+    return torch._utils._element_size(dtype)  # type: ignore
+
+
+def clip_grad_norm(parameters, max_grad_norm: float, norm_type: float = 2.0, foreach: Optional[bool] = None):
+    # Adapted from https://github.com/pytorch/torchtitan/blob/2a4437014e66bcf88a3f0419b816266e6326d539/torchtitan/utils.py#L348
+
+    grads = [p.grad for p in parameters if p.grad is not None]
+    total_norm = nn.utils.get_total_norm(
+        grads, norm_type=norm_type, error_if_nonfinite=False, foreach=foreach
+    )
+    # If total_norm is a DTensor, the placements must be `torch.distributed._tensor.ops.math_ops._NormPartial`.
+    # We can simply reduce the DTensor to get the total norm in this tensor's process group
+    # and then convert it to a local tensor.
+    # NOTE: It has two purposes:
+    #       1. to make sure the total norm is computed correctly when PP is used (see below)
+    #       2. to return a reduced total_norm tensor whose .item() would return the correct value
+    if isinstance(total_norm, DTensor):
+        # Will reach here if any non-PP parallelism is used.
+        # If only using PP, total_norm will be a local tensor.
+        total_norm = total_norm.full_tensor()
+
+    torch.nn.utils.clip_grads_with_norm_(parameters, max_grad_norm, total_norm, foreach=foreach)
+    return total_norm

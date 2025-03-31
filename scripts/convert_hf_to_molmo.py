@@ -8,8 +8,9 @@ from typing import Dict, Any
 import torch
 from transformers import AutoModel, AutoModelForCausalLM, CLIPModel, SiglipModel
 
-from launch_scripts.utils import VISION_BACKBONES, LLMS, DEFAULT_LOAD_PATHS
-from olmo import VisionBackboneConfig, ModelConfig, Molmo, BlockType
+from launch_scripts.utils import VISION_BACKBONES, LLMS
+from olmo.nn.image_vit import VitConfig
+from olmo.nn.llm import LlmConfig, BlockType
 from olmo.util import prepare_cli_environment
 
 
@@ -84,7 +85,7 @@ def interpolate_position_embeddings(
     return torch.cat((class_pos_embed, patch_pos_embed), dim=1)
 
 
-def convert_state_dict_clip(state_dict, vision_config: VisionBackboneConfig) -> Dict[str, Any]:
+def convert_state_dict_clip(state_dict, vision_config: VitConfig) -> Dict[str, Any]:
     state_dict = unflatten_dict(state_dict, sep=".")
 
     resblocks = {}
@@ -165,7 +166,7 @@ def convert_state_dict_clip(state_dict, vision_config: VisionBackboneConfig) -> 
     return out
 
 
-def convert_state_dict_siglip(state_dict, vision_config: VisionBackboneConfig) -> Dict[str, Any]:
+def convert_state_dict_siglip(state_dict, vision_config: VitConfig) -> Dict[str, Any]:
     state_dict = unflatten_dict(state_dict, sep=".")
 
     resblocks = {}
@@ -238,7 +239,7 @@ def convert_state_dict_siglip(state_dict, vision_config: VisionBackboneConfig) -
     return out
 
 
-def convert_state_dict_dino(state_dict, vision_config: VisionBackboneConfig) -> Dict[str, Any]:
+def convert_state_dict_dino(state_dict, vision_config: VitConfig) -> Dict[str, Any]:
     state_dict = unflatten_dict(state_dict, sep=".")
 
     resblocks = {}
@@ -315,7 +316,7 @@ def convert_state_dict_dino(state_dict, vision_config: VisionBackboneConfig) -> 
     return out
 
 
-def convert_state_dict_olmoe(state_dict, config: ModelConfig, block_type: BlockType) -> Dict[str, Any]:
+def convert_state_dict_olmoe(state_dict, config: LlmConfig, block_type: BlockType) -> Dict[str, Any]:
     state_dict = unflatten_dict(state_dict, sep=".")
     assert len(state_dict) == 2
     lmhead = state_dict["lm_head"]
@@ -380,7 +381,7 @@ def convert_state_dict_olmoe(state_dict, config: ModelConfig, block_type: BlockT
     return out
 
 
-def convert_state_dict_olmo_1024_preview(state_dict, config: ModelConfig, block_type: BlockType) -> Dict[str, Any]:
+def convert_state_dict_olmo_1024_preview(state_dict, config: LlmConfig, block_type: BlockType) -> Dict[str, Any]:
     state_dict = unflatten_dict(state_dict, sep=".")
     assert len(state_dict) == 2
     lmhead = state_dict["lm_head"]
@@ -435,7 +436,7 @@ def convert_state_dict_olmo_1024_preview(state_dict, config: ModelConfig, block_
     return out
 
 
-def convert_state_dict_qwen2(state_dict, config: ModelConfig, block_type: BlockType) -> Dict[str, Any]:
+def convert_state_dict_qwen2(state_dict, config: LlmConfig, block_type: BlockType) -> Dict[str, Any]:
     state_dict = unflatten_dict(state_dict, sep=".")
     assert len(state_dict) == 2
     lmhead = state_dict["lm_head"]
@@ -509,19 +510,23 @@ def convert_state_dict_qwen2(state_dict, config: ModelConfig, block_type: BlockT
     return out
 
 
-def get_default_load_path(model_name: str) -> str:
-    default_load_path = DEFAULT_LOAD_PATHS[model_name]
-    return "/".join(default_load_path.split("/")[1:])
+def get_default_load_path(cfg) -> str:
+    return "/".join(cfg.init_path.split("/")[1:])
 
 
 CONVERT_FNS = {
     "openai": convert_state_dict_clip,
     "siglip": convert_state_dict_siglip,
+    "siglip2": convert_state_dict_siglip,
     "dinov2_large_336": convert_state_dict_dino,
     "metaclip_l14_336": convert_state_dict_clip,
     "olmoe": convert_state_dict_olmoe,
     "olmo_1024_preview": convert_state_dict_olmo_1024_preview,
+    "olmo2_1124_7b": convert_state_dict_olmo_1024_preview,
+    "olmo2_1124_13b": convert_state_dict_olmo_1024_preview,
+    "olmo2_0325_32b": convert_state_dict_olmo_1024_preview,
     "qwen2_7b": convert_state_dict_qwen2,
+    "qwen2.5_7b": convert_state_dict_qwen2,
     "qwen2.5_3b": convert_state_dict_qwen2,
     "qwen2.5_1.5b": convert_state_dict_qwen2,
     "qwen2_72b": convert_state_dict_qwen2,
@@ -531,6 +536,7 @@ CONVERT_FNS = {
 VIT_HF_SOURCES  = {
     "openai": "openai/clip-vit-large-patch14-336",
     "siglip": "google/siglip-so400m-patch14-384",
+    "siglip2": "google/siglip2-so400m-patch14-384",
     "dinov2_large_336": "facebook/dinov2-large",
     "metaclip_l14_336": "facebook/metaclip-l14-fullcc2.5b",
 }
@@ -539,8 +545,12 @@ VIT_HF_SOURCES  = {
 LLM_HF_SOURCES = {
     "olmoe": "allenai/OLMoE-1B-7B-0924",
     "olmo_1024_preview": "allenai/OLMo-7B-1024-preview",
+    "olmo2_1124_7b": "allenai/OLMo-2-1124-7B",
+    "olmo2_1124_13b": "allenai/OLMo-2-1124-13B",
+    "olmo2_0325_32b": "allenai/OLMo-2-0325-32B",
     "qwen2_7b": "Qwen/Qwen2-7B",
     "qwen2_72b": "Qwen/Qwen2-72B",
+    "qwen2.5_7b": "Qwen/Qwen2.5-7B",
     "qwen2.5_3b": "Qwen/Qwen2.5-3B",
     "qwen2.5_1.5b": "Qwen/Qwen2.5-1.5B",
 }
@@ -548,12 +558,10 @@ LLM_HF_SOURCES = {
 
 def main_vit(args: argparse.Namespace) -> None:
     hf_source = VIT_HF_SOURCES[args.model]
-    cfg = ModelConfig(vision_backbone=VISION_BACKBONES[args.model])
-    cfg.init_device = 'cpu'
-    v_cfg = cfg.vision_backbone
+    cfg = VISION_BACKBONES[args.model]
     convert_fn = CONVERT_FNS[args.model]
 
-    output_path = str(Path(args.data_dir).joinpath(get_default_load_path(args.model)))
+    output_path = str(Path(args.data_dir).joinpath(get_default_load_path(cfg)))
     Path(output_path).parent.mkdir(exist_ok=True, parents=True)
 
     logging.info(f"Convert model {args.model} to olmo format and save to {output_path}...")
@@ -572,7 +580,7 @@ def main_vit(args: argparse.Namespace) -> None:
 
     logging.info("Converting...")
 
-    vit_state_dict = convert_fn(state_dict, v_cfg)
+    vit_state_dict = convert_fn(state_dict, cfg)
     
     logging.info("Saving...")
     torch.save(vit_state_dict, output_path)
@@ -581,10 +589,9 @@ def main_vit(args: argparse.Namespace) -> None:
 def main_llm(args: argparse.Namespace) -> None:
     hf_source = LLM_HF_SOURCES[args.model]
     cfg = LLMS[args.model]
-    cfg.init_device = 'cpu'
     convert_fn = CONVERT_FNS[args.model]
 
-    output_path = str(Path(args.data_dir).joinpath(get_default_load_path(args.model)))
+    output_path = str(Path(args.data_dir).joinpath(get_default_load_path(cfg)))
     Path(output_path).parent.mkdir(exist_ok=True, parents=True)
 
     logging.info(f"Convert model {args.model} to olmo format and save to {output_path}...")
@@ -605,8 +612,15 @@ def main_llm(args: argparse.Namespace) -> None:
 
     olmo_state_dict = convert_fn(state_dict, cfg, cfg.block_type)
 
-    logging.info("Saving...")
-    torch.save(olmo_state_dict, output_path)
+    if args.sharded:
+        import torch.distributed.checkpoint as dist_cp
+        import torch.distributed as dist
+        dist.init_process_group(backend="nccl")
+        dist_cp.state_dict_saver.save(state_dict, checkpoint_id=output_path)
+    else:
+        logging.info("Saving...")
+        torch.save(olmo_state_dict, output_path)
+
 
 
 def main(args: argparse.Namespace) -> None:
@@ -643,6 +657,11 @@ def get_parser() -> argparse.ArgumentParser:
         "--cache_dir",
         type=str,
         help="Directory to save HF parameters",
+    )
+    parser.add_argument(
+        "--sharded",
+        action="store_true",
+        help="Save as a sharded checkpoints",
     )
 
     return parser

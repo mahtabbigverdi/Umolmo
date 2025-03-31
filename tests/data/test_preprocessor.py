@@ -1,38 +1,95 @@
 import numpy as np
-from PIL import Image
-from olmo.data.data_formatter import DataFormatter
-from olmo.data.model_preprocessor import Preprocessor, MultiModalPreprocessor
-from olmo.html_utils import postprocess_prompt
-from olmo.tokenizer import build_tokenizer, IMAGE_PROMPT
+from olmo import tokenizer
+import re
 
-DUMMY_IMAGE = np.zeros((32, 32, 3), dtype=np.uint8)
+from olmo.data.text_preprocessor import InterleavedTextPreprocessor
+from olmo.models.video_olmo.video_preprocessor import VIDEO_SUBSEGMENT_ID
+from olmo.tokenizer import build_tokenizer, IMAGE_PROMPT
+from tests.models.test_video_preprocessor import _remove_video_text
 
 
 def get_preprocessor():
     tokenizer = build_tokenizer("Qwen/Qwen2-7B")
-    return MultiModalPreprocessor(tokenizer=tokenizer)
+    return InterleavedTextPreprocessor(tokenizer=tokenizer)
 
 
 def _test_tokenization(messages, n_at_start=None, preprocessor=None):
     if preprocessor is None:
         preprocessor = get_preprocessor()
-    if n_at_start is None:
+    is_multi_message = isinstance(messages[0], list)
+    if n_at_start is None and is_multi_message:
+        n = " ".join(messages[0]).count(IMAGE_PROMPT)
+    elif n_at_start is None:
         n = " ".join(messages).count(IMAGE_PROMPT)
     else:
         n = n_at_start
-    batch = preprocessor([DUMMY_IMAGE]*n, messages)
-    with_tokens = preprocessor.tokenizer.decode(batch["target_tokens"], truncate_at_eos=False)
-    out = postprocess_prompt(with_tokens)
-    if n_at_start is None:
-        expected = "".join(messages).replace(IMAGE_PROMPT, "IMAGE[144]")
+    tok = preprocessor.tokenizer
+    batch = preprocessor.tokenize_and_interleave(messages, [[tok.image_prompt_token_id]]*n)
+
+    if not is_multi_message:
+        with_tokens = tok.decode(batch["input_tokens"], truncate_at_eos=False)
+        if n_at_start is None:
+            expected = "".join(messages)
+        else:
+            expected = "".join([tokenizer.IMAGE_PROMPT]*n + messages)
+        assert batch["input_tokens"][0] == tok.bos_token_id
+        assert batch["target_tokens"][-1] == tok.eos_token_id
+        assert batch["loss_masks"][-1] == 1.0
+        assert with_tokens == expected, f"Expected \"{expected}\", but got \"{with_tokens}\""
+        assert np.all(batch["position_ids"] == np.arange(len(batch["input_tokens"])))
+        assert tok.decode(batch["target_tokens"][batch["loss_masks"] > 0], False) == "".join(messages[1::2])
     else:
-        expected = "".join(["IMAGE[144]"]*n + messages)
-    assert out == expected, f"Expected \"{expected}\", but got \"{out}\""
+        subsegments = batch["subsegment_ids"]
+        pos_ids = batch["position_ids"]
+        for ix, seg_messages in enumerate(messages):
+            expected = "".join(seg_messages)
+            if tokenizer.IMAGE_PROMPT not in expected:
+                expected = tokenizer.IMAGE_PROMPT + expected
+            msg_mask = (subsegments == ix) | (subsegments == VIDEO_SUBSEGMENT_ID)
+            seg_tokens = batch["input_tokens"][msg_mask]
+            seg_targets = batch["target_tokens"][msg_mask]
+            seg_loss = batch["loss_masks"][msg_mask]
+
+            assert (seg_tokens == tok.eos_token_id).sum() == len(seg_messages)//2
+            assert np.all(pos_ids[msg_mask] - pos_ids[msg_mask][0] == np.arange(msg_mask.sum()))
+            assert seg_tokens[0] == tok.bos_token_id
+            assert seg_targets[-1] == tok.eos_token_id
+            assert seg_loss[-1] == 1.0
+            if n_at_start is not None:
+                actual = tok.decode(seg_tokens, False)
+                assert _remove_video_text(actual) == expected
+            assert tok.decode(seg_targets[seg_loss > 0], False) == "".join(seg_messages[1::2])
 
 
 def test_text_only():
     _test_tokenization(["What time is it?", " 3"])
     _test_tokenization(["a b", " res1 res2", " d e", " res5"])
+
+
+def test_max_tokens():
+    preprocessor = get_preprocessor()
+    tok = preprocessor.tokenizer
+    preprocessor.max_text_tokens = 2
+    batch = preprocessor.tokenize_and_interleave(
+        [
+            ["question1", " answer1"],
+            ["question2", " answer2"],
+            ["question1", " answer2"*100]
+        ],
+        [[preprocessor.tokenizer.image_prompt_token_id]]
+    )
+    assert tok.decode(batch["input_tokens"], False) == f"{tokenizer.IMAGE_PROMPT}question1 answer1"
+
+    preprocessor.max_text_tokens = 8
+    batch = preprocessor.tokenize_and_interleave(
+        [
+            ["question1", " answer1"],
+            ["question2", " answer2"],
+            ["question1", " answer2"*100]
+        ],
+        [[preprocessor.tokenizer.image_prompt_token_id]]
+    )
+    assert tok.decode(batch["input_tokens"], False) == f"{tokenizer.IMAGE_PROMPT}question1 answer1question2 answer2"
 
 
 def test_at_start():
@@ -43,6 +100,7 @@ def test_at_start():
 
 def test_in_message():
     _test_tokenization([f"look at {IMAGE_PROMPT} what is it?", "answer"])
+    _test_tokenization([f"question", "answer", f"q2 {IMAGE_PROMPT}.", "answer2"])
     _test_tokenization(
         [f"1: {IMAGE_PROMPT} 2: {IMAGE_PROMPT} 3: {IMAGE_PROMPT}?", "answer"],
     )
@@ -55,21 +113,17 @@ def test_in_message():
 
 
 def test_multi_message():
-    pre = get_preprocessor()
-    messages = [
+    _test_tokenization([
         [" turn11", " turn12", " turn13", " turn14"],
-        [" turn21", " turn22"]
-    ]
-    batch = pre([DUMMY_IMAGE], messages)
-    out = pre.tokenizer.decode(batch["target_tokens"], truncate_at_eos=False)
-    out = postprocess_prompt(out)
-    assert out == "IMAGE[144] turn11 turn12 turn13 turn14 turn21 turn22"
+        [" turn21", " turn22"],
+        [" turn31", " turn32", " turn33", " turn34"],
+    ], 1)
 
-    seg = batch["subsegment_ids"]
-    tokens = batch["input_tokens"]
 
-    seg1 = pre.tokenizer.decode(tokens[seg != seg[-1]], truncate_at_eos=False)
-    assert postprocess_prompt(seg1) == "IMAGE[144] turn11 turn12 turn13 turn14"
+def test_multi_message_in_middle():
+    _test_tokenization([
+        [f" turn11 {IMAGE_PROMPT} debeug", " turn12", f" turn13.", " turn14"],
+        [f"{IMAGE_PROMPT} turn21", " turn22"],
+        [f" turn31 some {IMAGE_PROMPT} text", " turn32", " turn33", " turn34"],
+    ])
 
-    seg2 = pre.tokenizer.decode(tokens[seg >= seg[-1]], truncate_at_eos=False)
-    assert postprocess_prompt(seg2) == "IMAGE[144] turn21 turn22"

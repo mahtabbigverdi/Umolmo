@@ -1,23 +1,18 @@
 """Evals a checkpoint on multiple tasks, run this script with 'torchrun'."""
 import argparse
 import logging
-import re
 from dataclasses import replace
-from pathlib import Path
 from typing import cast
 
-import torch.distributed as dist
-import torch.multiprocessing as mp
 from omegaconf import OmegaConf
 
-from olmo.config import EvalConfig, FSDPConfig, FSDPWrapStrategy, FSDPPrecision
-from olmo.torch_util import get_world_size
+from launch_scripts.utils import get_evaluation
+from olmo.train.trainer_config import FSDPConfig, FSDPPrecision
+from olmo.models.model import FSDPWrapStrategy
 from olmo.util import (
-    add_cached_path_clients,
     clean_opt,
-    prepare_cli_environment, prepare_torchrun_environment, )
-from scripts.mm_eval import ModelEvaluator
-from launch_scripts.utils import get_evaluation, select_checkpoint
+    prepare_torchrun_environment, select_checkpoint, )
+from scripts.mm_eval import ModelEvaluator, DatasetEvaluatorConfig, EvalConfig
 
 log = logging.getLogger(__name__)
 
@@ -35,18 +30,9 @@ def main():
                         help="Maximum number of examples to evaluate")
     parser.add_argument("--max_crops", type=int, default=None,
                         help="Override models default number of crops")
-    parser.add_argument("--seed", default=6198, type=int)
     parser.add_argument("--seq_len", default=1536, type=int,
                         help="Max sequence length to use")
     parser.add_argument("--device_batch_size", default=4, type=int)
-    parser.add_argument("--save_dir", default=None,
-                        help="Directory to save the evaluation results")
-    parser.add_argument("--save_to_checkpoint_dir", action="store_true",
-                        help="Save to the checkpoint directory")
-    parser.add_argument("--eval_name",
-                        help="Name to use as a prefix when saving results")
-    parser.add_argument("--pbar", action="store_true",
-                        help="Show a progress bar")
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--fsdp", action="store_true",
                         help="Load with FSDP, can be used to avoid OOMs")
@@ -59,7 +45,6 @@ def main():
         args.seq_len = 4096
         args.eval_name = f"{args.max_crops}crop"
 
-
     tasks = []
     for task in args.tasks:
         if task == "low-res":
@@ -70,7 +55,7 @@ def main():
                 "pixmo_count_counting:validation",
                 "pointing_eval:test",
             ]
-        elif task == "high-res":
+        elif task in ["high-res", "high-res-exp"]:
             # high-res validation tasks
             tasks += [
                 "coco_2014_vqa_multi",
@@ -88,6 +73,8 @@ def main():
                 "math_vista_v2",
                 "pixmo_clocks:validation"
             ]
+            if task == "high-res-exp":
+                tasks += ["chart_qa_exp"]
         elif task == "test-high-res":
             # high-res test tasks
             tasks = [
@@ -123,46 +110,45 @@ def main():
 
     inf_evaluators = []
     for task in tasks:
-        eval_config = get_evaluation(
-            name=task, seq_len=args.seq_len,
-            max_examples=args.max_examples,
-        )
-        if args.max_new_tokens:
-            eval_config = replace(eval_config, max_new_tokens=args.max_new_tokens)
-        inf_evaluators.append(replace(
-            eval_config,
-            mm_evaluator=replace(
-                eval_config.mm_evaluator,
+        base_config = get_evaluation(name=task, seq_len=args.seq_len, max_examples=args.max_examples)
+        eval_config = DatasetEvaluatorConfig(
+            label=base_config.label,
+            data=replace(base_config.data, pad="to_max" if args.fsdp else None),
+            generative_evaluator=replace(
+                base_config.evaluator,
                 n_to_log=4,
                 num_wandb_examples=300,
                 save_predictions="_default",
             ),
-            save_to_checkpoint_dir=args.save_to_checkpoint_dir,
-            save_dir=args.save_dir,
-            eval_name=args.eval_name,
-            skip_if_metrics_cached=not args.overwrite,
-        ))
+            device_batch_size=args.device_batch_size,
+            subset_num_batches=None,
+            max_examples=args.max_examples,
+            max_new_tokens=args.max_new_tokens or base_config.max_new_tokens,
+        )
+        inf_evaluators.append(eval_config)
 
-    checkpoint_dir = select_checkpoint(args.checkpoint)
+    checkpoint_dir = "debug" if args.checkpoint == "debug" else select_checkpoint(args.checkpoint)
 
     cfg = EvalConfig(
         max_crops_override=args.max_crops,
         evaluations=inf_evaluators,
         load_path=checkpoint_dir,
-        seed=args.seed,
-        device_inf_eval_batch_size=args.device_batch_size,
-        pbar=args.pbar,
         console_log_interval=10,
+        precision="amp_bf16",
+        pbar=False,
+        eval_name=f"{args.max_crops}crop" if args.high_res else None,
         fsdp=FSDPConfig(
             wrapping_strategy=FSDPWrapStrategy.by_block_and_size,
             precision=FSDPPrecision.float,
+            fsdp2=True
         ) if args.fsdp else None,
+        skip_if_metrics_cached=not args.overwrite,
     )
 
     config = OmegaConf.create(cfg)
     config.merge_with_dotlist([clean_opt(arg) for arg in other_args])
     cfg = cast(EvalConfig, OmegaConf.to_object(config))
-    ModelEvaluator(cfg).run()
+    cfg.build().run()
 
 
 if __name__ == "__main__":

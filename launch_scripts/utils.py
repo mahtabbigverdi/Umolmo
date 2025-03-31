@@ -1,33 +1,56 @@
 import logging
-import re
-from os.path import join
-from pathlib import Path
 from typing import Dict
+from dataclasses import replace
 
-import numpy as np
+from olmo.models.molmo.data_formatter import DataFormatter
+from olmo.models.molmo.model_preprocessor import MolmoPreprocessorConfig
+from olmo.data.data_loader import DataLoaderConfig
+from olmo.models.video_olmo.video_olmo import VideoOlmoConfig, MultiModalVideoPreprocessorConfig
+from olmo.eval.inf_evaluator import InfDatasetEvaluatorConfig, EvaluatorConfig
+from olmo.eval.loss_evaluator import LossDatasetEvaluatorConfig
+from olmo.nn.image_vit import VitConfig
+from olmo.nn.llm import LlmConfig, AttentionType, LayerNormType
+from olmo.models.molmo.molmo import MolmoConfig
+from olmo.tokenizer import TokenizerConfig
+from olmo.nn.vision_backbone import MolmoVisionBackboneConfig
 
-from olmo import DataConfig, DatasetEvaluatorConfig
-from olmo.config import EvaluatorConfig, ModelConfig, VisionBackboneConfig, \
-    TokenizerConfig, LayerNormType, AttentionType
-from olmo.io import file_exists, list_directory
+log = logging.getLogger(__name__)
 
-DEBUG_MODEL = ModelConfig(
-    d_model=128,
-    n_heads=2,
-    n_layers=1,
-    max_sequence_length=4096,
-    additional_vocab_size=128,
-    vocab_size=152064,
-    rope=True,
-    embedding_size=None,
-    weight_tying=False,
-    vision_backbone=VisionBackboneConfig(
-        image_num_layers=1,
+
+DEBUG_MODEL = MolmoConfig(
+    llm=LlmConfig(
+        d_model=128,
+        n_heads=2,
+        n_layers=1,
+        max_sequence_length=4096,
+        additional_vocab_size=128,
+        vocab_size=152064,
+        rope=True,
+        embedding_size=None,
+        weight_tying=False,
+        tokenizer=TokenizerConfig(
+            identifier="Qwen/Qwen2-7B",
+        )
     ),
-    crop_mode="resize",
-    tokenizer=TokenizerConfig(
-        identifier="Qwen/Qwen2-7B",
+    vision_backbone=MolmoVisionBackboneConfig(
+        vit=VitConfig(image_num_layers=1)
     ),
+    data_formatter=DataFormatter(),
+    mm_preprocessor=MolmoPreprocessorConfig(crop_mode="resize", max_crops=1)
+)
+
+
+VIDEO_DEBUG_MODEL = VideoOlmoConfig(
+    llm=DEBUG_MODEL.llm,
+    vision_backbone=MolmoVisionBackboneConfig(vit=VitConfig(image_num_layers=1)),
+    data_formatter=DEBUG_MODEL.data_formatter,
+    mm_preprocessor=MultiModalVideoPreprocessorConfig(
+        crop_mode="resize",
+        pooling_h=2,
+        pooling_w=2,
+        max_frames=4,
+        max_crops=1
+    )
 )
 
 
@@ -68,14 +91,22 @@ def get_evaluator(name) -> EvaluatorConfig:
         return EvaluatorConfig(clock_bench_eval=True)
     elif name in ["countbench_qa"]:
         return EvaluatorConfig(count_eval=True)
-    elif name in ["dense_caption_eval", "user_qa", "vqa_v2_test"]:
+    elif name in ["mvbench", "llava_video_178k_mc"]: # expects a single character followed by a dot.
+        return EvaluatorConfig(vqa_eval="em_start")
+    elif name.startswith("temp_compass"):
+        disable_api = "disable_api" in name
+        name = name.replace("_disable_api", "")
+        task = '_'.join(name.split("_")[2:]) if len(name.split("_")) > 2 else "all"
+        return EvaluatorConfig(temp_compass_eval=task, temp_compass_disable_api=disable_api)
+    elif name in ["dense_caption_eval", "user_qa", "vqa_v2_test", "intern_vid"]:
         # No metrics, but still save prediction file
         return EvaluatorConfig()
     else:
         raise NotImplementedError(name)
 
 
-def get_evaluation(name, seq_len, max_examples, num_workers=2, device_batch_size=None) -> DatasetEvaluatorConfig:
+def get_evaluation(name, seq_len, max_examples, for_inference=True,
+                   num_workers=2, device_batch_size=None, persistent_workers=False) -> InfDatasetEvaluatorConfig:
     """Gets the default evaluation config for task (or task:split string) `name`"""
     if ":" in name:
         name, split = name.split(":")
@@ -87,9 +118,6 @@ def get_evaluation(name, seq_len, max_examples, num_workers=2, device_batch_size
     if name == "coco_2014_vqa_multi":
         name = "coco_2014_vqa"
 
-    evaluator = get_evaluator(name)
-    evaluator.num_wandb_examples = 64
-
     eval_only_tasks = ["mmmu", "mme", "math_vista", "real_world_qa", "seed_bench",
                        "mmbench", "sugar_crepe", "blink"]
     eval_only_tasks += [task_name + "_test" for task_name in eval_only_tasks]
@@ -99,53 +127,72 @@ def get_evaluation(name, seq_len, max_examples, num_workers=2, device_batch_size
         task_name = name + "_test" if not name.endswith("_test") else name
     else:
         task_name = name
-    evaluator.num_wandb_examples = 32
-    evaluator.n_to_log = 0
-    evaluator.save_predictions = None
     test_eval_tasks = ["mme_test", "real_world_qa_test", "real_world_qa_test", "count_bench",
                        "seed_bench_test", "sugar_crepe_test", "count_bench_from_caption", "pointing_test"]
     if split is None:
         split = "test" if task_name in test_eval_tasks else "validation"
 
-    if name.startswith("named_entity"):
-        max_new_tokens = 256
-    elif name == "math_vista_demo":
-        max_new_tokens = 384
-    elif name in ["chart_qa_scifi", "chart_qa_ex", "chart_qa_prompting_explanation"] or name.endswith("_demo"):
-        max_new_tokens = 256
-    elif name.startswith("user_questions_for_elo"):
-        max_new_tokens = 768  # Can have counts of 20+ so make sure there is room
-    elif name in ["pointing_eval", "pointing"]:
-        max_new_tokens = 192  # 192 is enought for counts <=10 in the point tag format
-    elif "countbench_qa" in name or "pixmo_count" in name:
-        max_new_tokens = 192
-    elif name == "android_control_hl_cot":
-        max_new_tokens = 64
-    elif name.startswith("android_control"):
-        max_new_tokens = 16
-    elif "refc" in name:
-        max_new_tokens = 32
-    else:
-        max_new_tokens = 12
-
-    ds = DataConfig(
+    ds = DataLoaderConfig(
         dataset=task_name, sequence_length=seq_len,
-        for_inference=True,
-        split=split, shuffle=True, drop_last=True,
-        num_workers=num_workers, pad="to_max", pin_memory=True
+        split=split, shuffle=True, 
+        drop_last=max_examples is not None and max_examples >= 0,
+        num_workers=num_workers, pad="to_max", pin_memory=True,
+        seed=691203,
+        persistent_workers=persistent_workers
     )
 
-    return DatasetEvaluatorConfig(
-        max_examples=max_examples,
-        device_eval_batch_size=device_batch_size,
-        max_new_tokens=max_new_tokens,
-        mm_evaluator=evaluator,
-        label="ai2_diagram" if "ai2_diagram" in name else name,
-        data=ds
-    )
+    if for_inference:
+        evaluator = get_evaluator(name)
+        evaluator.num_wandb_examples = 64
+        evaluator.num_wandb_examples = 32
+        evaluator.n_to_log = 0
+        evaluator.save_predictions = None
+
+        if name.startswith("named_entity"):
+            max_new_tokens = 256
+        elif name == "math_vista_demo":
+            max_new_tokens = 384
+        elif name in ["chart_qa_scifi", "chart_qa_ex", "chart_qa_exp", "chart_qa_prompting_explanation"] or name.endswith("_demo"):
+            max_new_tokens = 256
+        elif name.startswith("user_questions_for_elo"):
+            max_new_tokens = 768  # Can have counts of 20+ so make sure there is room
+        elif name in ["pointing_eval", "pointing"]:
+            max_new_tokens = 192  # 192 is enought for counts <=10 in the point tag format
+        elif "countbench_qa" in name or "pixmo_count" in name:
+            max_new_tokens = 192
+        elif name == "android_control_hl_cot":
+            max_new_tokens = 64
+        elif name.startswith("android_control"):
+            max_new_tokens = 16
+        elif name == "llava_video_178k_oe" or name == "llava_video_178k_cap" or name.startswith("temp_compass"):
+            max_new_tokens = 192
+        elif "refc" in name or "mvbench" in name or name == "llava_video_178k_mc":
+            max_new_tokens = 32
+        else:
+            max_new_tokens = 12
+
+        return InfDatasetEvaluatorConfig(
+            max_examples=max_examples,
+            device_batch_size=device_batch_size,
+            max_new_tokens=max_new_tokens,
+            evaluator=evaluator,
+            label="ai2_diagram" if "ai2_diagram" in name else name,
+            data=ds,
+            console_log_interval="${console_log_interval}"  # Use log interval in top-level config
+        )
+            
+    else:
+        return LossDatasetEvaluatorConfig(
+            max_examples=max_examples,
+            device_batch_size=device_batch_size,
+            label="ai2_diagram" if "ai2_diagram" in name else name,
+            data=ds,
+            console_log_interval="${console_log_interval}"  # Use log interval in top-level config
+        )
 
 
-DEFAULT_VISION_BACKBONE = VisionBackboneConfig(
+DEFAULT_VISION_BACKBONE = VitConfig(
+    init_path="${oc.env:MOLMO_DATA_DIR}/pretrained_image_encoders/vit-l-14-336.pt",
     image_model_type="openai",
     image_default_input_size=(336, 336),
     image_patch_size=14,
@@ -166,7 +213,8 @@ DEFAULT_VISION_BACKBONE = VisionBackboneConfig(
 )
 
 
-SIGLIP_VISION_BACKBONE = VisionBackboneConfig(
+SIGLIP_VISION_BACKBONE = VitConfig(
+    init_path="${oc.env:MOLMO_DATA_DIR}/pretrained_image_encoders/siglip-so400m-14-384.pt",
     image_model_type="siglip",
     image_default_input_size=(378, 378),
     image_patch_size=14,
@@ -188,7 +236,14 @@ SIGLIP_VISION_BACKBONE = VisionBackboneConfig(
 )
 
 
-DINOV2_LARGE_336_VISION_BACKBONE = VisionBackboneConfig(
+SIGLIP2_VISION_BACKBONE = replace(
+    SIGLIP_VISION_BACKBONE,
+    init_path="${oc.env:MOLMO_DATA_DIR}/pretrained_image_encoders/siglip2-so400m-14-384.pt",
+)
+
+
+DINOV2_LARGE_336_VISION_BACKBONE = VitConfig(
+    init_path="${oc.env:MOLMO_DATA_DIR}/pretrained_image_encoders/dinov2-large-336.pt",
     image_model_type="dino",
     image_default_input_size=(336, 336),
     image_patch_size=14,
@@ -210,7 +265,8 @@ DINOV2_LARGE_336_VISION_BACKBONE = VisionBackboneConfig(
 )
 
 
-METACLIP_L14_336_VISION_BACKBONE = VisionBackboneConfig(
+METACLIP_L14_336_VISION_BACKBONE = VitConfig(
+    init_path="${oc.env:MOLMO_DATA_DIR}/pretrained_image_encoders/metaclip-l14-336.pt",
     image_model_type="openai",
     image_default_input_size=(336, 336),
     image_patch_size=14,
@@ -232,7 +288,8 @@ METACLIP_L14_336_VISION_BACKBONE = VisionBackboneConfig(
 )
 
 
-OLMOE = ModelConfig(
+OLMOE = LlmConfig(
+    init_path="${oc.env:MOLMO_DATA_DIR}/pretrained_llms/olmoe.pt",
     d_model=2048,
     n_heads=16,
     n_layers=16,
@@ -242,7 +299,6 @@ OLMOE = ModelConfig(
     rope=True,
     rope_full_precision=True,
     rope_theta=10000.0,
-    low_cpu_fsdp=True,
     attention_type='sdpa',
     attention_layer_norm=True,
     residual_dropout=0.1,
@@ -262,9 +318,6 @@ OLMOE = ModelConfig(
     additional_vocab_size=128,
     new_embedding_init_range=0.02,
     weight_tying=False,
-    init_device='meta',
-    precision='amp_bf16',
-    image_projector='mlp',
     normalize_input_embeds=False,
     use_position_ids=True,
 
@@ -284,12 +337,11 @@ OLMOE = ModelConfig(
     tokenizer=TokenizerConfig(
         identifier='allenai/OLMoE-1B-7B-0924',
     ),
-    image_pooling_2d="attention_meanq",
-    image_padding_embed="pad_and_partial_pad",
 )
 
 
-OLMO_1024_PREVIEW = ModelConfig(
+OLMO_1024_PREVIEW = LlmConfig(
+    init_path="${oc.env:MOLMO_DATA_DIR}/pretrained_llms/olmo-1024-preview.pt",
     d_model=4096,
     n_heads=32,
     n_kv_heads=None,
@@ -299,7 +351,6 @@ OLMO_1024_PREVIEW = ModelConfig(
     mlp_hidden_size=22016,
     activation_type="swiglu",
     block_type="sequential",
-    block_group_size=1,
     rope=True,
     rope_full_precision=True,
     rope_theta=500000,
@@ -318,22 +369,53 @@ OLMO_1024_PREVIEW = ModelConfig(
     additional_vocab_size=128,
     weight_tying=False,
     attention_type=AttentionType.sdpa,
-    init_device="meta",
-    init_fn="normal",
-    init_std=0.02,
-    init_cutoff_factor=3.0,
-    precision="amp_bf16",
     norm_after=True,
     tokenizer=TokenizerConfig(
         identifier="allenai/dolma2-tokenizer",
     ),
     embedding_dropout=0,
-    image_pooling_2d="attention_meanq",
-    image_padding_embed="pad_and_partial_pad",
 )
 
 
-QWEN2_7B = ModelConfig(
+OLMO2_1124_7B = replace(
+    OLMO_1024_PREVIEW,
+    init_path="${oc.env:MOLMO_DATA_DIR}/pretrained_llms/olmo2-1124-7b.pt",
+    tokenizer=TokenizerConfig(
+        identifier="allenai/OLMo-2-1124-7B",
+    ),
+)
+
+
+OLMO2_1124_13B = replace(
+    OLMO_1024_PREVIEW,
+    init_path="${oc.env:MOLMO_DATA_DIR}/pretrained_llms/olmo2-1124-13b.pt",
+    d_model=5120,
+    n_heads=40,
+    n_layers=40,
+    mlp_hidden_size=27648,
+    tokenizer=TokenizerConfig(
+        identifier="allenai/OLMo-2-1124-13B",
+    ),
+)
+
+
+
+OLMO2_0325_32B = replace(
+    OLMO_1024_PREVIEW,
+    init_path="${oc.env:MOLMO_DATA_DIR}/pretrained_llms/olmo2-0325-32b.pt",
+    d_model=5120,
+    n_heads=40,
+    n_kv_heads=8,
+    n_layers=64,
+    mlp_hidden_size=55296,
+    tokenizer=TokenizerConfig(
+        identifier="allenai/OLMo-2-0325-32B",
+    ),
+)
+
+
+QWEN2_7B = LlmConfig(
+    init_path="${oc.env:MOLMO_DATA_DIR}/pretrained_llms/qwen2-7b.pt",
     vocab_size=152064,
     max_sequence_length=4096,
     residual_dropout=0,
@@ -357,11 +439,11 @@ QWEN2_7B = ModelConfig(
     tokenizer=TokenizerConfig(
         identifier="Qwen/Qwen2-7B",
     ),
-    image_pooling_2d="attention_meanq",
-    image_padding_embed="pad_and_partial_pad",
 )
 
-QWEN25_15B = ModelConfig(
+
+QWEN25_15B = LlmConfig(
+    init_path="${oc.env:MOLMO_DATA_DIR}/pretrained_llms/qwen2.5-1.5b.pt",
     vocab_size=151936,
     max_sequence_length=4096,
     residual_dropout=0,
@@ -385,12 +467,11 @@ QWEN25_15B = ModelConfig(
     tokenizer=TokenizerConfig(
         identifier="Qwen/Qwen2.5-1.5B",
     ),
-    image_pooling_2d="attention_meanq",
-    image_padding_embed="pad_and_partial_pad",
 )
 
 
-QWEN25_3B = ModelConfig(
+QWEN25_3B = LlmConfig(
+    init_path="${oc.env:MOLMO_DATA_DIR}/pretrained_llms/qwen2.5-3b.pt",
     vocab_size=151936,
     max_sequence_length=4096,
     residual_dropout=0,
@@ -414,14 +495,38 @@ QWEN25_3B = ModelConfig(
     tokenizer=TokenizerConfig(
         identifier="Qwen/Qwen2.5-3B",
     ),
-    image_pooling_2d="attention_meanq",
-    image_padding_embed="pad_and_partial_pad",
 )
 
 
-QWEN2_72B = ModelConfig(
-    init_device="meta",
-    low_cpu_fsdp=True,
+QWEN25_7B = LlmConfig(
+    init_path="${oc.env:MOLMO_DATA_DIR}/pretrained_llms/qwen2.5-7b.pt",
+    vocab_size=152064,
+    max_sequence_length=4096,
+    residual_dropout=0,
+    embedding_dropout=0,
+    response_residual_dropout=0,
+    attention_dropout=0,
+    rope=True,
+    qkv_bias=True,
+    weight_tying=False,
+    include_bias=False,
+    embedding_size=152064,
+    d_model=3584,
+    mlp_hidden_size=18944*2,
+    n_layers=28,
+    additional_vocab_size=128,
+    n_heads=28,
+    n_kv_heads=4,
+    rope_theta=1000000.0,
+    layer_norm_eps=1e-6,
+    layer_norm_type=LayerNormType.rms,
+    tokenizer=TokenizerConfig(
+        identifier="Qwen/Qwen2.5-7B",
+    ),
+)
+
+QWEN2_72B = LlmConfig(
+    init_path="${oc.env:MOLMO_DATA_DIR}/pretrained_llms/qwen2-70b.pt",
     additional_vocab_size=128,
     vocab_size=152064,
     max_sequence_length=4096,
@@ -445,12 +550,10 @@ QWEN2_72B = ModelConfig(
     tokenizer=TokenizerConfig(
         identifier="Qwen/Qwen2-72B",
     ),
-    image_pooling_2d="attention_meanq",
-    image_padding_embed="pad_and_partial_pad",
 )
 
 
-OMLO_19_13B = ModelConfig(
+OMLO_19_13B = LlmConfig(
     d_model=5120,
     n_heads=40,
     n_kv_heads=None,
@@ -460,7 +563,6 @@ OMLO_19_13B = ModelConfig(
     mlp_hidden_size=27648,
     activation_type="swiglu",
     block_type="sequential",
-    block_group_size=1,
     rope=True,
     rope_full_precision=True,
     rope_theta=500000,
@@ -478,19 +580,14 @@ OMLO_19_13B = ModelConfig(
     embedding_size=100352,
     weight_tying=False,
     attention_type=AttentionType.sdpa,
-    init_device="meta",
     init_fn="normal",
     init_std=0.02,
     init_cutoff_factor=3.0,
-    precision="amp_bf16",
     norm_after=True,
-    pad_tokenizer=True,
     tokenizer=TokenizerConfig(
         identifier="allenai/dolma2-tokenizer",
     ),
     embedding_dropout=0,
-    image_pooling_2d="attention_meanq",
-    image_padding_embed="pad_and_partial_pad",
 )
 
 
@@ -508,40 +605,26 @@ DEFAULT_LOAD_PATHS = {
 }
 
 
-VISION_BACKBONES: Dict[str, VisionBackboneConfig] = {
+VISION_BACKBONES: Dict[str, VitConfig] = {
     "openai": DEFAULT_VISION_BACKBONE,
     "siglip": SIGLIP_VISION_BACKBONE,
+    "siglip2": SIGLIP2_VISION_BACKBONE,
     "dinov2_large_336": DINOV2_LARGE_336_VISION_BACKBONE,
     "metaclip_l14_336": METACLIP_L14_336_VISION_BACKBONE,
 }
 
 
-LLMS: Dict[str, ModelConfig] = {
+LLMS: Dict[str, LlmConfig] = {
     "olmoe": OLMOE,
     "olmo_1024_preview": OLMO_1024_PREVIEW,
+    "olmo2_1124_7b": OLMO2_1124_7B,
+    "olmo2_1124_13b": OLMO2_1124_13B,
+    "olmo2_0325_32b": OLMO2_0325_32B,
     "qwen2_7b": QWEN2_7B,
     "qwen2_72b": QWEN2_72B,
+    "qwen2.5_7b": QWEN25_7B,
     "qwen2.5_3b": QWEN25_3B,
     "qwen2.5_1.5b": QWEN25_15B,
     "olmo1120_13b": OMLO_19_13B,
 }
 
-
-def select_checkpoint(checkpoint):
-    """
-    returns the latest unsharded is checkpoint directory in `checkpoint`, returns `checkpoint`
-    if it is already a checkpoint dir
-    """
-    if file_exists(join(checkpoint, "model.pt")):
-        return checkpoint
-    candidates = []
-    for file in list_directory(checkpoint, include_files=False):
-        match = re.match(".*/step([0-9]+)-unsharded.*", file)
-        if match:
-            candidates.append((file, int(match.group(1))))
-    if len(candidates) == 0:
-        raise FileNotFoundError(f"{checkpoint} does not contain a model file or any "
-                                f"unsharded checkpoint")
-    checkpoint_dir = max(candidates, key=lambda x: x[1])[0]
-    logging.info(f"Selected {checkpoint_dir} as oldest checkpoint in {checkpoint_dir}")
-    return checkpoint_dir

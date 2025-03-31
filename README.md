@@ -24,45 +24,8 @@
 
 Molmo is a repository for training and using Ai2's state-of-the-art multimodal open language models.
 
-Here is a **[video demo](https://www.youtube.com/watch?v=spBxYa3eAlA)** of Molmo's capabilities. Try Molmo using our public **[demo](https://molmo.allenai.org)** showcasing the Molmo-7B-D model.
-
-This codebase is based on the [OLMo codebase](https://github.com/allenai/OLMo) with the addition
-of vision encoding and integrating generative evaluations.
-
-## Release Notes
-
-- [2024/12/05] **🔥 Molmo**: code for modeling, training and evaluation has been released. You can find detailed technical report [here](https://arxiv.org/pdf/2409.17146).
-
-- [2024/11/27] **🔥 [PixMo](https://huggingface.co/collections/allenai/pixmo-674746ea613028006285687b)**, our new collection of datasets for pre-training and fine-tuning VLMs, has been released. PixMo consists of:
-
-  - [**PixMo-Cap**](https://huggingface.co/datasets/allenai/pixmo-cap) (pre-training, fine-tuning): highly detailed dense caption dataset (roughly 200 words on average)
-  - [**PixMo-AskModelAnything**](https://huggingface.co/datasets/allenai/pixmo-ask-model-anything) (fine-tuning): instruction-tuning data containing human-authored image-question-answer triplets
-  - [**PixMo-CapQA**](https://huggingface.co/datasets/allenai/pixmo-cap-qa) (fine-tuning): synthetic instruction-tuning data, using a LLM to build QA pairs from dense captions of images
-  - [**PixMo-Points**](https://huggingface.co/datasets/allenai/pixmo-points) (fine-tuning): images paired with referring expressions and annotated points, supporting grounding and counting
-  - [**PixMo-Point-Explanations**](https://huggingface.co/datasets/allenai/pixmo-point-explanations) (fine-tuning): instruction-tuning data with explanations containing in-line points referring to parts of the image
-  - [**PixMo-Docs**](https://huggingface.co/datasets/allenai/pixmo-docs) (fine-tuning): synthetic image-question-answer triplets about various kinds of computer-generated charts, tables, diagrams and documents. Code available [here](https://github.com/allenai/pixmo-docs).
-  - [**PixMo-Clocks**](https://huggingface.co/datasets/allenai/pixmo-clocks) (fine-tuning): virtual watch faces and time annotations
-  - [**PixMo-Count**](https://huggingface.co/datasets/allenai/pixmo-count) (fine-tuning): diverse images with counting QA pairs
-
-  All datasets were constructed **without the use of VLMs**.
-
-<div align="center">
-  <img src="assets/png_version_molmo_pixmo.png" alt="Pixmo and Molmo" width="800" style="margin-left:'auto' margin-right:'auto' display:'block'"/>
-  <br>
-  <p>Datasets in PixMo (left) and the capabilities they enable in Molmo (right).
-  <br>
-</div>
-
-- [2024/09/24] **🔥 [Molmo](https://huggingface.co/collections/allenai/molmo-66f379e6fe3b8ef090a8ca19)**, a new family of open VLMs, has been released. The Molmo family consists of:
-
-  - [**MolmoE-1B**](https://huggingface.co/allenai/MolmoE-1B-0924): a mixture of experts model with 1B (active) 7B (total)
-  - [**Molmo-7B-O**](https://huggingface.co/allenai/Molmo-7B-O-0924): our most open 7B model
-  - [**Molmo-7B-D**](https://huggingface.co/allenai/Molmo-7B-D-0924): our best 7B and demo model
-  - [**Molmo-72B**](https://huggingface.co/allenai/Molmo-7B-D-0924): our best 72B model
-
 
 ## Installation
-
 We recommend using python 3.10.
 First install [PyTorch](https://pytorch.org) according to the instructions specific to your operating system.
 
@@ -76,45 +39,11 @@ pip install -e .[all]
 
 For training and evaluating MolmoE-1B, please install megablocks by running `pip install git+https://github.com/Muennighoff/megablocks.git@olmoe`.
 
-
-## Huggingface Models and Logs
-
-The core models in the Molmo family released so far are:
-
-<table>
-  <tr>
-    <th>Model</th>
-    <th>Vision Encoder</th>
-    <th>LLM</th>
-    <th align="center">11-benchmark avg</th>
-  </tr>
-  <tr>
-    <td><a href="https://huggingface.co/allenai/MolmoE-1B-0924">MolmoE-1B-0924</a></td>
-    <td rowspan="4"><a href="https://huggingface.co/openai/clip-vit-large-patch14-336">OpenAI CLIP ViT-L/14@336</a></td>
-    <td><a href="https://huggingface.co/allenai/OLMoE-1B-7B-0924">OLMoE-1B-7B-0924</a></td>
-    <td align="center">68.6</td>
-  </tr>
-  <tr>
-    <td><a href="https://huggingface.co/allenai/Molmo-7B-O-0924">Molmo-7B-O-0924</a></td>
-    <td><a href="https://huggingface.co/allenai/OLMo-7B-1024-preview">OLMo-7B-1024-preview</a></td>
-    <td align="center">74.6</td>
-  </tr>
-  <tr>
-    <td><a href="https://huggingface.co/allenai/Molmo-7B-D-0924">Molmo-7B-D-0924</a></td>
-    <td><a href="https://huggingface.co/Qwen/Qwen2-7B">Qwen2-7B</a></td>
-    <td align="center">77.3</td>
-  </tr>
-  <tr>
-    <td><a href="https://huggingface.co/allenai/Molmo-72B-0924">Molmo-72B-0924</a></td>
-    <td><a href="https://huggingface.co/Qwen/Qwen2-72B">Qwen2-72B</a></td>
-    <td align="center">81.2</td>
-  </tr>
-</table>
-
-W&B logs: [pre-training](https://wandb.ai/prior-ai2/molmo/reports/Molmo-Pre-training--VmlldzoxMDQwODE3OA), [fine-tuning](https://wandb.ai/prior-ai2/molmo/reports/Molmo-Fine-tuning--VmlldzoxMDQwOTQ4Mw)
+For running on beaker, `Dockerfile` can build an image to use. See [beaker](##Beaker).
 
 ## Data Downloading and Setup
-If you are using beaker at Ai2, you can probably skip this part, see the bottom section.
+If you are using Ai2 compute, you can probably skip this part as the data is already downloaded.
+See running with [beaker](##Beaker)
 
 Molmo uses huggingface datasets for most data, therefore most 
 data will be stored in the default huggingface cache. See [here](https://huggingface.co/docs/huggingface_hub/guides/manage-cache)
@@ -160,46 +89,7 @@ python3 scripts/dataset_visualize.py chart_qa /path/to/viz/dir
 ```
 
 ## Trained Models
-We release model weights both after pre-training and after fine-tuning in a format compatible
-with this codebase. The fine-tuned weights match the ones in the hugging face repos,
-but have a slightly different format. The config files are backwards-compatible with
-this repo, but also have a slightly different format. 
-
-<table>
-  <tr>
-    <th>Model</th>
-    <th>Pretrained</th>
-    <th>Fine-Tuned</th>
-  </tr>
-  <tr>
-    <td><a href="https://huggingface.co/allenai/MolmoE-1B-0924">MolmoE-1B-0924</a></td>
-    <td><a href="https://storage.googleapis.com/oe-training-public/Molmo-0924/MolmoE-1B-0924-Pretrained.tar">pretrained</a></td>
-    <td><a href="https://storage.googleapis.com/oe-training-public/Molmo-0924/MolmoE-1B-0924.tar">fine-tuned</a></td>
-  </tr>
-  <tr>
-    <td><a href="https://huggingface.co/allenai/Molmo-7B-O-0924">Molmo-7B-O-0924</a></td>
-    <td><a href="https://storage.googleapis.com/oe-training-public/Molmo-0924/Molmo-7B-O-0924-Pretrained.tar">pretrained</a></td>
-    <td><a href="https://storage.googleapis.com/oe-training-public/Molmo-0924/Molmo-7B-O-0924.tar">fine-tuned</a></td>
-  </tr>
-  <tr>
-    <td><a href="https://huggingface.co/allenai/Molmo-7B-D-0924">Molmo-7B-D-0924</a></td>
-    <td><a href="https://storage.googleapis.com/oe-training-public/Molmo-0924/Molmo-7B-D-0924-Pretrained.tar">pretrained</a></td>
-    <td><a href="https://storage.googleapis.com/oe-training-public/Molmo-0924/Molmo-7B-D-0924.tar">fine-tuned</a></td>
-  </tr>
-  <tr>
-    <td><a href="https://huggingface.co/allenai/Molmo-72B-0924">Molmo-72B-0924</a></td>
-    <td><a href="https://storage.googleapis.com/oe-training-public/Molmo-0924/Molmo-72B-0924-Pretrained.tar">pretrained</a></td>
-    <td><a href="https://storage.googleapis.com/oe-training-public/Molmo-0924/Molmo-72B-0924.tar">fine-tuned</a></td>
-  </tr>
-</table>
-
-To use them, download the file and untar them. Each folder contains
-the needed config file and model weights. For example:
-
-```bash
-wget https://storage.googleapis.com/oe-training-public/Molmo-0924/Molmo-7B-D-0924.tar
-tar -xf Molmo-7B-D-0924.tar 
-```
+On weka, our existing model can be found in `/weka/oe-training-default/mm-olmo/released-models-0924/`
 
 
 ## Captioner Evaluation
@@ -329,7 +219,7 @@ torchrun --nproc-per-node=1 launch_scripts/train_multitask_model.py debug debug
 --save_folder=dbg --save_overwrite
 `
 
-## Performance
+## Throughput Optimization
 Be default full activation checkpointing is used, you can
 experiment with `--activation_checkpointing=one_in_two` to get more performance,
 but I have generally found increasing the batch size is better than using less activation
@@ -352,48 +242,116 @@ For `torch.compile` I recommend using `dynamic=False` since if the model gets ac
 dynamic mode you will see a significant performance drop. Autoregressive decoding is 
 done in a non-compiled path so it does not trigger an excessive number of re-compilations.
 
+## Remote Files
+Generally remote files path should work seamlessly as long as credentials are setup correctly.
+For example, you could use:
+`--save_folder=gs://mm-olmo/chrisc-models/run_name` for train scripts.
+
+### GCP
+Augusta machines start with access to some google cloud buckets (including `gs://mm-olmo/`), so you
+you should not include your own GCP credentials, however if you want to write to a new bucket you will have to
+give permission for the GCP service account used by augusta to write to that bucket (acount 728032525089-compute@developer.gserviceaccount.com)
+
+On other machines credentials can be passed in through a ENV variable `GOOGLE_APPLICATION_CREDENTIALS_JSON`
+so it can be set with a beaker-secret. It should contain a raw JSON google 
+credential file.
+
+Sharded checkpoints will be much more efficient when using multiple nodes since they can be downloaded/uploaded
+in parallel by different nodes.
+
+### Weka
+Non-cirrascale machines can still directly access weka if you setup an AWS account,
+one-pass contains the needed credentials. The credential file can be passed as a raw string
+to `AWS_CREDENTIALS`. Then some other flags need to be set, as documented 
+[here](https://beaker-docs.apps.allenai.org/compute/data-storage.html#s3-access):
+
+```
+export WEKA_ENDPOINT_URL="https://weka-aus.beaker.org:9000",
+export WEKA_PROFILE="weka",
+export AWS_CREDENTIALS=YOUR_CREDENTIAL_DATA
+```
+
+In this case paths like `weka://oe-training-default/chrisc/models` will work.
+On Augusta, that will be slower and less reliable than using GFS.
+
+## Preemption/Restarting
+Train runs with `--allow_resume` (usually true by default) should auto-recover
+if restarted as long as a checkpoint has been saved. Restarted runs will create a new wandb run entry.
+Resumed runs are expected to nearly exactly match what would have happened without restarting.
+
+Evaluations on multiple datasets will skip evaluating already evaluated dataset
+as long as `--skip_if_metrics_cached` is set.
+
+
 ## Beaker
-`Dockerfile` can be used to build a beaker image. I have one built at `chrisc/molmo-torch2.5.1-cuda12.4`.
-Some ganty setting to use:
+`Dockerfile` can be used to build a beaker image. I have one built at `chrisc/molmo-torch2.6.0-cuda12.4`.
+Some gantry settings to use:
  
+### Environment
+Generally beaker jobs should use these flags:
+
+```
+--env HF_DATASETS_OFFLINE=1
+--env OLMO_SHARED_FS=1
+--env OMP_NUM_THREADS=8
+--env-secret HF_ACCESS_TOKEN=YOUR_HF_KEY_SECRET_NAME
+--env-secret OPENAI_API_KEY=YOUR_OPENAI_API_KEY_SECRET_NAME
+```
+
+`HF_DATASETS_OFFLINE` stops HF issues tons of requests to the HF dataset hub even though the data
+is already download, I think to check the data is up-to-date.
+
+`OLMO_SHARED_FS` tell the codes to assume, for multi-nodes jobs, you are saving to a shared
+file system, meaning they either saving to weka or a remote FS. This could be turned off if writing 
+data locally, but generally there is no reason to prefer doing that.
+
+`HF_ACCESS_TOKEN` might be used to download the tokenizer, and
+`OPENAI_API_KEY` might be used in some evaluations.
+
+`OMP_NUM_THREADS` is for torch.
+
+### Cirrascale machines
 Setup access to the data in weka
 ```
---env HF_DATASETS_CACHE=/weka/oe-training-default/mm-olmo/hf_datasets
 --env MOLMO_DATA_DIR=/weka/oe-training-default/mm-olmo
---env HF_DATASETS_OFFLINE=1
 --weka oe-training-default:/weka/oe-training-default
 ```
 
+For jupiter, also set the environment variables from [here](https://beaker-docs.apps.allenai.org/experiments/distributed-training.html#ai2jupiter-cirrascale-2)
+
+### Augusta
+To run on Augusta, instead use:
+```
+--env MOLMO_DATA_DIR="gs://mm-olmo"
+--env NCCL_TIMEOUT_MINUTES=30
+ ```
+
+The `NCCL_TIMEOUT_MINUTES` can prevent `barrier()` from timing out while 
+loading/writing large files from remote storage, although a better solution is
+to use sharded checkpoints only.
+
+Be sure also set the environment variables from [here](https://beaker-docs.apps.allenai.org/compute/augusta.html)
+
+Augusta jobs should generally use GFS to save/load models, see [remote files](###GCP).
+
+Only some datasets are support on GFS, but that includes all the Pixmo datasets.
+
+### Wandb
 Setup wandb and access keys (first store your keys as beaker secrets):
 ```
 --env WANDB_ENTITY=prior-ai2 
---env WANDB_PROJECT=cockatoo
+--env WANDB_PROJECT=molmo
 --env-secret WANDB_API_KEY=YOUR_WANDB_KEY_SECRET_NAME
---env-secret HF_ACCESS_TOKEN=YOUR_HF_KEY_SECRET_NAME
 ```
 
+### Experiment flags
 Runs for research on Molmo can use:
 ```
 --budget ai2/oe-training
 --workspace ai2/mm-olmo
 ```
 
-For reference here is a complete example of a gantry command to train 
-the captioner (please make sure to use you access keys and save folders before running it):
-
-`
-gantry run --name dense-captioner-ablations-v2_from-molmo-metaclip_12-11-35-36 --budget ai2/oe-training --preemptible --priority high --cluster ai2/jupiter-cirrascale-2 --no-nfs --gpus 8 --shared-memory 10GiB --venv base --beaker-image chrisc/molmo-v2 --install echo "no install" --workspace ai2/mm-olmo --env-secret WANDB_API_KEY=CHRISC_WANDB_API_KEY --env-secret HF_ACCESS_TOKEN=CHRISC_HF_ACCESS_TOKEN --env OMP_NUM_THREADS=8 --env HF_DATASETS_CACHE=/weka/oe-training-default/mm-olmo/hf_datasets --env MOLMO_DATA_DIR=/weka/oe-training-default/mm-olmo --env HF_DATASETS_OFFLINE=1 --env WANDB_ENTITY=prior-ai2 --env WANDB_PROJECT=cockatoo --description  launch_scripts/train_captioner.py qwen2_7b --save_overwrite --vision_backbone metaclip_l14_336 --weka oe-training-default:/weka/oe-training-default --replicas 4 --leader-selection --host-networking --propagate-failure --propagate-preemption --env LOG_FILTER_TYPE=local_rank0_only --env NCCL_SOCKET_IFNAME=ib --env NCCL_IB_HCA=^=mlx5_bond_0 --env OLMO_SHARED_FS=1 -- /bin/bash -c torchrun --nnodes 4:4 --rdzv_backend=c10d --rdzv_id=42 --rdzv_conf="read_timeout=600" --rdzv_endpoint=$BEAKER_LEADER_REPLICA_HOSTNAME:29401 --nproc-per-node 8 launch_scripts/train_captioner.py qwen2_7b --save_overwrite --vision_backbone metaclip_l14_336 --wandb.group=dense-captioner-ablations-v2 --wandb.name=from-molmo-metaclip --save_folder=/weka/oe-training-default/chrisc/cockatoo/models/dense-captioner-ablations-v2/from-molmo-metaclip
-`
-
-I recommend setting up a script to setup these defaults args.
-
-## Citation
-
-```bibtex
-@article{molmo2024,
-  title={Molmo and PixMo: Open Weights and Open Data for State-of-the-Art Multimodal Models},
-  author={Matt Deitke and Christopher Clark and Sangho Lee and Rohun Tripathi and Yue Yang and Jae Sung Park and Mohammadreza Salehi and Niklas Muennighoff and Kyle Lo and Luca Soldaini and Jiasen Lu and Taira Anderson and Erin Bransom and Kiana Ehsani and Huong Ngo and YenSung Chen and Ajay Patel and Mark Yatskar and Chris Callison-Burch and Andrew Head and Rose Hendrix and Favyen Bastani and Eli VanderBilt and Nathan Lambert and Yvonne Chou and Arnavi Chheda and Jenna Sparks and Sam Skjonsberg and Michael Schmitz and Aaron Sarnat and Byron Bischoff and Pete Walsh and Chris Newell and Piper Wolters and Tanmay Gupta and Kuo-Hao Zeng and Jon Borchardt and Dirk Groeneveld and Jen Dumas and Crystal Nam and Sophie Lebrecht and Caitlin Wittlif and Carissa Schoenick and Oscar Michel and Ranjay Krishna and Luca Weihs and Noah A. Smith and Hannaneh Hajishirzi and Ross Girshick and Ali Farhadi and Aniruddha Kembhavi},
-  journal={arXiv preprint arXiv:2409.17146},
-  year={2024}
-}
-```
+### Examples
+I have been using the script `examples/run_gantry.py` to make launching jobs
+easier, feel free to use it for reference, but do not use it directly since 
+it will use my personal beaker secrets.

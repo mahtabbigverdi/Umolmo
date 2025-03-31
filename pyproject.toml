@@ -35,7 +35,12 @@ dependencies = [
     "einops-exts",
     "tqdm",
     "gcsfs==2023.9.2",
-    "accelerate"
+    "accelerate",
+    "imageio",
+    "imageio[pyav]",
+    "decord",
+    "pyav",
+    "moviepy"
 ]
 
 [project.optional-dependencies]

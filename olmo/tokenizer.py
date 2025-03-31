@@ -1,10 +1,13 @@
-# import ujson as json
+from __future__ import annotations
+
 import logging
+from dataclasses import dataclass
 from os import environ
-from typing import List
+from typing import List, Optional
 
 from transformers import AutoTokenizer
 
+from .config import BaseConfig, D
 from .torch_util import get_local_rank, barrier
 from .util import is_url
 
@@ -14,21 +17,22 @@ except ImportError:
     from functools import lru_cache as cache
 
 # Special tokens, these should be present in any tokenizer we use since the preprocessor uses them
-DEFAULT_IMAGE_PATCH_TOKEN = f"<im_patch>"
-DEFAULT_IM_START_TOKEN = f"<im_start>"
-DEFAULT_IM_END_TOKEN = f"<im_end>"
-DEFAULT_IM_COL_TOKEN = f"<im_col>"
+IMAGE_PATCH_TOKEN = f"<im_patch>"  # Where to insert high-res tokens
+IMAGE_LOW_RES_TOKEN = f"<im_low>"  # Where to insert low-res tokens
+IM_START_TOKEN = f"<im_start>"
+IM_END_TOKEN = f"<im_end>"
+IM_COL_TOKEN = f"<im_col>"
 IMAGE_PROMPT = "<|image|>"
 
-EXTRA_TOKENS = (DEFAULT_IM_START_TOKEN, DEFAULT_IM_END_TOKEN, DEFAULT_IMAGE_PATCH_TOKEN,
-                DEFAULT_IM_COL_TOKEN, IMAGE_PROMPT)
+EXTRA_TOKENS = (IM_START_TOKEN, IM_END_TOKEN, IMAGE_PATCH_TOKEN,
+                IM_COL_TOKEN, IMAGE_PROMPT, IMAGE_LOW_RES_TOKEN)
 
 
 class HfTokenizerWrapper:
     """Tokenizer wrapper
 
     This exists mostly for legacy reasons since we used to support other kinds of tokenizers
-    with different API
+    with different APIs
     """
     def __init__(self, tokenizer, bos_token_id=None, adds_space=False):
         self.adds_space = adds_space
@@ -39,6 +43,13 @@ class HfTokenizerWrapper:
             self.bos_token_id = bos_token_id
         self.eos_token_id = self.tokenizer.eos_token_id
         self.pad_id = -1
+        special_tokens = get_special_token_ids(self)
+        self.image_end_token_id = special_tokens[IM_END_TOKEN]
+        self.image_start_token_id = special_tokens[IM_START_TOKEN]
+        self.image_col_token_id = special_tokens[IM_COL_TOKEN]
+        self.image_patch_token_id = special_tokens[IMAGE_PATCH_TOKEN]
+        self.image_low_res_token_id = special_tokens[IMAGE_LOW_RES_TOKEN]
+        self.image_prompt_token_id = special_tokens[IMAGE_PROMPT]
 
     def encode(self, x: str):
         return self.tokenizer.encode(x, add_special_tokens=False)
@@ -108,10 +119,9 @@ def build_tokenizer(
         token=environ.get("HF_ACCESS_TOKEN"),
         cache_dir=cache_dir,
     )
-    if ("qwen2" in tokenizer_type.lower()) or ("olmo" in tokenizer_type.lower()):
+    if tokenizer.bos_token_id is None:
         # These tokenizers do not have a BOS, and instead use EOS as a generic seperator token.
         # In this case we will use EOS as BOS
-        assert tokenizer.bos_token_id is None
         bos_token_id = tokenizer.eos_token_id
 
     if pad_tokenizer_to is not None:
@@ -134,3 +144,16 @@ def get_special_token_ids(tokenizer):
 
     assert len(ids) == len(EXTRA_TOKENS)
     return {k: i for k, i in zip(EXTRA_TOKENS, ids)}
+
+
+@dataclass
+class TokenizerConfig(BaseConfig):
+    identifier: str = "gpt2"
+    tokenizer_dir: Optional[str] = None
+
+    def build(self, pad_tokenizer_to):
+        return build_tokenizer(
+            self.identifier,
+            tokenizer_dir=self.tokenizer_dir,
+            pad_tokenizer_to=pad_tokenizer_to
+        )
