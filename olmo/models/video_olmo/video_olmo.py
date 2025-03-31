@@ -64,6 +64,7 @@ class VideoOlmoConfig(MolmoConfig):
         self,
         for_inference,
         is_training=True,
+        include_image=False,
         max_seq_len: Optional[int] = None,
     ) -> VideoPreprocessor:
         """
@@ -77,6 +78,7 @@ class VideoOlmoConfig(MolmoConfig):
             for_inference=for_inference,
             is_training=is_training,
             frame_sample_mode=self.mm_preprocessor.frame_sample_mode,
+            include_image=include_image,
             max_frames=self.mm_preprocessor.max_frames,
             candidate_sampling_fps=self.mm_preprocessor.candidate_sampling_fps,
         )

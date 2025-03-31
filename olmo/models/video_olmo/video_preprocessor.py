@@ -11,7 +11,7 @@ from PIL import Image
 
 from olmo import tokenizer
 from olmo.data.image_preprocessor import ImagePreprocessor
-from olmo.data.text_preprocessor import InterleavedTextPreprocessor
+from olmo.data.interleaved_text_preprocessor import InterleavedTextPreprocessor
 from olmo.io import resource_path
 from olmo.models.molmo.data_formatter import DataFormatter
 from olmo.tokenizer import get_special_token_ids
@@ -233,9 +233,6 @@ class MultiModalVideoPreprocessorConfig(MolmoPreprocessorConfig):
 
     candidate_sampling_fps: Tuple[float] = (0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0)
     """Candidate sampling fps to sample the frames from the video"""
-
-    bi_directional_attn: Optional[str] = None
-    """Allow bidirectional attention for some tokens"""
 
     def get_image_padding_lens(self, vision_backbone_config: MolmoVisionBackboneConfig):
         """Max numbers of image tokens can be built for one image"""

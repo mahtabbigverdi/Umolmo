@@ -114,10 +114,6 @@ def test_preprocessing(col_tokens: bool=False, max_crops=4, siglip=False, multi_
             text_mask[:second_image_end] = 0
             text = tokenizer.decode(input_ids[text_mask])
             assert text == "".join(messages[i])
-            # assert np.all(
-            #     position_ids[text_mask] ==
-            #     (np.arange(text_mask.sum()) + position_ids[second_image_end-1]+1)
-            # )
 
 
 @pytest.mark.parametrize("col_tokens", [True, False])
@@ -131,5 +127,69 @@ def test_preprocessor_multi_message():
     test_preprocessing(True, max_crops=2, siglip=False, multi_message=True)
 
 
+def test_video():
+    tok = build_tokenizer("Qwen/Qwen2-7B")
+    preprocessor = HeMultiModalPreprocessor(
+        tokenizer=tok,
+        crop_mode="resize",
+        max_crops=1,
+        resize="siglip",
+        num_high_res_features=128,
+        multi_res_selection=None,
+        multi_res_min=None,
+        use_col_tokens=False,
+        use_high_res_col_tokens=False,
+        base_image_input_size=(378, 378),
+        video_low_res=9,
+        video_high_res=3
+    )
+    messages = [
+        ["Here is question1", " answer is 2"],
+        ["And here is a longer question3", " 3"],
+        ["Q3", " a longer answer"]
+    ]
+    n_frames = 12
+    batch = preprocessor(
+        images=np.zeros((n_frames, 500, 500, 3), dtype=np.uint8),
+        frame_times=np.arange(12),
+        messages=messages,
+        rng=np.random,
+    )
+    input_ids = batch["input_tokens"]
+    position_ids = batch["position_ids"]
+    high_res_pos_ids = batch["high_res_pos_ids"]
+
+    # low-to-high should make sense
+    assert np.allclose(batch["low_to_high"].sum(0), 1)
+
+    #  Acts as a "Video End" token
+    assert (input_ids == tok.image_end_token_id).sum() == 2
+
+    # Now check the low-res image
+    image_start = 1 + np.argmax(input_ids == tok.image_end_token_id)
+    low_res_counts = Counter(input_ids[:image_start])
+    assert low_res_counts[tok.image_start_token_id] == n_frames
+    assert low_res_counts[tok.image_end_token_id] == 1
+    assert np.all(position_ids[:image_start] == np.arange(image_start))
+
+    second_image_end = image_start + 1 + np.argmax(input_ids[image_start:] == tok.image_end_token_id)
+    high_res_counts = Counter(input_ids[:image_start])
+    assert high_res_counts[tok.image_start_token_id] == n_frames
+    assert high_res_counts[tok.image_end_token_id] == 1
+
+    high_pos = position_ids[image_start:second_image_end]
+    high_ids = input_ids[image_start:second_image_end]
+    possible_high_res_positions = high_res_pos_ids.ravel()[high_res_pos_ids.ravel() >= 0]
+    high_res_patch_base_pos_id = preprocessor.num_high_res_features
+    assert np.all(high_pos[high_ids == tok.image_patch_token_id] == high_res_patch_base_pos_id)
+
+    all_possible_pos = np.concatenate([
+        possible_high_res_positions + high_res_patch_base_pos_id,
+        high_pos[high_ids != tok.image_patch_token_id]
+    ])
+    all_possible_pos.sort()
+    assert np.all(all_possible_pos == np.arange(0, len(all_possible_pos)) + 1 + position_ids[image_start-1])
+
+
 if __name__ == '__main__':
-    test_preprocessing(False, max_crops=4, siglip=False, multi_message=False)
+    test_video()

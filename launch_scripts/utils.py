@@ -68,7 +68,7 @@ def get_evaluator(name) -> EvaluatorConfig:
     elif name == "vqa_v2_test":
         return EvaluatorConfig()
     elif name.startswith("chart_qa"):
-        return EvaluatorConfig(vqa_eval="relaxed_correctness,em")
+        return EvaluatorConfig(vqa_eval="relaxed_correctness,scifi_relaxed_correctness,em")
     elif name in ["doc_qa", "info_qa", "st_qa"]:
         return EvaluatorConfig(vqa_eval="ansl,em")
     elif name in ["gqa", "tally_qa"]:
@@ -91,13 +91,26 @@ def get_evaluator(name) -> EvaluatorConfig:
         return EvaluatorConfig(clock_bench_eval=True)
     elif name in ["countbench_qa"]:
         return EvaluatorConfig(count_eval=True)
-    elif name in ["mvbench", "llava_video_178k_mc"]: # expects a single character followed by a dot.
+    elif name in ["mvbench", "llava_video_178k_mc", "mlvu_mc"]: # expects a single character followed by a dot.
         return EvaluatorConfig(vqa_eval="em_start")
     elif name.startswith("temp_compass"):
         disable_api = "disable_api" in name
         name = name.replace("_disable_api", "")
         task = '_'.join(name.split("_")[2:]) if len(name.split("_")) > 2 else "all"
         return EvaluatorConfig(temp_compass_eval=task, temp_compass_disable_api=disable_api)
+    elif name == "mlvu_gen":
+        return EvaluatorConfig(mlvu_gen_eval=True)
+    elif name == "ego_schema":
+        return EvaluatorConfig(vqa_eval="ego_schema_mc")
+    elif name == "perception_test":
+        return EvaluatorConfig(vqa_eval="perception_test_mc")
+    elif name.startswith("video_mme"):
+        duration = "all" if len(name.split("_")) == 2 else name.split("_")[2]
+        return EvaluatorConfig(video_mme_eval=duration)
+    elif name == "long_video_bench":
+        return EvaluatorConfig(long_video_bench_eval=True)
+    elif name == "nextqa_mc":
+        return EvaluatorConfig(vqa_eval="nextqa_mc")
     elif name in ["dense_caption_eval", "user_qa", "vqa_v2_test", "intern_vid"]:
         # No metrics, but still save prediction file
         return EvaluatorConfig()
@@ -106,7 +119,8 @@ def get_evaluator(name) -> EvaluatorConfig:
 
 
 def get_evaluation(name, seq_len, max_examples, for_inference=True,
-                   num_workers=2, device_batch_size=None, persistent_workers=False) -> InfDatasetEvaluatorConfig:
+                   num_workers=2, device_batch_size=None,
+                   persistent_workers=False, include_image=False) -> InfDatasetEvaluatorConfig:
     """Gets the default evaluation config for task (or task:split string) `name`"""
     if ":" in name:
         name, split = name.split(":")
@@ -164,9 +178,11 @@ def get_evaluation(name, seq_len, max_examples, for_inference=True,
             max_new_tokens = 64
         elif name.startswith("android_control"):
             max_new_tokens = 16
-        elif name == "llava_video_178k_oe" or name == "llava_video_178k_cap" or name.startswith("temp_compass"):
+        elif name == "llava_video_178k_oe" or name == "llava_video_178k_cap" or name.startswith("temp_compass") or name == "mlvu_gen":
             max_new_tokens = 192
         elif "refc" in name or "mvbench" in name or name == "llava_video_178k_mc":
+            max_new_tokens = 32
+        elif name == "ego_schema":
             max_new_tokens = 32
         else:
             max_new_tokens = 12
@@ -178,7 +194,8 @@ def get_evaluation(name, seq_len, max_examples, for_inference=True,
             evaluator=evaluator,
             label="ai2_diagram" if "ai2_diagram" in name else name,
             data=ds,
-            console_log_interval="${console_log_interval}"  # Use log interval in top-level config
+            console_log_interval="${console_log_interval}",  # Use log interval in top-level config
+            include_image=include_image,
         )
             
     else:

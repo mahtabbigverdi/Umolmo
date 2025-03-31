@@ -113,6 +113,344 @@ def save_bounded_video(video_path, start_time, end_time, task_type):
     return output_path
 
 
+class NeXTQA(DatasetBase):
+    data_path = os.path.join(VIDEO_DATA_HOME, "NeXTQA")
+
+    def __init__(self, split, task):
+        # implement MC task for now
+        if task == "multiple-choice":
+            assert split in ["test"]
+        else:
+            raise NotImplementedError(f"Task {task} not implemented")
+        self.task = task
+        super().__init__(split)
+    
+    def mc_qoa_template(self, data):
+        options = [data[f'a{idx}'].strip() for idx in range(5)]
+        option_text = "\n".join(
+            f"{chr(ord('A') + idx)}. {options[idx]}" for idx in range(5)
+        )
+        answer = f"{chr(ord('A') + int(data['answer']))}"
+        question = "\n".join(
+            [
+                data["question"].strip(),
+                option_text,
+                "Answer with the option's letter from the given choices directly.",
+            ]
+        )
+        return question, options, answer
+    
+    def load(self):
+        task = self.task
+        data = []
+        if task == "multiple-choice":
+            df = pd.read_parquet(os.path.join(self.data_path, "MC", "test-00000-of-00001.parquet"))
+            for idx, row in df.iterrows():
+                video_path = os.path.join(self.data_path, "NExTVideo", f"{row['video']}.mp4")
+                quesiton, options, answer = self.mc_qoa_template(row)
+                example = {
+                    "question": quesiton,
+                    "answer": answer,
+                    "video": video_path,
+                    "style": "video_eval_multiple_choice",
+                    "metadata": dict(
+                        question_id=str(idx),
+                        question_type=row["type"],
+                        video_id=row["video"],
+                        options=options,
+                    )
+                }
+                data.append(example)
+        else:
+            raise NotImplementedError(f"Task {task} not implemented")
+        return data
+
+    def get(self, idx, rng):
+        return self.data[idx]
+
+
+class LongVideoBench(DatasetBase):
+    data_path = os.path.join(VIDEO_DATA_HOME, "LongVideoBench")
+
+    def __init__(self, split):
+        assert split in ["validation"]
+        super().__init__(split)
+    
+    def qa_template(self, qa_data):
+        option_text = "\n".join(f"{chr(ord('A') + idx)}. {opt}" for idx, opt in enumerate(qa_data['candidates']))
+        answer = f"{chr(ord('A') + qa_data['correct_choice'])}"
+        question = "\n".join(
+            [
+                qa_data["question"],
+                option_text,
+                "Answer with the option's letter from the given choices directly.",
+            ]
+        )
+        return question, answer
+    
+    def load(self):
+        json_data = json.loads(read_file(os.path.join(self.data_path, "lvb_val.json")))
+        data = []
+        for qa_data in json_data:
+            video_path = os.path.join(self.data_path, "videos", qa_data["video_path"])
+            question, answer = self.qa_template(qa_data)
+            example = {
+                "question": question,
+                "answer": answer,
+                "video": video_path,
+                "metadata": dict(
+                    question_id=qa_data["id"],
+                    video_id=qa_data["video_id"],
+                    level=qa_data["level"],
+                    options=qa_data["candidates"],
+                    question_category=qa_data["question_category"],
+                    duration_group=qa_data["duration_group"],
+                )
+            }
+            data.append(example)
+        return data
+
+    def get(self, idx, rng):
+        return dict(**self.data[idx], style="video_eval_multiple_choice")
+
+
+class MLVU(DatasetBase):
+    data_path = os.path.join(VIDEO_DATA_HOME, "MVLU", "MLVU")
+    val_mc_tasks = [
+        "plotQA",
+        "needle",
+        "ego",
+        "count",
+        "order",
+        "anomaly_reco",
+        "topic_reasoning"
+    ]
+    vak_gen_tasks = ["sub_scene", "summary"]
+
+    def __init__(self, split, task):
+        assert split in ["validation"]
+        assert task in ["multiple-choice", "generation"]
+        self.task = task
+        super().__init__(split)
+    
+    def mc_qa_template(self, data):
+        """lmms-eval uses the MVBench's template, but llava-video uses the different one, so just follow the PerceptionTest's template"""
+        option_text = "\n".join(f"{chr(ord('A') + idx)}. {opt}" for idx, opt in enumerate(data['candidates']))
+        answer_idx = data['candidates'].index(data['answer'])
+        answer = f"{chr(ord('A') + answer_idx)}"
+        question = "\n".join(
+            [
+                data["question"],
+                option_text,
+                "Answer with the option's letter from the given choices directly.",
+            ]
+        )
+        return question, answer
+        """
+        option_text = "\n".join(f"({chr(ord('A') + idx)}) {opt}" for idx, opt in enumerate(data['candidates']))
+        answer_idx = data['candidates'].index(data['answer'])
+        answer = f"{chr(ord('A') + answer_idx)}"
+        question = "\n".join([data["question"], option_text, "Only give the best option.", "Best option: ("])
+        return question, answer
+        """
+    
+    def load(self):
+        task = self.task
+        data = []
+        if task == "multiple-choice":
+            question_id = 0
+            for idx, task_type in enumerate(self.val_mc_tasks, 1):
+                name = f"{idx}_{task_type}"
+                json_data = json.loads(read_file(os.path.join(self.data_path, "json", f"{name}.json")))
+                for qa_data in json_data:
+                    video_path = os.path.join(self.data_path, "video", name, f"{qa_data['video']}")
+                    question, answer = self.mc_qa_template(qa_data)
+                    example = {
+                        "question": question,
+                        "answer": answer,
+                        "video": video_path,
+                        "style": "video_eval_multiple_choice",
+                        "metadata": dict(
+                            question_id=str(question_id),
+                            video_id=qa_data['video'],
+                            task_type=task_type,
+                        )
+                    }
+                    data.append(example)
+                    question_id += 1
+        else:
+            question_id = 0
+            for idx, task_type in enumerate(self.vak_gen_tasks, 1):
+                name = f"{len(self.val_mc_tasks) + idx}_{task_type}"
+                json_data = json.loads(read_file(os.path.join(self.data_path, "json", f"{name}.json")))
+                for qa_data in json_data:
+                    video_path = os.path.join(self.data_path, "video", name, f"{qa_data['video']}")
+                    example = {
+                        "question": qa_data['question'],
+                        "answer": qa_data['answer'],
+                        "video": video_path,
+                        "style": "demo",
+                        "metadata": dict(
+                            question_id=str(question_id),
+                            question=qa_data['question'],
+                            answer=qa_data['answer'],
+                            video_id=qa_data['video'],
+                            task_type=task_type,
+                        )
+                    }
+                    if "scoring_points" in qa_data:
+                        example["metadata"]["scoring_points"] = qa_data["scoring_points"]
+                    data.append(example)
+                    question_id += 1
+        return data
+
+    def get(self, idx, rng):
+        return self.data[idx]
+                
+
+class PerceptionTest(DatasetBase):
+    """PerceptionTest Multiple-Choice Video QA task"""
+    data_path = os.path.join(VIDEO_DATA_HOME, "PerceptionTest_Val")
+
+    def __init__(self, split):
+        assert split in ["validation"]
+        super().__init__(split)
+    
+    def qa_template(self, question, options, answer_id):
+        prefixes = "abcdefg".upper()
+        option_text = "\n".join(
+            f"{prefix}. {opt}" for prefix, opt in zip(prefixes, options)
+        )
+        question = "\n".join(
+            [
+                question,
+                option_text,
+                "Answer with the option's letter from the given choices directly.",
+            ]
+        )
+        answer = prefixes[answer_id]
+        return question, answer
+    
+    def load(self):
+        df = pd.read_parquet(os.path.join(self.data_path, "mc_question_val/validation-00000-of-00001.parquet"))
+        data = []
+        for idx, row in df.iterrows():
+            video_path = os.path.join(self.data_path, "videos", row["video_name"] + ".mp4")
+            question, answer = self.qa_template(row["question"], row["options"], int(row["answer_id"]))
+            example = {
+                "question": question,
+                "answer": answer,
+                "video": video_path,
+                "metadata": dict(
+                    question_id=row["question_id"],
+                    video_id=row["video_name"],
+                    answer_idx=int(row["answer_id"]),
+                    area=row["area"],
+                    reasoning=row["reasoning"],
+                )
+            }
+            data.append(example)
+        return data
+    
+    def get(self, idx, rng):
+        return dict(**self.data[idx], style="video_eval_multiple_choice")
+
+
+class EgoSchema(DatasetBase):
+    data_path = os.path.join(VIDEO_DATA_HOME, "egoschema")
+
+    def __init__(self, split):
+        assert split in ["validation"]
+        super().__init__(split)
+    
+    def question_template(self, question, options):
+        question = "\n".join(
+            [
+                question,
+                "\n".join(options),
+                "Answer with the option's letter from the given choices directly.",
+            ]
+        )
+        return question
+    
+    def load(self):
+        df = pd.read_parquet(os.path.join(self.data_path, "Subset/test-00000-of-00001.parquet"))
+        data = []
+        for idx, row in df.iterrows():
+            video_path = os.path.join(self.data_path, "videos", row["video_idx"] + ".mp4")
+            question = self.question_template(row["question"], row["option"])
+            answer = "abcdefg".upper()[int(row["answer"])]
+            example = {
+                "question": question,
+                "answer": answer,
+                "video": video_path,
+                "metadata": dict(
+                    question_id=row["question_idx"],
+                    video_id=row["video_idx"],
+                    options=row["option"],
+                    answer_idx=int(row["answer"]),
+                )
+            }
+            data.append(example)
+        return data
+
+    def get(self, idx, rng):
+        return dict(**self.data[idx], style="video_eval_multiple_choice")
+
+
+class VideoMME(DatasetBase):
+    data_path = os.path.join(VIDEO_DATA_HOME, "Video-MME")
+    duration = ["short", "medium", "long"]
+
+    def __init__(self, split, duration="all"):
+        assert split in ["validation"]
+        assert duration in (self.duration + ["all"])
+        self.target_duration = duration
+        super().__init__(split)
+    
+    def question_template(self, question, options):
+        prompt = "Select the best answer to the following multiple-choice question based on the video."
+        prompt += " Respond with only the letter (A, B, C, or D) of the correct option."
+        question = "\n".join(
+            [
+                prompt,
+                question,
+                "\n".join(options),
+                "The best answer is:"
+            ]
+        )
+        return question
+    
+    def load(self):
+        df = pd.read_parquet(os.path.join(self.data_path, "videomme/test-00000-of-00001.parquet"))
+        if self.target_duration != "all":
+            df = df[df["duartion"] == self.target_duration]
+        data = []
+        video_dir = os.path.join(self.data_path, "data")
+        for idx, row in df.iterrows():
+            question = self.question_template(row["question"], row["options"])
+            video_path = os.path.join(video_dir, row["videoID"] + ".mp4")
+            example = {
+                "question": question,
+                "answer": row["answer"],
+                "video": video_path,
+                "metadata": dict(
+                    video_id=row["video_id"],
+                    question_id=row["question_id"],
+                    duration=row["duration"],
+                    domain=row["domain"],
+                    sub_category=row["sub_category"],
+                    task_type=row["task_type"],
+                )
+            }
+            data.append(example)
+        
+        return data
+
+    def get(self, idx, rng):
+        return dict(**self.data[idx], style="video_eval_multiple_choice")
+
+
 class TempCompass(DatasetBase):
     data_path = os.path.join(VIDEO_DATA_HOME, "TempCompass")
     tasks = ["multi-choice", "yes_no", "caption_matching", "captioning"]
@@ -135,8 +473,7 @@ class TempCompass(DatasetBase):
     
     def load(self):
         target_tasks = self.tasks if self.target_task == "all" else [self.target_task]
-        with open(resource_path(self.data_path, "meta_info.json"), "r") as f:
-            meta_infos = json.load(f)
+        meta_infos = json.loads(read_file(os.path.join(self.data_path, "meta_info.json")))
         data = []
         for task in target_tasks:
             parquet_file = resource_path(join(self.data_path, task), "test-00000-of-00001.parquet")

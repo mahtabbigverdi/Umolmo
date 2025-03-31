@@ -1,11 +1,15 @@
 from olmo.data.academic_datasets import (
-    ScienceQAImageOnly, TextVqa, OkVqa,
-    AOkVqa, Vqa2, PlotQa, FigureQa, DvQa, TabWMPDirectAnswer,
-    AndroidControl, TallyQa, AI2D, CountBenchQa, RealWorldQa, MathVista, MMMU, ClockBench
+    ScienceQAImageOnly, OkVqa,
+    TabWMPDirectAnswer,
+    AndroidControl, AI2D, CountBenchQa, RealWorldQa, MathVista, MMMU, ClockBench
 )
-from olmo.data.academic_datasets_manual import ChartQa, InfoQa, SceneTextQa, DocQa
+from olmo.data.academic_datasets_manual import (
+    ChartQa, InfoQa, SceneTextQa, DocQa,
+    TextVqa, AOkVqa, Vqa2, PlotQa, TallyQa, FigureQa, DvQa,
+)
 from olmo.data.video_datasets import (
-    InternVid, Koala, LLaVAVideo178K, MVBench, TempCompass
+    InternVid, Koala, LLaVAVideo178K, MVBench, TempCompass,
+    VideoMME, EgoSchema, PerceptionTest, MLVU, LongVideoBench, NeXTQA
 )
 from olmo.data.dataset import Dataset
 from olmo.data.pixmo_datasets import (
@@ -41,6 +45,21 @@ def get_dataset_by_name(dataset_name, split) -> Dataset:
         dataset_name = dataset_name.replace("_disable_api", "")
         task = '_'.join(dataset_name.split("_")[2:]) if len(dataset_name.split("_")) > 2 else "all"
         return TempCompass(split=split, task=task)
+    if dataset_name.startswith("video_mme"):
+        duration = "all" if len(dataset_name.split("_")) == 2 else dataset_name.split("_")[2]
+        return VideoMME(split=split, duration=duration)
+    if dataset_name == "perception_test":
+        return PerceptionTest(split=split)
+    if dataset_name == "ego_schema":
+        return EgoSchema(split=split)
+    if dataset_name == "mlvu_mc":
+        return MLVU(split=split, task="multiple-choice")
+    if dataset_name == "mlvu_gen":
+        return MLVU(split=split, task="generation")
+    if dataset_name == "long_video_bench":
+        return LongVideoBench(split=split)
+    if dataset_name == "nextqa_mc":
+        return NeXTQA(split=split, task="multiple-choice")
     if dataset_name in ["scifi_document_qa", "pixmo_docs_other"]:
         return PixMoDocs("other", split=split)
     elif dataset_name in ["scifi_table_qa", "pixmo_docs_tables"]:
@@ -156,11 +175,11 @@ def get_dataset_by_name(dataset_name, split) -> Dataset:
     if dataset_name == "text_vqa":
         return TextVqa(split)
     if dataset_name == "plot_qa":
-        return PlotQa(split, in_memory=False)
+        return PlotQa(split)
     if dataset_name == "figure_qa":
         return FigureQa(dict(train="train", validation="validation1")[split])
     if dataset_name == "dv_qa":
-        return DvQa(split, in_memory=False)
+        return DvQa(split)
     if dataset_name == "okvqa":
         return OkVqa(split)
     if dataset_name in ["mmmu"]:

@@ -41,7 +41,7 @@ log = logging.getLogger(__name__)
 class HeVideoMolmoConfig(BaseModelConfig):
     """Molmo model configuration"""
 
-    _model_name: ClassVar[str] = "he_molmo"
+    _model_name: ClassVar[str] = "he_video_molmo"
 
     llm: LlmConfig = field(default_factory=LlmConfig)
     """LLM to use for generation"""
@@ -84,6 +84,7 @@ class HeVideoMolmoConfig(BaseModelConfig):
         self,
         for_inference,
         is_training=True,
+        include_image=False,
         max_seq_len: Optional[int] = None,
     ) -> Preprocessor:
         """
@@ -92,7 +93,7 @@ class HeVideoMolmoConfig(BaseModelConfig):
         """
         return VideoPreprocessor(
             self.data_formatter,
-            self.mm_preprocessor.build(self.build_tokenizer(), self.vision_backbone),
+            self.mm_preprocessor.build(self.build_tokenizer(), self.vision_backbone, max_seq_len),
             max_frames=self.mm_preprocessor.max_frames,
             for_inference=for_inference,
             is_training=is_training,
@@ -102,6 +103,7 @@ class HeVideoMolmoConfig(BaseModelConfig):
         """Collators for tensors from the preprocessor produces"""
         padding_lens = self.mm_preprocessor.get_padding_lens(self.vision_backbone)
         if pad_mode:
+            assert sequence_length <= self.max_sequence_length
             log.info(f"Building collator, pad={pad_mode} seq_len={sequence_length} " +
                      " ".join(f"{k}={v}" for k, v in padding_lens.items()))
         return HeMMCollator(

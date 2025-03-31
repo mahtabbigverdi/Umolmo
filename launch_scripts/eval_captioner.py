@@ -38,7 +38,7 @@ def main():
     eval_config = DatasetEvaluatorConfig(
         data=DataLoaderConfig(
             args.task, split=args.split,
-            sequence_length=args.seq_len,
+            sequence_length=None if args.loss else args.seq_len,
             drop_last=False, seed=6198,
             shuffle=False,
             pad="to_max" if args.fsdp else None,

@@ -1,15 +1,18 @@
 import dataclasses
 import math
 import warnings
+import os
+import logging
+import multiprocessing
 from io import BytesIO
-from typing import List, Optional, Union, Any, Tuple
+from tqdm import tqdm
+from typing import List, Optional, Union, Any, Tuple, Iterable, Set
 
 import PIL
 from PIL import ImageFile, ImageOps
-from PIL import ImageOps
 
 from olmo.data.dataset import DATA_HOME
-from olmo.io import get_bytes_range
+from olmo.io import get_bytes_range, write_file, file_exists
 
 
 def setup_pil():
@@ -32,6 +35,21 @@ from transformers.image_utils import (
 from olmo.models.molmo.data_formatter import DataFormatter
 
 DEFAULT_IMAGE_PATH = "/weka/oe-training-default/mm-olmo/torch_datasets"
+
+
+def load_pil_image(image_path: str) -> PIL.Image.Image:
+    setup_pil()  # Call here so the setting is applied in multi-processing contexts
+    # This a bit of hack to handle cases where the image path was hard-coded
+    # into the dataset to the weka path
+    if DATA_HOME != DEFAULT_IMAGE_PATH and DEFAULT_IMAGE_PATH in image_path:
+        image_path = image_path.replace(DEFAULT_IMAGE_PATH, DATA_HOME)
+    # Ignore image loading warning
+    with warnings.catch_warnings(record=True) as w:
+        if image_path.startswith("gs://"):
+            image_bytes = get_bytes_range(image_path, 0, None)
+            return PIL.Image.open(BytesIO(image_bytes))
+        else:
+            return PIL.Image.open(image_path)
 
 
 def load_image(image_path):
@@ -65,6 +83,53 @@ def load_image(image_path):
             else:
                 with PIL.Image.open(image_path) as image:
                     return load_image(image)
+
+
+def save_image(args) -> Tuple[str, bool]:
+    image: PIL.Image.Image = args[0]
+    filename: str = args[1]
+
+    assert isinstance(image, PIL.PngImagePlugin.PngImageFile), \
+        f"{filename}: Expected a PIL image, got {type(image)}"
+
+    buffer = BytesIO()
+    image.save(buffer, format="PNG")
+    image_bytes = buffer.getvalue()
+    write_file(
+        os.path.dirname(filename),
+        os.path.basename(filename),
+        image_bytes,
+        save_overwrite=True
+    )
+    return filename, file_exists(filename)
+
+
+def save_images(
+    pil_images: Iterable[PIL.Image.Image],
+    filenames: List[str],
+    n_procs: int = 1,
+) -> Set[str]:
+    if n_procs != 1:
+        def _iter():
+            with multiprocessing.Pool(processes=n_procs, initializer=setup_pil) as pool:
+                for val in pool.imap_unordered(save_image, zip(pil_images, filenames)):
+                    yield val
+    else:
+        setup_pil()
+        def _iter():
+            for val in zip(pil_images, filenames):
+                yield save_image(val)
+    
+    pbar = tqdm(total=len(filenames), desc="Saving images")
+    saved_images = set()
+    for val in _iter():
+        if val[1]:
+            saved_images.add(val[0])
+        pbar.update(1)
+    pbar.close()
+    logging.info(
+        f"Saved {len(saved_images)}/{len(filenames)} ({len(saved_images)/len(filenames) * 100:0.2f}%) images")
+    return saved_images
 
 
 def resize_and_pad(

@@ -2,8 +2,8 @@
 import re
 import string
 from collections import Counter
-from typing import Optional, List
-
+from typing import Optional, List, Tuple, Dict
+import random
 import editdistance
 import numpy as np
 
@@ -209,6 +209,82 @@ def relaxed_correctness(target: str,
         return prediction.lower() == target.lower()
 
 
+def scifi_relaxed_correctness(
+    target: str, prediction: str, max_relative_change: float = 0.05) -> bool:
+
+    def _to_float(text: str) -> Optional[float]:
+        try:
+            return float(text)
+        except ValueError:
+            return None
+
+    def compute_relative_change(target: float, prediction: float) -> float:
+        if target == 0: return abs(target - prediction)
+        return abs(target - prediction) / abs(target)
+    
+    def extract_short_answer(prediction: float) -> float:
+        if "answer:" in prediction: return prediction.split("answer:")[1].strip()
+        else: return prediction
+
+    prediction = extract_short_answer(prediction.lower().strip())
+    target = extract_short_answer(target.lower().strip())
+
+    if len(prediction) == 0:
+        return False
+
+    if prediction[-1] == ".":
+        prediction = prediction[:-1]
+    
+    WORD_TO_NUM = {k: v for k, v in manualMap.items() if k != "none"}
+
+    target_float = _to_float(target)
+    if target_float is not None:
+        # target is a float number
+        if "," in prediction: prediction = prediction.replace(",", "") # remove commas
+
+        # map words to numbers
+        for word, num in WORD_TO_NUM.items():
+            prediction = prediction.replace(word, str(num))
+
+        # extract the number from the prediction, considering float numbers (.), using regex
+        try: prediction_float = _to_float(re.search(r"[-+]?\d*\.\d+|\d+", prediction).group())
+        except: return False # if no number is found, return False
+
+        relative_change = compute_relative_change(target_float, prediction_float)
+
+        prediction_float_normalized = prediction_float / 100
+        relative_change_normalized = compute_relative_change(target_float, prediction_float_normalized)
+
+        if relative_change <= max_relative_change or relative_change_normalized <= max_relative_change:
+            return True
+        else:
+            return False
+
+    else:
+        # target is a string
+        if "[" in target and "," in target:
+            # target is a list
+            target = target.replace("[", "").replace("]", "")
+            targets = target.split(",")
+            correct = True
+
+            for t in targets:
+                if t.strip().lower() not in prediction:
+                    correct = False
+                    break
+
+            if correct:
+                return True
+            else:
+                return False
+
+        else:
+            if target.strip().lower() in prediction:
+                return True
+            else:
+                return False
+
+
 # From https://github.com/MMMU-Benchmark/MMMU/blob/main/eval/main_parse_and_eval.py
 def mmmu_score(
     target: List[str],
@@ -296,3 +372,206 @@ def math_vista_score(
     true_false = math_vista_utils.safe_equal(prediction, target)
 
     return true_false
+
+
+def mlvu_mc(target: str, prediction: str) -> bool:
+    
+    def _extract_characters_regex(s: str) -> str:
+        s = s.strip()
+        if ")" in s:
+            index = s.index(")")
+            pred = s[index - 1 : index]
+            return pred
+        else:
+            return s
+    
+    pred_ans = _extract_characters_regex(prediction)
+    return target == pred_ans
+
+
+def select_perception_test_option(prediction: str) -> int:
+    pred = prediction.strip() # raw text prediction
+
+    # Use regex to match A, B, C, or D
+    match = re.search(r"\b([A-D])\b", pred)
+
+    if match:
+        pred = match.group(1)  # Extract the matched letter
+        pred = pred.upper()
+    else:
+        pred = ""  # Set to empty string if no match found
+
+    # Map the prediction to an index
+    pred_to_index = {"A": 0, "B": 1, "C": 2, "D": 3}
+    index = pred_to_index.get(pred, -1)  # Default to -1 if the prediction is not found
+    return index
+
+
+def ego_schema_get_multi_choice_info(options: List[str]) -> Tuple[Dict[str, str], List[str]]:
+    all_choices = []
+    index2ans = {}
+    OPTIONS = ["A", "B", "C", "D", "E"]
+    for i in range(5):
+        index2ans[OPTIONS[i]] = options[i].strip()
+        all_choices.append(OPTIONS[i])
+    
+    return index2ans, all_choices
+
+
+def ego_schema_parse_multi_choice_response(
+    response: str,
+    all_choices: List[str],
+    index2ans: Dict[str, str],
+) -> Tuple[str, bool]:
+    """
+    Parse the prediction from the generated response.
+    Return the predicted index e.g., A, B, C, D.
+    https://github.com/MMMU-Benchmark/MMMU/blob/51ce7f3e829c16bb44bc5445782686b4c3508794/eval/eval_utils.py#L10
+    """
+    for char in [",", ".", "!", "?", ";", ":", "'"]:
+        response = response.strip(char)
+    response = " " + response + " "  # add space to avoid partial match
+
+    index_ans = True
+    ans_with_brack = False
+    ans_with_space = False
+    ans_with_dot = False
+    candidates = []
+
+    for choice in all_choices:  # e.g., (A) (B) (C) (D)
+        if f"({choice})" in response:
+            candidates.append(f"({choice})")
+            ans_with_brack = True
+
+    for choice in all_choices:  # e.g., A B C D
+        if f"{choice} " in response:
+            candidates.append(f"{choice} ")
+            ans_with_space = True
+
+    for choice in all_choices:  # e.g., A. B. C. D.
+        if f"{choice}." in response:
+            candidates.append(f"{choice}.")
+            ans_with_dot = True
+
+    # if all above doesn't get candidates, check if the content is larger than 5 tokens and try to parse the example
+    if len(candidates) == 0 and len(response.split()) > 5:
+        for index, ans in index2ans.items():
+            if ans.lower() in response.lower():
+                candidates.append(index)
+                index_ans = False  # it's content ans.
+
+    if len(candidates) == 0:  # still not get answer, randomly choose one.
+        pred_index = random.choice(all_choices)
+    elif len(candidates) > 1:
+        start_indexes = []
+        if index_ans:
+            for can in candidates:
+                index = response.rfind(can)
+                start_indexes.append(index)  # -1 will be ignored anyway
+        else:
+            for can in candidates:
+                index = response.lower().rfind(index2ans[can].lower())
+                start_indexes.append(index)
+        # get the first one
+        pred_index = candidates[np.argmin(start_indexes)]
+        pred_index = pred_index.replace("(", "").replace(")", "").replace(".", "").strip()
+    else:  # if only one candidate, use it.
+        pred_index = candidates[0]
+        pred_index = pred_index.replace("(", "").replace(")", "").replace(".", "").strip()
+    
+    return pred_index, len(candidates) > 0
+
+
+def select_ego_schema_option(prediction: str, options: List[str]) -> int:
+    index2ans, all_choices = ego_schema_get_multi_choice_info(options)
+    parsed_pred, matched_tag = ego_schema_parse_multi_choice_response(prediction, all_choices, index2ans)
+    
+    pred_to_index = {"A": 0, "B": 1, "C": 2, "D": 3, "E": 4}
+    index = pred_to_index.get(parsed_pred, -1)  # Default to -1 if the prediction is not found
+    return index
+
+
+def nextqa_get_multi_choice_info(options: List[str]) -> Tuple[Dict[str, str], List[str]]:
+    all_choices = []
+    index2ans = {}
+    OPTIONS = ["A", "B", "C", "D", "E"]
+    for i in range(4):
+        index2ans[OPTIONS[i]] = options[i].strip()
+        all_choices.append(OPTIONS[i])
+    
+    return index2ans, all_choices
+
+
+def parse_multi_choice_response(response: str, all_choices: List[str], index2ans: Dict[str, str]):
+    """
+    Parse the prediction from the generated response.
+    Return the predicted index e.g., A, B, C, D.
+    https://github.com/MMMU-Benchmark/MMMU/blob/51ce7f3e829c16bb44bc5445782686b4c3508794/eval/eval_utils.py#L10
+    """
+    for char in [",", ".", "!", "?", ";", ":", "'"]:
+        response = response.strip(char)
+    response = " " + response + " "  # add space to avoid partial match
+
+    index_ans = True
+    ans_with_brack = False
+    ans_with_space = False
+    ans_with_dot = False
+    candidates = []
+    for choice in all_choices:  # e.g., (A) (B) (C) (D)
+        if f"({choice})" in response:
+            candidates.append(choice)
+            ans_with_brack = True
+
+    if len(candidates) == 0:
+        for choice in all_choices:  # e.g., A B C D
+            if f" {choice} " in response:
+                candidates.append(choice)
+                ans_with_space = True
+
+    if len(candidates) == 0:
+        for choice in all_choices:  # e.g., A. B. C. D.
+            if f"{choice}." in response:
+                candidates.append(choice)
+                ans_with_dot = True
+
+    # if all above doesn't get candidates, check if the content is larger than 5 tokens and try to parse the example
+    if len(candidates) == 0 and len(response.split()) > 5:
+        for index, ans in index2ans.items():
+            if ans.lower() in response.lower():
+                candidates.append(index)
+                index_ans = False  # it's content ans.
+
+    if len(candidates) == 0:  # still not get answer, randomly choose one.
+        pred_index = random.choice(all_choices)
+    elif len(candidates) > 1:
+        start_indexes = []
+        if index_ans:
+            if ans_with_brack:
+                for can in candidates:
+                    index = response.rfind(f"({can})")
+                    start_indexes.append(index)  # -1 will be ignored anyway
+                # start_indexes = [generated_response.index(f'({can})') for can in candidates]
+            elif ans_with_space:
+                for can in candidates:
+                    index = response.rfind(f" {can} ")
+                    start_indexes.append(index)
+            else:
+                for can in candidates:
+                    index = response.rfind(f"{can}.")
+                    start_indexes.append(index)
+        else:
+            for can in candidates:
+                index = response.lower().rfind(index2ans[can].lower())
+                start_indexes.append(index)
+        # get the last one
+        pred_index = candidates[np.argmax(start_indexes)]
+    else:  # if only one candidate, use it.
+        pred_index = candidates[0]
+
+    return pred_index
+
+
+def nextqa_mc(target: str, prediction: str, options: List[str]):
+    index2ans, all_choices = nextqa_get_multi_choice_info(options)
+    parsed_pred = parse_multi_choice_response(prediction, all_choices, index2ans)
+    return target == parsed_pred

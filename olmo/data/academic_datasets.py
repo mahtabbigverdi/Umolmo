@@ -9,6 +9,8 @@ import datasets
 import numpy as np
 
 from olmo.data.dataset import DATA_HOME, DatasetBase, Dataset, HfDataset
+from olmo.data.pixmo_datasets import save_local_dataset
+from olmo.data.image_preprocessor import save_images
 from olmo.hf_datasets.a_okvqa import AOkVqaBuilder
 from olmo.hf_datasets.ai2d import Ai2dDatasetBuilder
 from olmo.hf_datasets.android_control import AndroidControlBuilder
@@ -23,8 +25,12 @@ from olmo.hf_datasets.vqa_v2 import VQAv2BuilderMultiQA
 
 if DATA_HOME is not None:
     DOWNLOADS = join(DATA_HOME, "downloads")
+    ACADEMIC_DATASETS = join(DATA_HOME, "academic_datasets")
+    ANDROID_IMAGES = join(DATA_HOME, "android_images")
 else:
     DOWNLOADS = None
+    ACADEMIC_DATASETS = None
+    ANDROID_IMAGES = None
 
 
 class ChartQa(HfDataset):
@@ -199,12 +205,17 @@ class OkVqa(Dataset):
 
     @classmethod
     def download(cls, n_procs=1):
+        local_name = join(ACADEMIC_DATASETS, "okvqa")
         datasets.load_dataset_builder(cls.PATH, trust_remote_code=True).download_and_prepare()
+        ds = datasets.load_dataset(cls.PATH, trust_remote_code=True)
+        save_local_dataset(ds, local_name, n_procs)
 
     def __init__(self, split: str, multi_question=False, keep_in_memory=False):
         super().__init__()
         self.multi_question = multi_question
-        dataset = datasets.load_dataset(self.PATH, split=split, trust_remote_code=True, keep_in_memory=keep_in_memory)
+        dataset = datasets.load_from_disk(
+            join(ACADEMIC_DATASETS, "okvqa"), keep_in_memory=keep_in_memory
+        )[split]
         if self.multi_question:
             grouped_by_image = defaultdict(list)
             for ex in dataset:
@@ -309,11 +320,18 @@ class AI2D(Dataset):
 
     @classmethod
     def download(cls, n_procs=1):
+        local_name = join(ACADEMIC_DATASETS, "ai2d")
         Ai2dDatasetBuilder().download_and_prepare()
+        all_data = datasets.DatasetDict()
+        for split in ["train", "validation", "test"]:
+            ds = Ai2dDatasetBuilder().as_dataset(split)
+            all_data[split] = ds
+        save_local_dataset(all_data, local_name, n_procs)
 
-    def __init__(self, split, boxes="both"):
+    def __init__(self, split, boxes="both", keep_in_memory=False):
         assert split in ["train", "validation", "test"]
-        dataset = Ai2dDatasetBuilder().as_dataset(split)
+        dataset = datasets.load_from_disk(
+            join(ACADEMIC_DATASETS, "ai2d"), keep_in_memory=keep_in_memory)[split]
         if boxes == "transparent":
             dataset = dataset.filter(lambda x: not x["abc_label"] or x["has_transparent_box"])
         elif boxes == "opaque":
@@ -427,10 +445,13 @@ class CountBenchQa(Dataset):
 
     @classmethod
     def download(self, n_procs=1):
+        local_name = join(ACADEMIC_DATASETS, "countbench_qa")
         CountQaBuilder().download_and_prepare()
+        ds = CountQaBuilder().as_dataset("test")
+        save_local_dataset(ds, local_name, n_procs)
 
     def __init__(self):
-        self.dataset = CountQaBuilder().as_dataset("test")
+        self.dataset = datasets.load_from_disk(join(ACADEMIC_DATASETS, "countbench_qa"))
 
     def __len__(self):
         return len(self.dataset)
@@ -453,11 +474,18 @@ class TabWMPDirectAnswer(Dataset):
 
     @classmethod
     def download(cls, n_procs=1):
+        local_name = join(ACADEMIC_DATASETS, "tabwmp")
         TabMwpBuilder().download_and_prepare()
+        all_data = datasets.DatasetDict()
+        for split in ["train", "dev", "test"]:
+            ds = TabMwpBuilder().as_dataset(split)
+            all_data[split] = ds
+        save_local_dataset(all_data, local_name, n_procs)
 
-    def __init__(self, split, include_options: bool):
+    def __init__(self, split, include_options: bool, keep_in_memory=False):
         self.include_options = include_options
-        self._dataset = TabMwpBuilder().as_dataset(split)
+        self._dataset = datasets.load_from_disk(
+            join(ACADEMIC_DATASETS, "tabwmp"), keep_in_memory=keep_in_memory)[split]
 
     def __len__(self):
         return len(self._dataset)
@@ -482,11 +510,18 @@ class FigureQa(Dataset):
 
     @classmethod
     def download(cls, n_procs=1):
+        local_name = join(ACADEMIC_DATASETS, "figure_qa")
         FigureQaBuilder().download_and_prepare()
+        all_data = datasets.DatasetDict()
+        for split in ["train", "validation1", "test1", "validation2", "test2"]:
+            ds = FigureQaBuilder().as_dataset(split)
+            all_data[split] = ds
+        save_local_dataset(all_data, local_name, n_procs)
 
     def __init__(self, split, in_memory=False):
         assert split in ["train", "validation1", "test1", "validation2", "test2"]
-        self.hf_dataset = FigureQaBuilder().as_dataset(split, in_memory=in_memory)
+        self.hf_dataset = datasets.load_from_disk(
+            join(ACADEMIC_DATASETS, "figure_qa"), keep_in_memory=in_memory)[split]
 
     def get(self, item, rng):
         example = self.hf_dataset[int(item)]
@@ -525,12 +560,34 @@ class PlotQa(Dataset):
 class AndroidControl(Dataset):
     @classmethod
     def download(cls, n_procs=1):
-        AndroidControlBuilder().download_and_prepare(num_proc=n_procs)
+        local_name = join(ACADEMIC_DATASETS, "android_control")
+        # AndroidControlBuilder().download_and_prepare(num_proc=n_procs)
+        all_data = datasets.DatasetDict()
+        for split in ["train", "val", "test"]:
+            ds = AndroidControlBuilder().as_dataset(split)
+            ds = ds.add_column("id", list(range(len(ds))))
+            pil_images = (ex["image"] for ex in ds)
+            filenames = [
+                join(ANDROID_IMAGES, f"{split}_{example_id:05d}.png")
+                for example_id in ds["id"]
+            ]
+            saved_images = save_images(pil_images, filenames, n_procs)
+            assert len(saved_images) == len(filenames)
+            def pil_to_path(ex):
+                ex["image"] = join(ANDROID_IMAGES, f"{split}_{ex['id']:05d}.png")
+                return ex
+            new_features = ds.features.copy()
+            new_features["image"] = datasets.Value(dtype="string")
+            ds = ds.map(pil_to_path, features=new_features)
+            ds = ds.remove_columns(["id"])
+            all_data[split] = ds
+        save_local_dataset(all_data, local_name, n_procs)
 
     def __init__(self, split, mode="all", in_memory=False):
         self.mode = mode
-        self.hf_dataset = AndroidControlBuilder().as_dataset(
-            "val" if split == "validation" else split, in_memory=in_memory)
+        self.hf_dataset = datasets.load_from_disk(
+            join(ACADEMIC_DATASETS, "android_control"), keep_in_memory=in_memory
+        )["val" if split == "validation" else split]
 
     def __len__(self):
         return len(self.hf_dataset)
@@ -586,10 +643,17 @@ class AndroidControl(Dataset):
 class DvQa(Dataset):
     @classmethod
     def download(cls, n_procs=1):
+        local_name = join(ACADEMIC_DATASETS, "dv_qa")
         DvQaBuilder().download_and_prepare()
+        all_data = datasets.DatasetDict()
+        for split in ["train", "val_hard", "val_easy"]:
+            ds = DvQaBuilder().as_dataset(split)
+            all_data[split] = ds
+        save_local_dataset(all_data, local_name, n_procs)
 
     def __init__(self, split, in_memory=False):
-        self.hf_dataset = DvQaBuilder().as_dataset(split, in_memory=in_memory)
+        self.hf_dataset = datasets.load_from_disk(
+            join(ACADEMIC_DATASETS, "dv_qa"), keep_in_memory=in_memory)[split]
 
     def __len__(self):
         return len(self.hf_dataset)
@@ -728,11 +792,18 @@ class ClockBench(Dataset):
 
     @classmethod
     def download(cls, n_procs=1):
+        local_name = join(ACADEMIC_DATASETS, "clock_bench")
         ClockBenchBuilder().download_and_prepare()
+        all_data = datasets.DatasetDict()
+        for split in ["coco", "openimg", "movies"]:
+            ds = ClockBenchBuilder().as_dataset(split)
+            all_data[split] = ds
+        save_local_dataset(all_data, local_name, n_procs)
 
-    def __init__(self, split):
+    def __init__(self, split, keep_in_memory=False):
         assert split in ["coco", "openimg", "movies"]
-        dataset = ClockBenchBuilder().as_dataset(split)
+        dataset = datasets.load_from_disk(
+            join(ACADEMIC_DATASETS, "clock_bench"), keep_in_memory=keep_in_memory)[split]
         self.dataset = dataset
         self.split = split
 

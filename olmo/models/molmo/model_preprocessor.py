@@ -9,7 +9,7 @@ from einops import einops
 from olmo import tokenizer
 from olmo.config import BaseConfig
 from olmo.data.image_preprocessor import load_image, ImagePreprocessor
-from olmo.data.text_preprocessor import InterleavedTextPreprocessor
+from olmo.data.interleaved_text_preprocessor import InterleavedTextPreprocessor
 from olmo.tokenizer import get_special_token_ids
 from olmo.nn.vision_backbone import MolmoVisionBackboneConfig
 

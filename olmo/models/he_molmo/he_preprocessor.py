@@ -11,7 +11,7 @@ from transformers.image_utils import ImageInput
 from olmo import tokenizer
 from olmo.config import BaseConfig, D
 from olmo.data.image_preprocessor import ImagePreprocessor
-from olmo.data.text_preprocessor import InterleavedTextPreprocessor
+from olmo.data.interleaved_text_preprocessor import InterleavedTextPreprocessor
 from olmo.models.molmo.model_preprocessor import arange_for_pooling, batch_pixels_to_patches
 from olmo.nn.vision_backbone import MolmoVisionBackboneConfig
 from olmo.tokenizer import get_special_token_ids
@@ -82,7 +82,8 @@ class HePreprocessorConfig(BaseConfig):
     def build(
         self,
         tokenizer,
-        vision_backbone_config: MolmoVisionBackboneConfig
+        vision_backbone_config: MolmoVisionBackboneConfig,
+        max_seq_len=None
     ):
         vit = vision_backbone_config.vit
         assert self.image_pooling_w == self.image_pooling_h
@@ -103,6 +104,7 @@ class HePreprocessorConfig(BaseConfig):
             image_patch_size=vit.image_patch_size,
             image_padding_mask=vision_backbone_config.image_padding_embed is not None,
             pad_value=vit.pad_value,
+            max_sequence_length=max_seq_len,
             image_high_res_from_crops=self.image_pooling_w,
             image_low_res_from_crops=self.low_res_from_high,
             image_low_res_from_resized=self.low_res_from_low
@@ -338,6 +340,7 @@ class HeMultiModalPreprocessor(InterleavedTextPreprocessor, ImagePreprocessor):
         image_patch_size = self.image_patch_size
         if len(image.shape) == 3:
             image = np.expand_dims(image, 0)
+        n_frames = len(image)
 
         if isinstance(base_image_input_size, int):
             base_image_input_size = (base_image_input_size, base_image_input_size)
@@ -363,40 +366,50 @@ class HeMultiModalPreprocessor(InterleavedTextPreprocessor, ImagePreprocessor):
             if self.use_col_tokens:
                 per_row = np.concatenate([per_row, [self.tokenizer.image_col_token_id]], 0)
             extra_tokens = np.tile(per_row, [low_h])
-            joint = [
-                        [self.tokenizer.image_start_token_id],
-                        extra_tokens,
-                    ] * len(resized) + [[self.tokenizer.image_end_token_id]]
+            low_res_joint = [
+                [self.tokenizer.image_start_token_id],
+                extra_tokens,
+            ] * len(resized) + [[self.tokenizer.image_end_token_id]]
 
             high_res_idx = np.arange(crop_patch_w*crop_patch_h).reshape([crop_patch_h, crop_patch_w])
             high_res_idx = arange_frames_for_pooling(high_res_idx, len(image), self.video_high_res, self.video_high_res)
             high_h, high_w = high_res_idx.shape[1:3]
-            max_high_res_tokens = min(max_high_res_tokens, high_h*high_w)
+            max_high_res_per_crop = high_w * high_h
+            max_high_res_tokens = min(max_high_res_tokens, max_high_res_per_crop*len(image))
 
             low_to_high = np.eye((low_h*2*low_w*2), dtype=np.float32)
             low_to_high = low_to_high.reshape([low_h*low_w*4, low_h*2, low_w*2])
             low_to_high = torchvision.transforms.Resize(
                 [high_h, high_w], InterpolationMode.BILINEAR, antialias=False)(
-                torch.from_numpy(low_to_high)).numpy()
+                torch.from_numpy(low_to_high)).numpy().astype(np.float32)
+
+            low_to_high_frames = np.zeros([n_frames, n_frames] + list(low_to_high.shape), dtype=np.float32)
+            low_to_high_frames[np.arange(n_frames), np.arange(n_frames)] = np.tile(low_to_high[None, :, :, :], [n_frames, 1, 1, 1])
+
             # Re-arrange to match how the importance scores are predicted (four per a patch)
             # This save us having to transpose it in the model
-            low_to_high = einops.rearrange(
-                low_to_high, "(lh dh lw dw) h w -> (lw lh dw dh) (h w) ",
+            low_to_high_frames = einops.rearrange(
+                low_to_high_frames, "fi fo (lh dh lw dw) h w -> (fi lw lh dw dh) (fo h w) ",
                 dh=2, dw=2, lh=low_h, lw=low_w)
-            low_to_high = np.tile(low_to_high, [len(image), len(image)])
-            n_low = sum(len(x) for x in joint)
-            joint_pos_ids = [
-                np.arange(n_low),  # low res tokens
-                np.full([max_high_res_tokens + len(image)], n_low)
-            ]
-            high_res_pos_ids = np.ones(len(high_res_idx), dtype=np.int32)
+
+            n_low = sum(len(x) for x in low_res_joint)
+            high_res_pos_ids = np.ones(np.prod(high_res_idx.shape[:-1]), dtype=np.int32)
             high_res_per_crop = high_res_idx.shape[1] * high_res_idx.shape[2]
             high_res_pos_ids[::high_res_per_crop] = 2
+            high_res_pos_ids[0] -= 1
             high_res_pos_ids = np.cumsum(high_res_pos_ids)
-            joint += [
-                [self.tokenizer.image_start_token_id]* len(image),
+
+            joint_pos_ids = [
+                np.arange(n_low),  # low res tokens
+                n_low + np.arange(len(image)) * (max_high_res_per_crop + 1),  # frame starts
+                np.full([max_high_res_tokens], n_low),  # high res
+                [n_low + high_res_pos_ids.max() + 1]  # frame end
+            ]
+            joint = low_res_joint + [
+                [self.tokenizer.image_start_token_id] * len(image),
                 np.full([max_high_res_tokens], self.tokenizer.image_patch_token_id),
-                ]
+                [self.tokenizer.image_end_token_id],
+            ]
             return (
                 batch_pixels_to_patches(resized, image_patch_size),
                 np.concatenate(joint, 0),
@@ -404,7 +417,7 @@ class HeMultiModalPreprocessor(InterleavedTextPreprocessor, ImagePreprocessor):
                 low_res_idx.reshape(-1, low_res_idx.shape[-1]),
                 high_res_idx.reshape(-1, high_res_idx.shape[-1]),
                 (
-                    low_to_high,
+                    low_to_high_frames,
                     high_res_pos_ids
                 )
             )
@@ -471,6 +484,7 @@ class HeMultiModalPreprocessor(InterleavedTextPreprocessor, ImagePreprocessor):
                 fps = np.mean(deltas)
                 prefix = self.tokenizer.encode(f"FPS {fps:0.2f}")
                 image_tokens = np.concatenate([prefix, image_tokens])
+                image_pos_ids = np.concatenate([np.arange(len(prefix)), len(prefix) + image_pos_ids])
             elif self.time_mode is not None:
                 raise NotImplementedError(self.time_mode)
         else:

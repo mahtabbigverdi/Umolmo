@@ -84,7 +84,7 @@ class MMCollator:
             if self.pad:
                 if np.any(self._special_tokens == ex["input_tokens"][self.max_sequence_length:][:, None]):
                     raise ValueError("An image would have gotten truncated!")
-                if np.all(ex["loss_masks"][:self.max_sequence_length] == 0):
+                if np.any(ex["loss_masks"] != 0) and np.all(ex["loss_masks"][:self.max_sequence_length] == 0):
                     raise ValueError("All loss tokens truncated!")
 
         out = {}

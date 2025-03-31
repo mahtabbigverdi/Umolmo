@@ -625,7 +625,7 @@ class DataFormatter(BaseConfig):
         if "message_list" in ex:
             if self.p_one_message and rng.random() < self.p_one_message:
                 ex["message_list"] = ex["message_list"][:1]
-            if self.format_message_list == "numbered_qa":
+            elif self.format_message_list == "numbered_qa":
                 ex["message_list"] = [dict(x) for x in ex["message_list"]]
                 for ix, msg_list in enumerate(ex["message_list"], start=1):
                     msg_list["question"] = f"{' ' if ix != 0 else ''}Q{ix}: {msg_list['question']}"

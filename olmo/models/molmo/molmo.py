@@ -23,7 +23,7 @@ from olmo.models.molmo.data_formatter import DataFormatter
 from olmo.models.molmo.model_preprocessor import Preprocessor, MolmoPreprocessorConfig
 from olmo.models.model import FSDPWrapStrategy, OLMoOutput, OLMoGenerateOutput, ModelBase
 from olmo.nn.beam_search import BeamSearch, Constraint, FinalSequenceScorer, Sampler
-from olmo.nn.image_vit import ResidualAttentionBlock, VisionTransformer
+from olmo.nn.image_vit import ResidualAttentionBlock, DinoResidualAttentionBlock, VisionTransformer, SiglipVisionTransformer, DinoVisionTransformer
 from olmo.nn.legacy_config import convert_legacy_config
 from olmo.nn.llm import LlmConfig, OLMoBlock, Llm
 from olmo.models.model_config import BaseModelConfig
@@ -79,6 +79,7 @@ class MolmoConfig(BaseModelConfig):
         self,
         for_inference,
         is_training=True,
+        include_image: bool = False,
         max_seq_len: Optional[int] = None,
     ) -> Preprocessor:
         """
@@ -90,12 +91,14 @@ class MolmoConfig(BaseModelConfig):
             self.mm_preprocessor.build(self.build_tokenizer(), self.vision_backbone, max_seq_len),
             for_inference=for_inference,
             is_training=is_training,
+            include_image=include_image,
         )
 
     def build_collator(self, sequence_length, pad_mode: str, include_metadata=True) -> MMCollator:
         """Collators for tensors from the preprocessor produces"""
         padding_lens = self.mm_preprocessor.get_image_padding_lens(self.vision_backbone)
         if pad_mode:
+            assert sequence_length <= self.max_sequence_length
             log.info(f"Building collator, pad={pad_mode} seq_len={sequence_length} " +
                      " ".join(f"{k}={v}" for k, v in padding_lens.items()))
         return MMCollator(
@@ -192,7 +195,7 @@ class Molmo(ModelBase):
             size_based_module_to_wrap.add(self.vision_backbone.image_pooling_2d)
             size_based_module_to_wrap.add(self.vision_backbone.image_projector)
 
-        wrap_layer_names = (OLMoBlock, ResidualAttentionBlock, MolmoVisionBackbone, VisionTransformer)
+        wrap_layer_names = (OLMoBlock, ResidualAttentionBlock, DinoResidualAttentionBlock, MolmoVisionBackbone, VisionTransformer, SiglipVisionTransformer, DinoVisionTransformer)
 
         if wrap_strategy == FSDPWrapStrategy.by_block:
 

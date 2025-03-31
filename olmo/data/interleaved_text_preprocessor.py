@@ -64,14 +64,6 @@ class InterleavedTextPreprocessor:
             before_subsegments = []
             after_subsegments = []
             n_tokens = 0
-            n_non_truncatable = 0
-            if self.max_sequence_length:
-                max_tokens = self.max_sequence_length - n_mm_tokens
-                max_tokens -= 1  # Leave room for EOS
-                if self.max_text_tokens:
-                    max_tokens = min(max_tokens, self.max_text_tokens)
-            else:
-                max_tokens = self.max_text_tokens
             for message_set_ix, message_tuple in enumerate(message_list):
                 add_bos = message_set_ix == 0
                 text_ids, text_loss = self.tokenize_message(
@@ -87,19 +79,21 @@ class InterleavedTextPreprocessor:
                     s, e = 0, 0
                 else:
                     raise NotImplementedError("Multi-message with multi images")
+
                 if text_loss[e] != 0:
                     raise ValueError("Must have a non-loss token after MM data")
+                if self.max_sequence_length and message_set_ix != 0:
+                    if (n_mm_tokens + n_tokens + np.argmax(text_loss != 0)) >= self.max_sequence_length:
+                        # This example would get no loss tokens anyway
+                        break
                 n_tokens += len(text_ids)
-                n_non_truncatable += min(np.argmax(text_loss != 0) + 1, s)
-                if message_set_ix != 0 and max_tokens and (n_non_truncatable >= max_tokens):
-                    break
                 before_ids.append(text_ids[:s])
                 after_ids.append(text_ids[e:])
                 before_losses.append(text_loss[:s])
                 after_losses.append(text_loss[e:])
                 before_subsegments.append(np.full(s, ATTEND_ALL_SUBSEGMENT_ID, dtype=np.int32))
                 after_subsegments.append(np.full(len(text_ids[e:]), message_set_ix, dtype=np.int32))
-                if max_tokens and (n_tokens >= max_tokens):
+                if self.max_text_tokens and (n_tokens >= self.max_text_tokens):
                     break
 
             text_token_ids = np.concatenate([
@@ -142,7 +136,9 @@ class InterleavedTextPreprocessor:
 
         If `message_list` is a list of lists, the batch is assumed to contain multiply-annotated
         MM data. The batch will include tokens from all messages but the MM tokens only once, and
-        `subsegment_id` will indicate how to cross-attend between the tokens
+        `subsegment_id` will indicate how to cross-attend between the tokens. Attending between
+        tokens before the MM tokens will be allowed, but attending between tokens after the MM
+        tokens will not.
         """
         text_token_ids, text_loss_masks, text_subsegments = self.tokenize_message_list(message_list, sum(len(x) for x in multi_model_tokens))
 
@@ -166,6 +162,7 @@ class InterleavedTextPreprocessor:
             if text_subsegments is not None:
                 mm_subsegments.append(text_subsegments[on:token_ix])
             if multi_model_pos_ids is not None:
+                assert len(multi_model_tokens[-1]) == len(multi_model_pos_ids[-1])
                 mm_position_ids.append(np.arange(on_pos, on_pos+len(mm_tokens[-1])))
                 on_pos += len(mm_tokens[-1])
 
@@ -178,7 +175,7 @@ class InterleavedTextPreprocessor:
                 mm_position_ids.append(multi_model_pos_ids[i] + on_pos)
                 on_pos += multi_model_pos_ids[i].max() + 1
             if text_token_ids[token_ix] == self.tokenizer.image_prompt_token_id:
-                on = token_ix + 1
+                on = token_ix + 1  # Skip over the image prompt token
             else:
                 on = token_ix
 
@@ -247,7 +244,7 @@ class InterleavedTextPreprocessor:
 
         # Some sanity checks
         if not all(len(v) == len(input_tokens) for v in out.values()):
-            raise RuntimeError("Length mis-match")
+            raise RuntimeError("Length mismatch")
         special_tokens = np.array([
             self.tokenizer.image_end_token_id,
             self.tokenizer.image_start_token_id,

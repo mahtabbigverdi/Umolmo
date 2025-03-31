@@ -97,7 +97,24 @@ def main():
     output_file = join(args.output_dir, output_name)
     print(f"Getting qual. examples for {name}")
 
-    if name == "intern_vid" or name == "mvbench" or name.startswith("llava_video_178k") or name == "koala" or name.startswith("temp_compass"):
+    def is_video_task(name):
+        if name == "intern_vid" or name == "mvbench":
+            return True
+        if name.startswith("llava_video_178k") or name == "koala":
+            return True
+        if name.startswith("temp_compass") or name.startswith("video_mme"):
+            return True
+        if name == "ego_schema" or name == "perception_test":
+            return True
+        if name == "mlvu_mc" or name == "mlvu_gen":
+            return True
+        if name == "long_video_bench":
+            return True
+        if name == "nextqa_mc":
+            return True
+        return False
+
+    if is_video_task(name):
         pre = VideoPreprocessor(
             DataFormatter(
                 prompt_templates=args.prompt_templates,

@@ -2,7 +2,7 @@ import numpy as np
 from olmo import tokenizer
 import re
 
-from olmo.data.text_preprocessor import InterleavedTextPreprocessor
+from olmo.data.interleaved_text_preprocessor import InterleavedTextPreprocessor
 from olmo.models.video_olmo.video_preprocessor import VIDEO_SUBSEGMENT_ID
 from olmo.tokenizer import build_tokenizer, IMAGE_PROMPT
 from tests.models.test_video_preprocessor import _remove_video_text
@@ -90,6 +90,30 @@ def test_max_tokens():
         [[preprocessor.tokenizer.image_prompt_token_id]]
     )
     assert tok.decode(batch["input_tokens"], False) == f"{tokenizer.IMAGE_PROMPT}question1 answer1question2 answer2"
+
+
+def test_max_seq_len():
+    rng = np.random.RandomState(123)
+    preprocessor = get_preprocessor()
+    messages = [
+        [" a"*rng.randint(1, 5), " b"*rng.randint(1, 5)]
+        for i in range(20)
+    ]
+    n_mm_tokens = 27
+    mm_tokens = [np.zeros([n_mm_tokens], dtype=np.int32)]
+    max_len = len(preprocessor.tokenizer.encode("".join("".join(x) for x in messages))) + n_mm_tokens
+    for max_seq_len in range(n_mm_tokens+2, max_len+2):
+        preprocessor.max_sequence_length = max_seq_len
+        batch = preprocessor.tokenize_and_interleave(messages, mm_tokens)
+        last_ids = batch["subsegment_ids"][max_seq_len:]
+        if len(last_ids) != 0:
+            # Overflow can happen, but should only be one segment, and should not truncate
+            # all the loss tokens for that segment
+            assert np.all(last_ids[0] == last_ids)
+            assert batch["loss_masks"][batch["subsegment_ids"] == last_ids[0]][:max_seq_len].sum() > 0
+        if max_seq_len >= max_len:
+            # Should include all the messages
+            assert np.any(batch["subsegment_ids"] == (len(messages)-1))
 
 
 def test_at_start():

@@ -97,6 +97,8 @@ if __name__ == "__main__":
     parser.add_argument("--device_eval_batch_size", default=4, type=int)
     parser.add_argument("--device_inf_batch_size", default=4, type=int)
     parser.add_argument("--device_train_batch_size", default=4, type=int)
+    parser.add_argument("--include_image", action="store_true",
+                        help="Include image in the evaluation outputs")
     args, other_args = parser.parse_known_args()
 
     if args.mixture.startswith("single"):
@@ -243,7 +245,8 @@ if __name__ == "__main__":
             args.inf_seq_len,
             device_batch_size=args.device_inf_batch_size,
             max_examples=max_inf_examples,
-            num_workers=num_workers
+            num_workers=num_workers,
+            include_image=args.include_image,
         )
         evaluation.data.persistent_workers = True
         evaluations.append(evaluation)

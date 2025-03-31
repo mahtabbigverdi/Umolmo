@@ -616,11 +616,10 @@ def main_llm(args: argparse.Namespace) -> None:
         import torch.distributed.checkpoint as dist_cp
         import torch.distributed as dist
         dist.init_process_group(backend="nccl")
-        dist_cp.state_dict_saver.save(state_dict, checkpoint_id=output_path)
+        dist_cp.state_dict_saver.save(olmo_state_dict, checkpoint_id=output_path)
     else:
         logging.info("Saving...")
         torch.save(olmo_state_dict, output_path)
-
 
 
 def main(args: argparse.Namespace) -> None:
