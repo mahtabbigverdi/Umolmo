@@ -208,6 +208,29 @@ def get_evaluation(name, seq_len, max_examples, for_inference=True,
         )
 
 
+DEBUG_VISION_BACKBONE = VitConfig(
+    init_path=None,
+    resize_mode="siglip",
+    image_model_type="openai",
+    image_default_input_size=(336, 336),
+    image_patch_size=14,
+    image_pos_patch_size=14,
+    image_emb_dim=128,
+    image_num_heads=2,
+    image_num_key_value_heads=2,
+    image_num_layers=2,
+    image_head_dim=64,
+    image_mlp_dim=256,
+    image_mlp_activations="quick_gelu",
+    image_dropout_rate=0.0,
+    image_num_pos=577,
+    image_norm_eps=1e-5,
+    attention_dropout=0.0,
+    residual_dropout=0.0,
+    initializer_range=0.02,
+)
+
+
 DEFAULT_VISION_BACKBONE = VitConfig(
     init_path="${oc.env:MOLMO_DATA_DIR}/pretrained_image_encoders/vit-l-14-336.pt",
     image_model_type="openai",
@@ -623,6 +646,7 @@ DEFAULT_LOAD_PATHS = {
 
 
 VISION_BACKBONES: Dict[str, VitConfig] = {
+    "debug": DEBUG_VISION_BACKBONE,
     "openai": DEFAULT_VISION_BACKBONE,
     "siglip": SIGLIP_VISION_BACKBONE,
     "siglip2": SIGLIP2_VISION_BACKBONE,

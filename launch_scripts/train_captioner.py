@@ -35,6 +35,7 @@ if __name__ == "__main__":
     parser.add_argument("--n_eval_examples", default=2048, type=int)
     parser.add_argument("--device_eval_batch_size", default=4, type=int)
     parser.add_argument("--seq_len", default=2304, type=int)
+    parser.add_argument("--two_epochs", action="store_true")
     parser.add_argument("--dataset", default="pixmo_cap_with_transcripts")
     args, other_args = parser.parse_known_args()
 
@@ -103,6 +104,11 @@ if __name__ == "__main__":
         ),
     )
 
+    if args.two_epochs:
+        duration_factor = 2
+    else:
+        duration_factor = 1
+
     cfg = TrainConfig(
         save_folder="debug_run" if debug else omegaconf.MISSING,
         seed=6198,
@@ -150,9 +156,9 @@ if __name__ == "__main__":
         ),
         scheduler=SchedulerConfig(
             name=SchedulerType.multimodal,
-            connector_t_warmup=200,
-            vit_t_warmup=2000,
-            llm_t_warmup=2000,
+            connector_t_warmup=200//duration_factor,
+            vit_t_warmup=2000//duration_factor,
+            llm_t_warmup=2000//duration_factor,
             alpha_f=0.1,
             warmup_min_lr=0.0
         ),
@@ -171,7 +177,7 @@ if __name__ == "__main__":
         global_train_batch_size=global_batch_size,
         device_train_microbatch_size=4,
         time_limit=None,
-        max_duration=duration,
+        max_duration=duration//duration_factor,
         stop_at="${max_duration}",
         max_grad_norm=1,
         batch_divisor=BatchDivisor.global_batch,
