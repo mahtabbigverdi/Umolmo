@@ -415,7 +415,7 @@ class VideoTextPreprocessor(InterleavedTextPreprocessor, ImagePreprocessor):
         video_masks = []
         video_tokens = []
 
-        if self.time_mode == "prefix":
+        if self.time_mode == "fps-prefix":
             tmp = np.array(frame_times)
             deltas = tmp[1:] - tmp[:-1]
             fps = np.mean(deltas)
