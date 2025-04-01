@@ -116,7 +116,7 @@ def arange_frames_for_pooling(idx_arr, pool_f, pool_h, pool_w):
     idx = arange_for_pooling(idx_arr, pool_h, pool_w)
     idx = np.tile(np.expand_dims(idx, axis=0), [pool_f, 1, 1, 1])
     return np.where(
-        idx <= 0,
+        idx < 0,
         idx,
         idx + (patches * np.arange(pool_f))[:, None, None, None]
     )
