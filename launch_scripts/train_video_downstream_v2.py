@@ -41,6 +41,7 @@ if __name__ == "__main__":
     parser.add_argument("--max_frames", default=96, type=int)
     parser.add_argument("--candidate_sampling_fps", type=float, nargs="+", default=[0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0])
     parser.add_argument("--max_crops", default=12, type=int)
+    parser.add_argument("--time_mode", default="fps-prefix", type=str)
     parser.add_argument("--frame_sample_mode", default="fps_uniform", type=str)
     parser.add_argument("--bi_directional_attn", default=None, type=str)
     parser.add_argument("--global_batch_size", default=128, type=int)
@@ -147,6 +148,7 @@ if __name__ == "__main__":
             vision_backbone=model_cfg.vision_backbone,
             data_formatter=model_cfg.data_formatter,
             mm_preprocessor=MultiModalVideoPreprocessorConfig(
+                time_mode=args.time_mode,
                 high_res_pooling_h=args.high_res_pooling_h,
                 high_res_pooling_w=args.high_res_pooling_w,
                 periodic_high_res_frame=args.periodic_high_res_frame,

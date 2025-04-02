@@ -502,7 +502,7 @@ def nextqa_get_multi_choice_info(options: List[str]) -> Tuple[Dict[str, str], Li
     return index2ans, all_choices
 
 
-def parse_multi_choice_response(response: str, all_choices: List[str], index2ans: Dict[str, str]):
+def nextqa_parse_multi_choice_response(response: str, all_choices: List[str], index2ans: Dict[str, str]) -> str:
     """
     Parse the prediction from the generated response.
     Return the predicted index e.g., A, B, C, D.
@@ -571,7 +571,7 @@ def parse_multi_choice_response(response: str, all_choices: List[str], index2ans
     return pred_index
 
 
-def nextqa_mc(target: str, prediction: str, options: List[str]):
+def nextqa_mc(target: str, prediction: str, options: List[str]) -> bool:
     index2ans, all_choices = nextqa_get_multi_choice_info(options)
-    parsed_pred = parse_multi_choice_response(prediction, all_choices, index2ans)
+    parsed_pred = nextqa_parse_multi_choice_response(prediction, all_choices, index2ans)
     return target == parsed_pred

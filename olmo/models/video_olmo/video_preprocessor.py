@@ -273,7 +273,7 @@ class MultiModalVideoPreprocessorConfig(MolmoPreprocessorConfig):
         seq_len += self.max_frames * extra_per_frame
         return seq_len
 
-    def build(self, tokenizer, vision_backbone_config: MolmoVisionBackboneConfig, max_sequence_length) -> 'MultiModalVideoPreprocessor':
+    def build(self, tokenizer, vision_backbone_config: MolmoVisionBackboneConfig, max_sequence_length) -> 'VideoTextPreprocessor':
         vit = vision_backbone_config.vit
         return VideoTextPreprocessor(
             tokenizer=tokenizer,
