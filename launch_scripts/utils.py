@@ -273,6 +273,7 @@ SIGLIP_VISION_BACKBONE = VitConfig(
     residual_dropout=0.0,
     initializer_range=0.02,
     resize_mode="siglip",
+    normalize="siglip"
 )
 
 
