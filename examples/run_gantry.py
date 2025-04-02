@@ -1,6 +1,7 @@
 import argparse
 import os
 import subprocess
+import sys
 from datetime import datetime, time
 from time import perf_counter
 
@@ -15,7 +16,6 @@ AUGUSTA_ENV = dict(
     LD_LIBRARY_PATH="/var/lib/tcpxo/lib64:${LD_LIBRARY_PATH}",
     NCCL_CROSS_NIC="0",
     NCCL_ALGO="Ring,Tree",
-    NCCL_PROTO="Simple",
     NCCL_MIN_NCHANNELS="4",
     NCCL_P2P_NET_CHUNKSIZE="524288",
     NCCL_P2P_PCI_CHUNKSIZE="524288",
@@ -28,8 +28,6 @@ AUGUSTA_ENV = dict(
     NCCL_NET_GDR_LEVEL="PIX",
     NCCL_FASTRAK_ENABLE_HOTPATH_LOGGING="0",
     NCCL_TUNER_PLUGIN="libnccl-tuner.so",
-    NCCL_TUNER_CONFIG_PATH="/var/lib/tcpxo/lib64/a3plus_tuner_config.textproto",
-    NCCL_SHIMNET_GUEST_CONFIG_CHECKER_CONFIG_FILE="/var/lib/tcpxo/lib64/a3plus_guest_config.textproto",
     NCCL_FASTRAK_PLUGIN_ACCEPT_TIMEOUT_MS="600000",
     NCCL_NVLS_ENABLE="0",
     NCCL_DEBUG="WARN",
@@ -39,6 +37,12 @@ AUGUSTA_ENV = dict(
     NCCL_USE_SNAP="1",
     NCCL_FASTRAK_USE_LLCM="1",
     NCCL_FASTRAK_LLCM_DEVICE_DIRECTORY="/dev/aperture_devices",
+    # NCCL_PROTO="Simple",
+    # NCCL_TUNER_CONFIG_PATH="/var/lib/tcpxo/lib64/a3plus_tuner_config.textproto",
+    # NCCL_SHIMNET_GUEST_CONFIG_CHECKER_CONFIG_FILE="/var/lib/tcpxo/lib64/a3plus_guest_config.textproto",
+    NCCL_PROTO="Simple,LL128",
+    NCCL_TUNER_CONFIG_PATH="/var/lib/tcpxo/lib64/a3plus_tuner_config_ll128.textproto",
+    NCCL_SHIMNET_GUEST_CONFIG_CHECKER_CONFIG_FILE="/var/lib/tcpxo/lib64/a3plus_guest_config_ll128.textproto",
 )
 
 
@@ -90,10 +94,9 @@ def main():
         priority=args.priority,
         budget="ai2/oe-training",
         gpus=8,
-        nfs=False,
-        shared_memory="10GiB",
+        shared_memory="16GiB",
         venv="base",
-        beaker_image="chrisc/molmo-torch2.6.0-cuda12.4",
+        beaker_image="chrisc/molmo-torch2.6.0-cuda12.6-video",
         workspace="ai2/mm-olmo",
         gh_token_secret="CHRISC_GITHUB_TOKEN",
         conda=False,
@@ -106,6 +109,7 @@ def main():
         WANDB_PROJECT="cockatoo",
         LOG_FILTER_TYPE="rank0_only",
         TORCH_LOGS_RANK0="recompiles,graph_breaks",
+        OLMO_NUM_THREADS_ENV_VAR=8,
 
         # Allows remote access to weka
         WEKA_ENDPOINT_URL="https://weka-aus.beaker.org:9000",
@@ -151,7 +155,10 @@ def main():
         else:
             clusters = ["ai2/jupiter-cirrascale-2"]
     else:
-        clusters = ["ai2/ceres-cirrascale", "ai2/jupiter-cirrascale-2"]
+        if args.augusta:
+            clusters = ["ai2/augusta-google-1"]
+        else:
+            clusters = ["ai2/ceres-cirrascale", "ai2/jupiter-cirrascale-2"]
         if args.saturn:
             clusters.append("ai2/saturn-cirrascale")
 
@@ -160,7 +167,6 @@ def main():
             MOLMO_DATA_DIR="gs://mm-olmo",
             # Helpful when downloading/uploading large files to remote folders
             OLMO_SHARED_FS="1",  # Assume we are writing to a remote FS
-            NCCL_TIMEOUT_MINUTES="30",
             MOLMO_CACHE_DIR="/data/molmo-cache",
             MODEL_DIR="gs://oe-training-chrisc/molmo-models"
         )
@@ -197,6 +203,8 @@ def main():
 
     # Call the gantry run command programmatically from our gantry repo
     ctx = click.Context(gantry_run)
+    # Trick gantry into validating our args since it checks `sys.argv` directly
+    sys.argv = ["--", "/bin/bash", "-c", command]
     ctx.forward(
         gantry_run,
         arg=["/bin/bash", "-c", command],
