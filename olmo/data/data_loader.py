@@ -52,7 +52,7 @@ class DataLoaderConfig(BaseConfig):
     shuffle: Optional[bool] = True
     """Should the data be shuffled"""
 
-    start_index: Optional[int] = None
+    start_index: int = 0
     """Example index to start at"""
 
     # DataLoader args
