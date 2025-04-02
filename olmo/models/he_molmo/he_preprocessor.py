@@ -166,16 +166,18 @@ class HeMultiModalPreprocessor(InterleavedTextPreprocessor, ImagePreprocessor):
         high, low = -1, -1
         for h, w in [
             [base_h, base_w*self.max_crops],
-            [base_h*self.max_crops, base_w]
+            [base_h*self.max_crops, base_w*self.max_crops],
+            [base_h*2, base_w*self.max_crops//2 + 1],
+            [base_h*self.max_crops, base_w],
         ]:
             new_high, new_low = self._compute_num_tokens(h, w)
             high = max(high, new_high)
             low = max(low, new_low)
         return dict(
             images=1 if self.crop_mode == "resize" else (1+self.max_crops),
-            high_res_pos_ids=new_high,
-            low_res_tokens_idx=new_low,
-            high_res_tokens_idx=new_high,
+            high_res_pos_ids=high,
+            low_res_tokens_idx=low,
+            high_res_tokens_idx=high,
         )
 
     def _compute_num_tokens(self, image_h, image_w) -> int:
