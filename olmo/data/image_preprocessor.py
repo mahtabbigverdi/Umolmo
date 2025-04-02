@@ -335,6 +335,15 @@ class ImagePreprocessor:
     base_image_input_size: Tuple[int, int] = (336, 336)
     image_patch_size: int = 14
 
+    def unnormalize_image(self, image: np.ndarray):
+        if self.normalize == "openai":
+            return (image * np.array(OPENAI_CLIP_STD, dtype=np.float32)[None, None, :] +
+                    np.array(OPENAI_CLIP_MEAN, dtype=np.float32)[None, None, :])
+        elif self.normalize == "siglip":
+            return image / np.asarray(2.0, dtype=np.float32) + 1
+        else:
+            raise NotImplementedError()
+
     def normalize_image(self, image):
         if self.normalize == "openai":
             image -= np.array(OPENAI_CLIP_MEAN, dtype=np.float32)[None, None, :]
