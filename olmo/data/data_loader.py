@@ -52,6 +52,9 @@ class DataLoaderConfig(BaseConfig):
     shuffle: Optional[bool] = True
     """Should the data be shuffled"""
 
+    start_index: Optional[int] = None
+    """Example index to start at"""
+
     # DataLoader args
     num_workers: int = 0
     drop_last: bool = False
@@ -170,6 +173,7 @@ class DataLoaderConfig(BaseConfig):
         datasets = [DeterministicDataset(ds, preprocessor, self.seed) for ds in datasets]
 
         dataset = IterableDatasetMixture(
+            start_index=self.start_index,
             datasets=datasets,
             mixture_rates=rates,
             global_batch_size=global_batch_size,
