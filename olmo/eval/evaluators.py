@@ -720,7 +720,7 @@ class VqaEval(Evaluator):
                     score = get_answer_idx == metadata["answer_idx"]
                 elif metric == "nextqa_mc":
                     options = metadata["options"]
-                    answer = answer[0]
+                    answer = answers[0]
                     score = nextqa_mc(answer, pred, options)
                 elif metric in ["mc_ai2d_transparent", "mc_ai2d_opaque"]: # mc split by transparency
                     has_transparent_box = metadata["has_transparent_box"]

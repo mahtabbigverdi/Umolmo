@@ -99,6 +99,8 @@ if __name__ == "__main__":
     parser.add_argument("--device_train_batch_size", default=4, type=int)
     parser.add_argument("--include_image", action="store_true",
                         help="Include image in the evaluation outputs")
+    parser.add_argument("--turn_off_inference", action="store_true",
+                        help="Turn off inference during training")
     args, other_args = parser.parse_known_args()
 
     if args.mixture.startswith("single"):
@@ -183,6 +185,34 @@ if __name__ == "__main__":
                 "pixmo_count_counting",
             ], 0.35]
         ]
+    elif args.mixture in ["3.4-synthetic"]:
+        aux = list(AUX_COSYN_V1)
+        eval_tasks = [
+            "chart_qa",
+            "chart_qa_exp",
+            "info_qa",
+            "doc_qa",
+            "ai2_diagram_v2_mix_transparent",
+            "coco_2014_vqa_multi",
+            "pixmo_clocks",
+            "android_control_ll",
+            "pointing_eval:test",
+        ]
+        tasks = [
+            ["demo", [
+                "pixmo_ask_model_anything",
+                ("pixmo_cap", 50000),
+                "pixmo_cap_qa_as_user_qa",
+                "pixmo_pointing_explanations"
+            ], 0.15],
+            ["aux", aux, 0.50],
+            ["pointing", [
+                "pixmo_points_train",
+                "pixmo_count_train",
+                "pixmo_points_high_freq_train",
+                "cosyn_point",
+            ], 0.35]
+        ]
     else:
         raise NotImplementedError(args.mixture)
 
@@ -239,15 +269,16 @@ if __name__ == "__main__":
 
     num_workers = 2
     evaluations = []
-    for task in eval_tasks:
-        evaluation = get_evaluation(
-            task,
-            args.inf_seq_len,
-            device_batch_size=args.device_inf_batch_size,
-            max_examples=max_inf_examples,
-            num_workers=num_workers,
-            include_image=args.include_image,
-        )
+    if not args.turn_off_inference:
+        for task in eval_tasks:
+            evaluation = get_evaluation(
+                task,
+                args.inf_seq_len,
+                device_batch_size=args.device_inf_batch_size,
+                max_examples=max_inf_examples,
+                num_workers=num_workers,
+                include_image=args.include_image,
+            )
         evaluation.data.persistent_workers = True
         evaluations.append(evaluation)
 
