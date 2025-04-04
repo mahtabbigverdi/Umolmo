@@ -42,7 +42,21 @@ DEBUG_MODEL = MolmoConfig(
 
 VIDEO_DEBUG_MODEL = VideoOlmoConfig(
     llm=DEBUG_MODEL.llm,
-    vision_backbone=MolmoVisionBackboneConfig(vit=VitConfig(image_num_layers=1)),
+    vision_backbone=MolmoVisionBackboneConfig(
+        vit=VitConfig(
+            image_num_layers=1,
+            image_model_type="siglip",
+            image_default_input_size=(378, 378),
+            image_emb_dim=1152,
+            image_num_heads=16,
+            image_num_key_value_heads=16,
+            image_head_dim=72,
+            image_mlp_dim=4304,
+            image_mlp_activations="gelu_pytorch_tanh",
+            image_num_pos=729,  # no CLS token
+            resize_mode="siglip",
+        )
+    ),
     data_formatter=DEBUG_MODEL.data_formatter,
     mm_preprocessor=MultiModalVideoPreprocessorConfig(
         crop_mode="resize",

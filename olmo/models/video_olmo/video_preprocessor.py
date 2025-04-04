@@ -1,4 +1,3 @@
-import dataclasses
 from dataclasses import dataclass
 from os.path import basename, dirname
 from typing import List, Optional, Union, Tuple, Any
@@ -9,12 +8,10 @@ import numpy as np
 import torch
 from PIL import Image
 
-from olmo import tokenizer
 from olmo.data.image_preprocessor import ImagePreprocessor
 from olmo.data.interleaved_text_preprocessor import InterleavedTextPreprocessor
 from olmo.io import resource_path
 from olmo.models.molmo.data_formatter import DataFormatter
-from olmo.tokenizer import get_special_token_ids
 
 decord.logging.set_level(2)
 from decord import VideoReader, cpu
@@ -26,6 +23,9 @@ from olmo.models.molmo.model_preprocessor import MolmoPreprocessorConfig, \
 
 from olmo.nn.vision_backbone import MolmoVisionBackboneConfig
 
+import os
+from transformers import AutoProcessor
+from olmo.data.dataset import VIDEO_DATA_HOME
 
 def get_sampling_fps(
     video_fps: float,
@@ -194,8 +194,8 @@ def get_image_collage(frames: np.ndarray, frame_size: int = 128) -> np.ndarray:
 
         # Center the frame in the square
         square_frame[
-        (largest_dim - frame.shape[0]) // 2:(largest_dim - frame.shape[0]) // 2 + frame.shape[0],
-        (largest_dim - frame.shape[1]) // 2:(largest_dim - frame.shape[1]) // 2 + frame.shape[1]
+            (largest_dim - frame.shape[0]) // 2:(largest_dim - frame.shape[0]) // 2 + frame.shape[0],
+            (largest_dim - frame.shape[1]) // 2:(largest_dim - frame.shape[1]) // 2 + frame.shape[1]
         ] = frame
 
         resized = Image.fromarray(square_frame).resize((frame_size, frame_size), Image.Resampling.BILINEAR)
@@ -250,10 +250,32 @@ class MultiModalVideoPreprocessorConfig(MolmoPreprocessorConfig):
             high_res_tokens = preprocessor.compute_num_tokens(h, w, self.high_res_pooling_h, self.high_res_pooling_w)
             n_high_res = 1 + (self.max_frames - 1) // self.periodic_high_res_frame
             n_low_res = self.max_frames - n_high_res
-            padding_lens["low_res_pooled_idx"] = low_res_tokens*n_low_res
-            padding_lens["high_res_pooled_idx"] = high_res_tokens*n_high_res
+            padding_lens["low_res_pooled_idx"] = low_res_tokens * n_low_res
+            padding_lens["high_res_pooled_idx"] = high_res_tokens * n_high_res
+
+            padding_lens["low_res_pooled_idx_no_offset"] = low_res_tokens * n_low_res
+            padding_lens["high_res_pooled_idx_no_offset"] = high_res_tokens * n_high_res
+
+            if self.crop_mode in ['resize', 'frame_sampling']:
+                # number of image tokens + number of column tokens + start_token + end_token
+                padding_lens['low_res_token_place_holders'] = low_res_tokens + int(np.sqrt(low_res_tokens)) + 1 + 1
+                padding_lens['high_res_token_place_holders'] = high_res_tokens + int(np.sqrt(high_res_tokens)) + 1 + 1
+            else:
+                raise NotImplementedError("padding lens not implemented for crop mode: ", self.crop_mode)
         else:
-            padding_lens["low_res_pooled_idx"] = low_res_tokens*self.max_frames
+            padding_lens["low_res_pooled_idx"] = low_res_tokens * self.max_frames
+
+            if self.crop_mode in ['resize', 'frame_sampling']:
+                # number of image tokens + number of column tokens + start_token + end_token
+                padding_lens['low_res_token_place_holders'] = low_res_tokens + np.sqrt(low_res_tokens) + 1 + 1
+            else:
+                raise NotImplementedError("padding lens not implemented for crop mode: ", self.crop_mode)
+
+        padding_lens['high_res_indices'] = self.max_frames
+
+        # Hard coded. Improve in the future
+        padding_lens['siglip_text_token_ids'] = 64
+
         return padding_lens
 
     def get_max_image_tokens(self, vision_backbone_config: MolmoVisionBackboneConfig):
@@ -265,7 +287,7 @@ class MultiModalVideoPreprocessorConfig(MolmoPreprocessorConfig):
         elif self.time_mode == "fps-prefix":
             seq_len += 10  # time prefix
         else:
-            assert self.time_mode is None
+            assert self.time_mode is None or self.time_mode == "skip_time"
         if self.use_col_tokens:
             sz = vision_backbone_config.vit.image_default_input_size
             patch_size = vision_backbone_config.vit.image_patch_size
@@ -318,6 +340,16 @@ class VideoTextPreprocessor(InterleavedTextPreprocessor, ImagePreprocessor):
     time_mode: str = "per-frame"
     max_text_tokens: int = None
     periodic_high_res_frame: Optional[int] = None
+
+    def __post_init__(self):
+        assert self.time_mode in ["per-frame", "prefix", "skip_time"] or self.time_mode is None
+
+        hf_source = "google/siglip2-so400m-patch14-384"
+        cache_dir = os.path.join(VIDEO_DATA_HOME, "hf_init_encoders")
+        self.frame_selection_processor = AutoProcessor.from_pretrained(
+            hf_source,
+            cache_dir=cache_dir
+        )
 
     def compute_num_tokens(self, image_h, image_w, pool_h, pool_w) -> int:
         """Return the number of pooled image tokens produced for an image of size image_w, image_h"""
@@ -388,6 +420,7 @@ class VideoTextPreprocessor(InterleavedTextPreprocessor, ImagePreprocessor):
         else:
             raise ValueError()
 
+
     def __call__(
         self,
         frames,
@@ -414,6 +447,8 @@ class VideoTextPreprocessor(InterleavedTextPreprocessor, ImagePreprocessor):
         high_res_pooled_idx = []
         video_masks = []
         video_tokens = []
+        low_res_pooled_idx_no_offset = []
+        high_res_pooled_idx_no_offset = []
 
         if self.time_mode == "fps-prefix":
             tmp = np.array(frame_times)
@@ -422,29 +457,40 @@ class VideoTextPreprocessor(InterleavedTextPreprocessor, ImagePreprocessor):
             prefix = self.tokenizer.encode(f"FPS {fps:0.2f}")
             video_tokens.append(prefix)
 
+        high_res_index_list = []
         for frame_idx, frame in enumerate(frames):
-            frame_pooling_w = self.image_pooling_w
-            frame_pooling_h = self.image_pooling_h
-            patch_id = self.tokenizer.image_low_res_token_id
             is_high_res = self.periodic_high_res_frame is not None and frame_idx % self.periodic_high_res_frame == 0
             if is_high_res:
                 # If the frame is a high res frame, use the high res token length
+                high_res_index_list.append(1)
                 frame_pooling_w = self.high_res_pooling_w
                 frame_pooling_h = self.high_res_pooling_h
                 patch_id = self.tokenizer.image_patch_token_id
 
-            frame_tokens, frame_patches, frame_masks, pooled_idx = self.image_to_patches_and_tokens(
-                frame, frame_pooling_w, frame_pooling_h, patch_id, is_training, rng)
-            offset = sum(np.prod(x.shape[:2]) for x in all_frame_patches)
-            pooled_idx = np.where(
-                pooled_idx >= 0,
-                pooled_idx + offset,
-                pooled_idx
-            )
-            if is_high_res:
-                high_res_pooled_idx.append(pooled_idx)
+                frame_tokens, frame_patches, frame_masks, pooled_idx = self.image_to_patches_and_tokens(
+                    frame, frame_pooling_w, frame_pooling_h, patch_id, is_training, rng)
             else:
-                low_res_pooled_idx.append(pooled_idx)
+                high_res_index_list.append(0)
+                frame_pooling_w = self.image_pooling_w
+                frame_pooling_h = self.image_pooling_h
+                patch_id = self.tokenizer.image_low_res_token_id
+
+                frame_tokens, frame_patches, frame_masks, pooled_idx = self.image_to_patches_and_tokens(
+                    frame, frame_pooling_w, frame_pooling_h, patch_id, is_training, rng)
+
+            offset = sum(np.prod(x.shape[:2]) for x in all_frame_patches)
+            pooled_idx_with_offset = np.where(pooled_idx >= 0, pooled_idx + offset, pooled_idx)
+
+            if is_high_res:
+                high_res_pooled_idx.append(pooled_idx_with_offset)
+                high_res_pooled_idx_no_offset.append(pooled_idx)
+                high_res_token_place_holders = frame_tokens
+
+            else:
+                low_res_pooled_idx.append(pooled_idx_with_offset)
+                low_res_pooled_idx_no_offset.append(pooled_idx)
+                low_res_token_place_holders = frame_tokens
+
             all_frame_patches.append(frame_patches)
             video_masks.append(frame_masks)
             if frame_id_token_ids[frame_idx]:
@@ -462,10 +508,34 @@ class VideoTextPreprocessor(InterleavedTextPreprocessor, ImagePreprocessor):
         out["images"] = all_frame_patches
         if self.image_padding_mask:
             out["image_masks"] = np.concatenate(video_masks, 0)
+
+        out["high_res_indices"] = np.array(high_res_index_list)
+
+        siglip_text_token_ids = []
+        if isinstance(message_list[0], str):
+            siglip_text_input_ids = self.frame_selection_processor(text=message_list[0], padding="max_length", truncation=True, max_length=64)
+            siglip_text_token_ids.append(siglip_text_input_ids['input_ids'].numpy()[0])
+        else:
+            for message_set_idx, message_tuple in enumerate(message_list):
+                if len(siglip_text_token_ids) != 0:
+                    break
+
+                for message_idx, message in enumerate(message_tuple):
+                    siglip_text_input_ids = self.frame_selection_processor(text=message, padding="max_length", truncation=True, max_length=64)
+                    siglip_text_token_ids.append(siglip_text_input_ids['input_ids'].numpy()[0])
+                    break
+        out['siglip_text_token_ids'] = np.concatenate(siglip_text_token_ids, axis=0)
+
         if low_res_pooled_idx:
             out["low_res_pooled_idx"] = np.concatenate(low_res_pooled_idx, 0)
+            out['low_res_pooled_idx_no_offset'] = np.concatenate(low_res_pooled_idx_no_offset, axis=0)
+            out['low_res_token_place_holders'] = low_res_token_place_holders
+
         if high_res_pooled_idx:
             out["high_res_pooled_idx"] = np.concatenate(high_res_pooled_idx, 0)
+            out['high_res_pooled_idx_no_offset'] = np.concatenate(high_res_pooled_idx_no_offset, axis=0)
+            out['high_res_token_place_holders'] = high_res_token_place_holders
+
         return out
 
 
@@ -493,6 +563,8 @@ class VideoPreprocessor:
         except Exception as e:
             e.add_note(f"Could not load video: {example['video']}")
             raise e
+        else:
+            example["video"] = frames[0]
 
         if "message_list" in example:
             # If there are multiple conversations for this example, shuffle their order

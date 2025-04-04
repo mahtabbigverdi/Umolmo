@@ -21,7 +21,6 @@ from olmo.train.trainer_config import (
 from olmo.models.model import FSDPWrapStrategy
 from olmo.models.video_olmo.video_olmo import VideoOlmoConfig
 from olmo.data.data_loader import DataLoaderConfig, RootSizeMixture
-from olmo.torch_util import get_world_size
 from olmo.util import clean_opt, prepare_torchrun_environment, select_checkpoint
 from scripts.train import run_trainer
 
@@ -47,6 +46,8 @@ if __name__ == "__main__":
     parser.add_argument("--connector_learning_rate", default=5e-6, type=float)
     parser.add_argument("--duration", default=10000, type=int)
     parser.add_argument("--log_interval", default=20, type=int)
+    parser.add_argument("--eval_interval", default=1000, type=int)
+    parser.add_argument("--inf_eval_interval", default=2000, type=int)
     parser.add_argument("--prefetch_factor", default=8, type=int)
     parser.add_argument("--freeze_vit", action="store_true")
     parser.add_argument("--num_workers", default=2, type=int)
@@ -55,6 +56,7 @@ if __name__ == "__main__":
     parser.add_argument("--high_res_pooling_h", default=2, type=int)
     parser.add_argument("--high_res_pooling_w", default=2, type=int)
     parser.add_argument("--periodic_high_res_frame", default=None, type=int)
+    parser.add_argument("--run_name", default="multitask_video", type=str)
     args, other_args = parser.parse_known_args()
     
     if args.mixture == "intern_vid":
@@ -103,6 +105,13 @@ if __name__ == "__main__":
     if debug:
         checkpoint = None
         model_cfg = VIDEO_DEBUG_MODEL
+        model_cfg.mm_preprocessor.max_frames = args.max_crops
+        model_cfg.mm_preprocessor.pooling_h = args.image_pooling_h
+        model_cfg.mm_preprocessor.pooling_w = args.image_pooling_w
+        model_cfg.mm_preprocessor.high_res_pooling_h = args.high_res_pooling_h
+        model_cfg.mm_preprocessor.high_res_pooling_w = args.high_res_pooling_w
+        model_cfg.mm_preprocessor.periodic_high_res_frame = args.periodic_high_res_frame
+
         global_batch_size = args.global_batch_size
         model_init = None
         inf_eval_interval = 20
@@ -116,8 +125,9 @@ if __name__ == "__main__":
         global_batch_size = args.global_batch_size
         max_eval_examples = args.max_eval_examples
         log_interval = args.log_interval
-        eval_interval = 1000
-        save_interval = 1000
+        save_interval = args.eval_interval
+        eval_interval = args.eval_interval
+        inf_eval_interval = args.inf_eval_interval
         duration = args.duration
         checkpoint = select_checkpoint(args.checkpoint)
         if exists(join(args.checkpoint, "model.yaml")):
@@ -202,7 +212,7 @@ if __name__ == "__main__":
     wandb_project = os.environ.get("WANDB_PROJECT", "video_olmo")
 
     cfg = TrainConfig(
-        run_name="multitask_video",
+        run_name=args.run_name,
         save_folder="debug_run" if debug else omegaconf.MISSING,
         seed=6198,
         dry_run=False,
@@ -278,8 +288,8 @@ if __name__ == "__main__":
         softmax_auxiliary_loss=True,
         softmax_auxiliary_loss_scale=1e-4,
         evaluators=evaluations,
-        eval_interval=1000,
-        inf_eval_interval=2000,
+        eval_interval=eval_interval,
+        inf_eval_interval=inf_eval_interval,
         inf_evaluators=inf_evaluators,
         save_final_unsharded_checkpoint=False,
     )
