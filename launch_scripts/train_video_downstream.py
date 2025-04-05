@@ -10,6 +10,7 @@ from launch_scripts.utils import get_evaluation, VIDEO_DEBUG_MODEL
 from launch_scripts.train_multitask_model import get_training_mixture
 from olmo.models.molmo.molmo import MolmoConfig
 from olmo.models.video_olmo.video_preprocessor import MultiModalVideoPreprocessorConfig
+from olmo.models.video_olmo_query_res_sel.query_res_sel_video_molmo import QueryBasedVideoOlmoConfig
 from olmo.nn.image_vit import VitConfig
 
 from olmo.train.optim import OptimizerType, OptimizerConfig, SchedulerConfig, SchedulerType
@@ -57,6 +58,7 @@ if __name__ == "__main__":
     parser.add_argument("--high_res_pooling_w", default=2, type=int)
     parser.add_argument("--periodic_high_res_frame", default=None, type=int)
     parser.add_argument("--run_name", default="multitask_video", type=str)
+    parser.add_argument("--use_query_res_sel", action="store_true")
     args, other_args = parser.parse_known_args()
     
     if args.mixture == "intern_vid":
@@ -134,25 +136,36 @@ if __name__ == "__main__":
             model_cfg = MolmoConfig.load(join(checkpoint, "model.yaml"))
         else:
             model_cfg = MolmoConfig.load(join(checkpoint, "config.yaml"), key="model")
-        model_cfg = VideoOlmoConfig(
-            llm=model_cfg.llm,
-            vision_backbone=model_cfg.vision_backbone,
-            data_formatter=model_cfg.data_formatter,
-            mm_preprocessor=MultiModalVideoPreprocessorConfig(
-                high_res_pooling_h=args.high_res_pooling_h,
-                high_res_pooling_w=args.high_res_pooling_w,
-                periodic_high_res_frame=args.periodic_high_res_frame,
-                max_frames=args.max_crops,
-                **dict(
-                    model_cfg.mm_preprocessor.asdict(),
-                    crop_mode="resize",
-                    max_crops=args.max_crops,
-                    pooling_h=args.image_pooling_h,
-                    pooling_w=args.image_pooling_w,
-                )
-            ),
-            bi_directional_attn=None
+        video_pre_processor_cfg = MultiModalVideoPreprocessorConfig(
+                        high_res_pooling_h=args.high_res_pooling_h,
+                        high_res_pooling_w=args.high_res_pooling_w,
+                        periodic_high_res_frame=args.periodic_high_res_frame,
+                        max_frames=args.max_crops,
+                        query_based_resolution_selection=args.use_query_res_sel,
+                        **dict(
+                            model_cfg.mm_preprocessor.asdict(),
+                            crop_mode="resize",
+                            max_crops=args.max_crops,
+                            pooling_h=args.image_pooling_h,
+                            pooling_w=args.image_pooling_w,
+                        )
         )
+        if args.use_query_res_sel:
+            model_cfg = QueryBasedVideoOlmoConfig(
+                llm=model_cfg.llm,
+                vision_backbone=model_cfg.vision_backbone,
+                data_formatter=model_cfg.data_formatter,
+                mm_preprocessor=video_pre_processor_cfg,
+                bi_directional_attn=None
+            )
+        else:
+            model_cfg = VideoOlmoConfig(
+                llm=model_cfg.llm,
+                vision_backbone=model_cfg.vision_backbone,
+                data_formatter=model_cfg.data_formatter,
+                mm_preprocessor=video_pre_processor_cfg,
+                bi_directional_attn=None
+            )
         num_workers = args.num_workers
 
     if args.seq_len == "auto":

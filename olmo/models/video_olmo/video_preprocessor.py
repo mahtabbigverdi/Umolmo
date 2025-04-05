@@ -234,6 +234,9 @@ class MultiModalVideoPreprocessorConfig(MolmoPreprocessorConfig):
     candidate_sampling_fps: Tuple[float] = (0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0)
     """Candidate sampling fps to sample the frames from the video"""
 
+    query_based_resolution_selection: bool = False
+    """Whether to use query based resolution selection"""
+
     def get_image_padding_lens(self, vision_backbone_config: MolmoVisionBackboneConfig):
         """Max numbers of image tokens can be built for one image"""
         padding_lens = dict(
@@ -253,28 +256,22 @@ class MultiModalVideoPreprocessorConfig(MolmoPreprocessorConfig):
             padding_lens["low_res_pooled_idx"] = low_res_tokens * n_low_res
             padding_lens["high_res_pooled_idx"] = high_res_tokens * n_high_res
 
-            padding_lens["low_res_pooled_idx_no_offset"] = low_res_tokens * n_low_res
-            padding_lens["high_res_pooled_idx_no_offset"] = high_res_tokens * n_high_res
+            if self.query_based_resolution_selection:
+                padding_lens["low_res_pooled_idx_no_offset"] = low_res_tokens * n_low_res
+                padding_lens["high_res_pooled_idx_no_offset"] = high_res_tokens * n_high_res
 
-            if self.crop_mode in ['resize', 'frame_sampling']:
-                # number of image tokens + number of column tokens + start_token + end_token
-                padding_lens['low_res_token_place_holders'] = low_res_tokens + int(np.sqrt(low_res_tokens)) + 1 + 1
-                padding_lens['high_res_token_place_holders'] = high_res_tokens + int(np.sqrt(high_res_tokens)) + 1 + 1
-            else:
-                raise NotImplementedError("padding lens not implemented for crop mode: ", self.crop_mode)
+                # Hard coded. Improve in the future
+                padding_lens['siglip_text_token_ids'] = 64
+                padding_lens['high_res_indices'] = self.max_frames
+
+                if self.crop_mode in ['resize', 'frame_sampling']:
+                    # number of image tokens + number of column tokens + start_token + end_token
+                    padding_lens['low_res_token_place_holders'] = low_res_tokens + int(np.sqrt(low_res_tokens)) + 1 + 1
+                    padding_lens['high_res_token_place_holders'] = high_res_tokens + int(np.sqrt(high_res_tokens)) + 1 + 1
+                else:
+                    raise NotImplementedError("padding lens not implemented for crop mode: ", self.crop_mode)
         else:
             padding_lens["low_res_pooled_idx"] = low_res_tokens * self.max_frames
-
-            if self.crop_mode in ['resize', 'frame_sampling']:
-                # number of image tokens + number of column tokens + start_token + end_token
-                padding_lens['low_res_token_place_holders'] = low_res_tokens + np.sqrt(low_res_tokens) + 1 + 1
-            else:
-                raise NotImplementedError("padding lens not implemented for crop mode: ", self.crop_mode)
-
-        padding_lens['high_res_indices'] = self.max_frames
-
-        # Hard coded. Improve in the future
-        padding_lens['siglip_text_token_ids'] = 64
 
         return padding_lens
 
@@ -317,7 +314,8 @@ class MultiModalVideoPreprocessorConfig(MolmoPreprocessorConfig):
             max_sequence_length=max_sequence_length,
             image_padding_mask=vision_backbone_config.image_padding_embed is not None,
             pad_value=vit.pad_value,
-            time_mode=self.time_mode
+            time_mode=self.time_mode,
+            query_based_resolution_selection=self.query_based_resolution_selection
         )
 
     def __post_init__(self):
@@ -335,6 +333,7 @@ class VideoTextPreprocessor(InterleavedTextPreprocessor, ImagePreprocessor):
     use_col_tokens: bool = True
     image_pooling_w: int = 2
     image_pooling_h: int = 2
+    query_based_resolution_selection: bool = False
     high_res_pooling_w: Optional[int] = None
     high_res_pooling_h: Optional[int] = None
     time_mode: str = "per-frame"
@@ -344,12 +343,10 @@ class VideoTextPreprocessor(InterleavedTextPreprocessor, ImagePreprocessor):
     def __post_init__(self):
         assert self.time_mode in ["per-frame", "prefix", "skip_time"] or self.time_mode is None
 
-        hf_source = "google/siglip2-so400m-patch14-384"
-        cache_dir = os.path.join(VIDEO_DATA_HOME, "hf_init_encoders")
-        self.frame_selection_processor = AutoProcessor.from_pretrained(
-            hf_source,
-            cache_dir=cache_dir
-        )
+        if self.query_based_resolution_selection:
+            self.frame_selection_pre_processor = AutoProcessor.from_pretrained("google/siglip2-so400m-patch14-384")
+        else:
+            self.frame_selection_pre_processor = None
 
     def compute_num_tokens(self, image_h, image_w, pool_h, pool_w) -> int:
         """Return the number of pooled image tokens produced for an image of size image_w, image_h"""
@@ -509,30 +506,31 @@ class VideoTextPreprocessor(InterleavedTextPreprocessor, ImagePreprocessor):
         if self.image_padding_mask:
             out["image_masks"] = np.concatenate(video_masks, 0)
 
-        out["high_res_indices"] = np.array(high_res_index_list)
-
-        siglip_text_token_ids = []
-        if isinstance(message_list[0], str):
-            siglip_text_input_ids = self.frame_selection_processor(text=message_list[0], padding="max_length", truncation=True, max_length=64)
-            siglip_text_token_ids.append(siglip_text_input_ids['input_ids'].numpy()[0])
-        else:
-            for message_set_idx, message_tuple in enumerate(message_list):
-                if len(siglip_text_token_ids) != 0:
-                    break
-
-                for message_idx, message in enumerate(message_tuple):
-                    siglip_text_input_ids = self.frame_selection_processor(text=message, padding="max_length", truncation=True, max_length=64)
-                    siglip_text_token_ids.append(siglip_text_input_ids['input_ids'].numpy()[0])
-                    break
-        out['siglip_text_token_ids'] = np.concatenate(siglip_text_token_ids, axis=0)
-
         if low_res_pooled_idx:
             out["low_res_pooled_idx"] = np.concatenate(low_res_pooled_idx, 0)
-            out['low_res_pooled_idx_no_offset'] = np.concatenate(low_res_pooled_idx_no_offset, axis=0)
-            out['low_res_token_place_holders'] = low_res_token_place_holders
-
         if high_res_pooled_idx:
             out["high_res_pooled_idx"] = np.concatenate(high_res_pooled_idx, 0)
+
+        if self.query_based_resolution_selection:
+            out["high_res_indices"] = np.array(high_res_index_list)
+
+            siglip_text_token_ids = []
+            if isinstance(message_list[0], str):
+                siglip_text_input_ids = self.frame_selection_pre_processor(text=message_list[0], padding="max_length", truncation=True, max_length=64)
+                siglip_text_token_ids.append(siglip_text_input_ids['input_ids'].numpy()[0])
+            else:
+                for message_set_idx, message_tuple in enumerate(message_list):
+                    if len(siglip_text_token_ids) != 0:
+                        break
+
+                    for message_idx, message in enumerate(message_tuple):
+                        siglip_text_input_ids = self.frame_selection_pre_processor(text=message, padding="max_length", truncation=True, max_length=64)
+                        siglip_text_token_ids.append(siglip_text_input_ids['input_ids'].numpy()[0])
+                        break
+
+            out['siglip_text_token_ids'] = np.concatenate(siglip_text_token_ids, axis=0)
+            out['low_res_pooled_idx_no_offset'] = np.concatenate(low_res_pooled_idx_no_offset, axis=0)
+            out['low_res_token_place_holders'] = low_res_token_place_holders
             out['high_res_pooled_idx_no_offset'] = np.concatenate(high_res_pooled_idx_no_offset, axis=0)
             out['high_res_token_place_holders'] = high_res_token_place_holders
 

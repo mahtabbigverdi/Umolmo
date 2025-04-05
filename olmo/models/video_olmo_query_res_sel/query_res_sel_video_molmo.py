@@ -33,7 +33,7 @@ from olmo.nn.beam_search import BeamSearch, Constraint, FinalSequenceScorer, Sam
 
 
 @dataclasses.dataclass
-class VideoOlmoConfig(MolmoConfig):
+class QueryBasedVideoOlmoConfig(MolmoConfig):
     """VideoOlmo model configuration"""
     _model_name: ClassVar[str] = "video_olmo"
 
@@ -85,17 +85,15 @@ class VideoOlmoConfig(MolmoConfig):
         )
 
     def build_model(self, device=None):
-        return VideoOlmo(self, device)
+        return QueryBasedVideoOlmo(self, device)
 
     @property
     def max_sequence_length(self):
         return self.llm.max_sequence_length
 
 
-class VideoOlmo(ModelBase):
-    """VideoOlmo model"""
-
-    def __init__(self, config: VideoOlmoConfig, device=None):
+class QueryBasedVideoOlmo(ModelBase):
+    def __init__(self, config: QueryBasedVideoOlmoConfig, device=None):
         super().__init__()
         self.config = config
         self.__cache = BufferCache()
@@ -275,6 +273,22 @@ class VideoOlmo(ModelBase):
             params = [(np[0], np[1][:idx]) if "experts.mlp" in np[0] else np for np in params]  # type: ignore
         return sum(p.numel() for _, p in params)
 
+    @staticmethod
+    def siglip_vision_forward(model, pixel_values):
+        hidden_states = model.embeddings(pixel_values)
+
+        encoder_outputs = model.encoder(
+            inputs_embeds=hidden_states,
+            output_attentions=model.config.output_attentions,
+            output_hidden_states=model.config.output_hidden_states,
+            return_dict=model.config.use_return_dict
+        )
+
+        last_hidden_state = encoder_outputs[0]
+        last_hidden_state = model.post_layernorm(last_hidden_state)
+
+        return model.head(last_hidden_state)
+
     def forward(
         self,
         input_ids: torch.LongTensor,
@@ -290,6 +304,15 @@ class VideoOlmo(ModelBase):
         image_masks: Optional[torch.Tensor] = None,
         low_res_pooled_idx: Optional[torch.Tensor] = None,
         high_res_pooled_idx: Optional[torch.Tensor] = None,
+
+        high_res_indices: Optional[torch.Tensor] = None,
+        low_res_pooled_idx_no_offset: Optional[torch.Tensor] = None,
+        high_res_pooled_idx_no_offset: Optional[torch.Tensor] = None,
+        low_res_token_place_holders: Optional[torch.Tensor] = None,
+        high_res_token_place_holders: Optional[torch.Tensor] = None,
+
+        siglip_text_token_ids: Optional[torch.Tensor] = None,
+        frame_list: Optional[torch.Tensor] = None,
 
         past_key_values: Optional[Sequence[Tuple[torch.Tensor, torch.Tensor]]] = None,
         use_cache: bool = False,
@@ -367,6 +390,181 @@ class VideoOlmo(ModelBase):
         # shape: (batch_size, seq_len, d_model)
         if input_ids is not None:
             input_ids = input_ids * (input_ids != -1).to(input_ids.dtype)
+
+        if images is not None:
+            siglip_position_ids = torch.arange(siglip_text_token_ids.shape[1])
+            siglip_position_ids = siglip_position_ids.repeat([siglip_text_token_ids.shape[0], 1]).to(siglip_text_token_ids.device)
+            embedded_text = self.frame_selection_model.text_model(
+                input_ids=siglip_text_token_ids,
+                position_ids=siglip_position_ids
+            ).pooler_output
+
+            if self.frame_selection_model.vision_model.embeddings.position_ids.sum() == 0:
+                self.frame_selection_model.vision_model.embeddings.position_ids = (torch.arange(729).unsqueeze(0).
+                                                                                   to(self.frame_selection_model.vision_model.embeddings.position_ids.device))
+
+            num_frames = images.shape[1]
+            # break patches
+            image_reshaped = images.reshape(batch_size, num_frames, 27, 27, 14, 14, 3)
+            # rearrange to original order
+            image_reshaped = image_reshaped.permute(0, 1, 2, 4, 3, 5, 6)
+            # reshape to image arrangement
+            image_reshaped = image_reshaped.reshape(batch_size, num_frames, 378, 378, 3)
+            # pi = (image_reshaped[0,0].cpu().numpy() + 1)/2 * 255
+            # Image.fromarray(pi.astype(np.uint8)).save("patches.png")
+            # Image.fromarray(frame_list[0, 0].cpu().numpy().astype(np.uint8)).save("model_orig.png")
+
+            # reorder to B, C, H, W
+            image_reshaped = image_reshaped.permute(0, 1, 4, 2, 3)
+            # merge batch_size and num_frames
+            image_reshaped = image_reshaped.reshape(-1, 3, 378, 378)
+
+            embedded_image = self.siglip_vision_forward(self.frame_selection_model.vision_model, image_reshaped)
+            embedded_image = embedded_image.reshape(-1, num_frames, embedded_image.shape[-1])
+
+            embedded_image = embedded_image / (embedded_image.norm(p=2, dim=-1, keepdim=True) + 1e-6)
+            embedded_text = embedded_text / (embedded_text.norm(p=2, dim=-1, keepdim=True) + 1e-6)
+
+            bmm = torch.bmm(embedded_image, embedded_text.unsqueeze(2))
+            bmm = bmm.squeeze(2)
+
+            # import pdb; pdb.set_trace()
+            #
+            # frame_list_processed = (frame_list / 255) * 2 - 1
+            # frame_list_processed = frame_list_processed[0, :1, :, :378, :378]
+            #
+            # embedded_frame_list = self.siglip_vision_forward(self.frame_selection_model.vision_model, frame_list_processed)
+            # embedded_frame_list = embedded_frame_list / (embedded_frame_list.norm(p=2, dim=-1, keepdim=True) + 1e-6)
+            #
+            # hf_source = "google/siglip2-so400m-patch14-384"
+            # cache_dir = os.path.join(VIDEO_DATA_HOME, "hf_init_encoders")
+            # local_frame_selection_model = AutoModel.from_pretrained(hf_source, cache_dir=cache_dir)
+            #
+            # local_embedded_image = self.siglip_vision_forward(local_frame_selection_model.vision_model, frame_list_processed.cpu())
+            # local_embedded_image = local_embedded_image / (local_embedded_image.norm(p=2, dim=-1, keepdim=True) + 1e-6)
+            #
+            # print(embedded_frame_list.cpu() @ local_embedded_image.cpu().t())
+            # # embedded_frame_list.cpu() @ local_embedded_image.cpu().t() ==> tensor([[0.3756]], grad_fn=<MmBackward0>). Confirms this is the gap
+
+            # cpu_frame_selection_model = self.frame_selection_model.cpu()
+            # copied_to_cpu_embedded_frame_list = self.siglip_vision_forward(cpu_frame_selection_model.vision_model, frame_list_processed.cpu())
+            # copied_to_cpu_embedded_frame_list = copied_to_cpu_embedded_frame_list / (copied_to_cpu_embedded_frame_list.norm(p=2, dim=-1, keepdim=True) + 1e-6)
+
+            # local_embedded_image.cpu() @ embedded_text.cpu().t() <- confirmed that using local image and cuda text with frame list works. so will work for patches too
+            # embedded_frame_list[0, :1].cpu() @ embedded_image[0, :1].cpu().t()  <- confirmed that the embedding is matching for patches and frame list
+
+            # local_embedded_text = local_frame_selection_model.text_model(siglip_text_token_ids.cpu(), position_ids=siglip_position_ids.cpu()).pooler_output
+            # local_embedded_text = local_embedded_text / (local_embedded_text.norm(p=2, dim=-1, keepdim=True) + 1e-6)
+            # embedded_text.cpu() @ local_embedded_text.cpu().t()
+
+            # each batch has the same values
+            low_res_image_col_token_place_holder = low_res_token_place_holders[0]
+            high_res_image_col_token_place_holder = high_res_token_place_holders[0]
+
+            num_image_tokens_in_low_res = torch.sum(low_res_image_col_token_place_holder == self.special_ids[tokenizer.IMAGE_LOW_RES_TOKEN])
+            num_image_tokens_in_high_res = torch.sum(high_res_image_col_token_place_holder == self.special_ids[tokenizer.IMAGE_PATCH_TOKEN])
+
+            final_low_res_pooled_idx = -1 * torch.ones(low_res_pooled_idx_no_offset.shape, device=low_res_pooled_idx_no_offset.device,
+                                                       dtype=low_res_pooled_idx_no_offset.dtype)
+            final_high_res_pooled_idx = -1 * torch.ones(high_res_pooled_idx_no_offset.shape, device=high_res_pooled_idx_no_offset.device,
+                                                        dtype=high_res_pooled_idx_no_offset.dtype)
+
+            final_tensors = torch.zeros_like(input_ids, device=input_ids.device, dtype=input_ids.dtype)
+            final_tensors[:, 0] = input_ids[:, 0]  # bos_token_id at the start needs to be kept in place
+
+            for instance_idx in range(batch_size):
+                num_candidate_frames = (high_res_indices[instance_idx] != -1).sum().to(bmm.device)
+                num_frames_to_select = (high_res_indices[instance_idx] == 1).sum().to(bmm.device)
+                generated_indices = torch.topk(bmm[instance_idx, :num_candidate_frames], k=num_frames_to_select, dim=0).indices.detach()
+
+                # Using set() may slow everything down. Will monitor performance.
+                siglip_based_high_res_instance = set(generated_indices.cpu().numpy().tolist())
+
+                single_instance_high_res_instance = high_res_indices[instance_idx]
+                input_id_start = 1  # bos_token_id at the start needs to be kept in place
+                token_position_offset = 0
+
+                low_res_pooling_start = 0
+                high_res_pooling_start = 0
+
+                for flag_idx in range(num_frames):
+                    # TODO: This is a hacky way to know when the relevant frames have ended. Use a better way
+                    high_res_flag = single_instance_high_res_instance[flag_idx]
+                    if high_res_flag == -1:
+                        continue
+
+                    # high_res = high_res_flag == 1
+                    high_res = flag_idx in siglip_based_high_res_instance
+
+                    if high_res:
+                        final_tensors[instance_idx][input_id_start:input_id_start + len(high_res_image_col_token_place_holder)] = high_res_image_col_token_place_holder
+                        input_id_start += len(high_res_image_col_token_place_holder)
+
+                        ids_w_o_offset = high_res_pooled_idx_no_offset[instance_idx, high_res_pooling_start: high_res_pooling_start + num_image_tokens_in_high_res]
+                        final_high_res_pooled_idx[instance_idx, high_res_pooling_start: high_res_pooling_start + num_image_tokens_in_high_res] = ids_w_o_offset + token_position_offset
+                        token_position_offset += ids_w_o_offset.shape[0] * ids_w_o_offset.shape[1]
+
+                        high_res_pooling_start += num_image_tokens_in_high_res
+                    else:
+                        final_tensors[instance_idx][input_id_start:input_id_start + len(low_res_image_col_token_place_holder)] = low_res_image_col_token_place_holder
+                        input_id_start += len(low_res_image_col_token_place_holder)
+
+                        ids_w_o_offset = low_res_pooled_idx_no_offset[instance_idx, low_res_pooling_start: low_res_pooling_start + num_image_tokens_in_low_res]
+                        final_low_res_pooled_idx[instance_idx, low_res_pooling_start: low_res_pooling_start + num_image_tokens_in_low_res] = ids_w_o_offset + token_position_offset
+                        token_position_offset += ids_w_o_offset.shape[0] * ids_w_o_offset.shape[1]
+
+                        low_res_pooling_start += num_image_tokens_in_low_res
+
+                final_tensors[instance_idx, input_id_start:] = input_ids[instance_idx, input_id_start:]
+
+                # try:
+                #     assert torch.all(final_tensors[instance_idx, :input_id_start] == input_ids[instance_idx, :input_id_start]), "input_ids should be the same as final_tensors in debug"
+                # except:
+                #     print("input_ids up to input_id_start should be the same as final_tensors up to input_id_start in debug")
+                #     print("single_instance_high_res_instance", single_instance_high_res_instance)
+                #     print("high_res_indices", high_res_indices)
+                #
+                #     print("final_tensors[instance_idx, :input_id_start].sum()", (final_tensors[instance_idx, :input_id_start] != -1).sum())
+                #     print("input_ids[instance_idx, :input_id_start].sum()", (input_ids[instance_idx, :input_id_start] != -1).sum())
+                #
+                #     import pdb; pdb.set_trace()
+
+                # try:
+                #     assert torch.all(final_tensors[instance_idx] == input_ids[instance_idx]), "input_ids should be the same as final_tensors in debug"
+                # except:
+                #     print("input_ids should be the same as final_tensors in debug")
+                #     print("single_instance_high_res_instance", single_instance_high_res_instance)
+                #     print("high_res_indices", high_res_indices)
+                #     import pdb; pdb.set_trace()
+
+                try:
+                    # assert torch.all(low_res_pooled_idx[instance_idx] == final_low_res_pooled_idx[instance_idx]), "low_res_pooled_idx should be the same as final_low_res_pooled_idx in debug"
+                    assert low_res_pooled_idx[instance_idx].shape == final_low_res_pooled_idx[instance_idx].shape
+                except:
+                    print("low_res_pooled_idx should be the same as final_low_res_pooled_idx in debug")
+                    print("single_instance_high_res_instance", single_instance_high_res_instance)
+                    print("high_res_indices", high_res_indices)
+                    raise AssertionError("low_res_pooled_idx should be the same shape as final_low_res_pooled_idx in debug")
+
+                try:
+                    # assert torch.all(high_res_pooled_idx[instance_idx] == final_high_res_pooled_idx[instance_idx]), "high_res_pooled_idx should be the same as final_high_res_pooled_idx in debug"
+                    assert high_res_pooled_idx[instance_idx].shape == final_high_res_pooled_idx[instance_idx].shape
+                except:
+                    print("high_res_pooled_idx should be the same as final_high_res_pooled_idx in debug")
+                    print("single_instance_high_res_instance", single_instance_high_res_instance)
+                    print("high_res_indices", high_res_indices)
+                    raise AssertionError("high_res_pooled_idx should be the same shape as final_high_res_pooled_idx in debug")
+
+            input_ids = final_tensors
+            low_res_pooled_idx = final_low_res_pooled_idx
+            high_res_pooled_idx = final_high_res_pooled_idx
+
+            try:
+                assert torch.all(final_tensors == input_ids), "input_ids should be the same as final_tensors in debug"
+            except AssertionError:
+                print("input_ids should be the same as final_tensors in debug")
+                print("single_instance_high_res_instance", single_instance_high_res_instance)
+                print("high_res_indices", high_res_indices)
 
         if input_embeddings is not None:
             x = input_embeddings
@@ -524,7 +722,13 @@ class VideoOlmo(ModelBase):
             images=batch.get("images"),
             image_masks=batch.get("image_masks"),
             low_res_pooled_idx=batch.get("low_res_pooled_idx"),
-            high_res_pooled_idx=batch.get("high_res_pooled_idx")
+            high_res_pooled_idx=batch.get("high_res_pooled_idx"),
+            high_res_indices=batch.get("high_res_indices"),
+            low_res_token_place_holders=batch.get("low_res_token_place_holders"),
+            high_res_token_place_holders=batch.get("high_res_token_place_holders"),
+            low_res_pooled_idx_no_offset=batch.get("low_res_pooled_idx_no_offset"),
+            high_res_pooled_idx_no_offset=batch.get("high_res_pooled_idx_no_offset"),
+            siglip_text_token_ids=batch.get("siglip_text_token_ids")
         )
 
         llm_cfg = self.config.llm
