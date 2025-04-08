@@ -66,8 +66,9 @@ def main():
     # This will rsync code to separate folder and commit it to an "experiments" branch in github
     # for gantry to use
     # We do this so gantry can run without filling out our working branch with small commits,
-    # and since commiting our code to a separate "experiment" branch ended up being tricky
-    # to implement with git and made me nervous since it can mess with our working files
+    # We rsync to a seperate folder and then commit instead of trying to directly committing in the
+    # in this current repo since directly commiting to a  different branch ends up being tricky,
+    # and made me nervous since it can mess with our working files
     print("Syncing code")
     rsync_command = f"rsync -rzv --delete --exclude .git --exclude .gitmodules --exclude .idea --exclude '*.html' --exclude '*.pyc' --exclude __pycache__ --exclude .cache --exclude .pytest_cache --exclude '*.ipynb' /Users/chrisc/Programming/mm_olmo_dev/ {GANTRY_HOME}"
     subprocess.call(rsync_command, shell=True)

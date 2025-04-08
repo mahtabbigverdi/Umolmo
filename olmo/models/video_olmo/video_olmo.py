@@ -11,6 +11,7 @@ from torch.distributed.fsdp import fully_shard
 
 
 from olmo.config import D
+from olmo.data.image_as_video import ImageAsVideoConfig
 from olmo.models.model import ModelBase
 from olmo.models.molmo.collator import MMCollator
 from olmo.models.molmo.molmo import MolmoConfig
@@ -46,6 +47,8 @@ class VideoOlmoConfig(MolmoConfig):
     mm_preprocessor: MultiModalVideoPreprocessorConfig = field(default_factory=MultiModalVideoPreprocessorConfig)
     """How to crop images and encoding jointly with text"""
 
+    image_as_video: Optional[ImageAsVideoConfig] = None
+
     shared_low_high_embedding: bool = True
 
     @classmethod
@@ -75,6 +78,7 @@ class VideoOlmoConfig(MolmoConfig):
         return VideoPreprocessor(
             self.data_formatter,
             self.mm_preprocessor.build(self.build_tokenizer(), self.vision_backbone, max_seq_len),
+            image_to_video=None if self.image_as_video is None else self.image_as_video.build(self.mm_preprocessor.max_frames, self.vision_backbone.vit),
             for_inference=for_inference,
             is_training=is_training,
             frame_sample_mode=self.mm_preprocessor.frame_sample_mode,

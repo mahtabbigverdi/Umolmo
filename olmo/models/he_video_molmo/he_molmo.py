@@ -13,6 +13,7 @@ from torch.distributed.fsdp import fully_shard
 from torch.nn import functional as F
 from olmo import tokenizer
 from olmo.config import BaseConfig, D
+from olmo.data.image_as_video import ImageAsVideoConfig
 from olmo.models.he_molmo.he_molmo import HeMolmo, TokenScorerConfig
 from olmo.models.he_video_molmo.he_video_preprocessor import HeVideoPreprocessorConfig
 from olmo.models.molmo.collator import MMCollator
@@ -61,6 +62,8 @@ class HeVideoMolmoConfig(BaseModelConfig):
     mm_preprocessor: HeVideoPreprocessorConfig = field(default_factory=HeVideoPreprocessorConfig)
     """How to crop images and encoding jointly with text"""
 
+    image_as_video: Optional[ImageAsVideoConfig] = None
+
     shared_low_high_embedding: bool = True
     bi_directional_attn: str = "within_image"
 
@@ -93,7 +96,9 @@ class HeVideoMolmoConfig(BaseModelConfig):
         """
         return VideoPreprocessor(
             self.data_formatter,
-            self.mm_preprocessor.build(self.build_tokenizer(), self.vision_backbone, max_seq_len),
+            self.mm_preprocessor.build(self.build_tokenizer(), self.vision_backbone, max_seq_len,
+                                       self.token_scorer.low_to_high_interpolation_factor),
+            image_to_video=None if self.image_as_video is None else self.image_as_video.build(self.mm_preprocessor.max_frames, self.vision_backbone.vit),
             max_frames=self.mm_preprocessor.max_frames,
             for_inference=for_inference,
             is_training=is_training,

@@ -57,9 +57,13 @@ class HeMMCollator:
         for key, max_len in self.padding_lens.items():
             if any(key in ex for ex in batch):
                 out[key] = _collate([ex.get(key) for ex in batch], max_len, pad=self.pad, allow_truncate=False)
+        if "patch_ids" in batch[0]:
+            out["patch_ids"] = _collate([ex.get("patch_ids") for ex in batch], self.padding_lens["images"], pad=self.pad, allow_truncate=False)
+
+        low_res_factor = batch[0]["low_to_high"].shape[0] // batch[0]["low_res_tokens_idx"].shape[0]
 
         l2h = [ex["low_to_high"] for ex in batch]
-        n_low = out["low_res_tokens_idx"].shape[1]*4
+        n_low = out["low_res_tokens_idx"].shape[1]*low_res_factor
         n_high = out["high_res_tokens_idx"].shape[1]
         out["low_to_high"] = torch.from_numpy(np.stack([
             np.pad(x, [[0, n_low-x.shape[0]], [0, n_high-x.shape[1]]])

@@ -1,4 +1,5 @@
 import dataclasses
+import logging
 import math
 from typing import Tuple, Union, List, Optional, Any
 import numpy as np
@@ -107,7 +108,7 @@ class HePreprocessorConfig(BaseConfig):
             max_sequence_length=max_seq_len,
             image_high_res_from_crops=self.image_pooling_w,
             image_low_res_from_crops=self.low_res_from_high,
-            image_low_res_from_resized=self.low_res_from_low
+            image_low_res_from_resized=self.low_res_from_low,
         )
 
 
@@ -120,6 +121,15 @@ def arange_frames_for_pooling(idx_arr, pool_f, pool_h, pool_w):
         idx,
         idx + (patches * np.arange(pool_f))[:, None, None, None]
     )
+
+
+def arange_video_for_pooling(idx_arr, pool_h, pool_w):
+    h_pad = pool_h * ((idx_arr.shape[1] + pool_h - 1) // pool_h) - idx_arr.shape[1]
+    w_pad = pool_w * ((idx_arr.shape[2] + pool_w - 1) // pool_w) - idx_arr.shape[2]
+    idx_arr = np.pad(idx_arr, [[0, 0], [h_pad//2, (h_pad+1)//2], [w_pad//2, (w_pad+1)//2]],
+                     mode='constant', constant_values=-1)
+    return einops.rearrange(
+        idx_arr, "f (h dh) (w dw) -> f h w (dh dw)", dh=pool_h, dw=pool_w)
 
 
 @dataclasses.dataclass
@@ -135,7 +145,9 @@ class HeMultiModalPreprocessor(InterleavedTextPreprocessor, ImagePreprocessor):
     # For video
     video_high_res: int = 3
     video_low_res: int = 9
+    video_low_res_collage: int = None
     time_mode: str = "fps-prefix"
+    low_to_high_interpolation_factor: int = 2
 
     # For multi-crop image
     image_low_res_from_crops: Optional[int] = None
@@ -151,12 +163,22 @@ class HeMultiModalPreprocessor(InterleavedTextPreprocessor, ImagePreprocessor):
         crop_h = self.base_image_input_size[0]//self.image_patch_size
         crop_w = self.base_image_input_size[1]//self.image_patch_size
         tmp = np.zeros([crop_h, crop_w])
-        low_res_idx = arange_for_pooling(tmp, self.video_low_res, self.video_low_res)
         high_res_idx = arange_for_pooling(tmp, self.video_high_res, self.video_high_res)
-        n_high = np.prod(high_res_idx.shape[:2])*max_frames
+        if self.video_low_res_collage:
+            n_in_collage = self.video_low_res_collage**2
+            n_low_res_frames = (max_frames + n_in_collage  - 1) // n_in_collage
+            n_frames = max_frames + n_low_res_frames
+            n_high = np.prod(high_res_idx.shape[:2])*max_frames
+            low_res_idx = arange_for_pooling(np.zeros([crop_h//self.video_low_res_collage, crop_w//self.video_low_res_collage]), self.video_low_res, self.video_low_res)
+            n_low = np.prod(low_res_idx.shape[:2])*max_frames
+        else:
+            low_res_idx = arange_for_pooling(tmp, self.video_low_res, self.video_low_res)
+            n_frames = max_frames
+            n_high = np.prod(high_res_idx.shape[:2])*max_frames
+            n_low = np.prod(low_res_idx.shape[:2])*max_frames
         return dict(
-            images=max_frames,
-            low_res_tokens_idx=np.prod(low_res_idx.shape[:2])*max_frames,
+            images=n_frames,
+            low_res_tokens_idx=n_low,
             high_res_tokens_idx=n_high,
             high_res_pos_ids=n_high
         )
@@ -198,6 +220,7 @@ class HeMultiModalPreprocessor(InterleavedTextPreprocessor, ImagePreprocessor):
             idx_arr = arange_for_pooling(resize_idx, self.image_low_res_from_resized, self.image_low_res_from_resized)
             low_res_tokens += idx_arr.shape[0] * idx_arr.shape[1]
         if self.image_low_res_from_crops:
+            # (46, 84)
             idx_arr = arange_for_pooling(torch.zeros([h, w]), self.image_low_res_from_crops, self.image_low_res_from_crops)
             low_res_tokens += idx_arr.shape[0] * idx_arr.shape[1]
         return high_res_tokens, low_res_tokens
@@ -234,8 +257,6 @@ class HeMultiModalPreprocessor(InterleavedTextPreprocessor, ImagePreprocessor):
 
             # Now build the output tokens
             image_k = n_high_res
-            if self.indicate_k:
-                raise NotImplementedError()
             if self.use_high_res_col_tokens:
                 col_token_positions = np.arange(1, h + 1) * (w + 1)
                 joint = [
@@ -290,16 +311,17 @@ class HeMultiModalPreprocessor(InterleavedTextPreprocessor, ImagePreprocessor):
                     -1
                 )
 
-            low_to_high = np.eye((low_h*2*low_w*2), dtype=np.float32)
-            low_to_high = low_to_high.reshape([low_h*low_w*4, low_h*2, low_w*2])
+            low_to_high = np.eye((low_h*low_res_f*low_w*low_res_f), dtype=np.float32)
+            low_to_high = low_to_high.reshape([low_h*low_w*low_res_f*low_res_f, low_h*low_res_f, low_w*low_res_f])
             low_to_high = torchvision.transforms.Resize(
                 [h, w], InterpolationMode.BILINEAR, antialias=False)(
                 torch.from_numpy(low_to_high)).numpy()
             # Re-arrange to match how the importance scores are predicted (four per a patch)
             # This save us having to transpose it in model
             low_to_high = einops.rearrange(
-                low_to_high, "(lh dh lw dw) h w -> (lw lh dw dh) (h w)",
-                dh=2, dw=2, lh=low_h, lw=low_w)
+                # low_to_high, "(lh dh lw dw) h w -> (lw lh dw dh) (h w)",
+                low_to_high, "(lh dh lw dw) h w -> (lh lw dh dw) (h w)",
+                dh=low_res_f, dw=low_res_f, lh=low_h, lw=low_w)
 
             per_row = np.full(
                 (low_w,),
@@ -355,9 +377,47 @@ class HeMultiModalPreprocessor(InterleavedTextPreprocessor, ImagePreprocessor):
         crop_size = base_image_input_size[0]
 
         if self.crop_mode == "resize":
-            resized, _, low_res_idx = self.build_resized_image(image, is_training=is_training, rng=rng)
-            low_res_idx = arange_frames_for_pooling(
-                low_res_idx, len(image), self.video_low_res, self.video_low_res)
+            resized, _, patch_idx = self.build_resized_image(image, is_training=is_training, rng=rng)
+
+            if self.video_low_res_collage:
+                n = self.video_low_res_collage**2
+                # Resize first so the image don't get blurred into one-another
+                collage_resized, _, _ = self.build_resized_image(
+                    image, is_training=is_training, rng=rng,
+                    image_size=[
+                        base_image_input_size[0]//self.video_low_res_collage,
+                        base_image_input_size[1]//self.video_low_res_collage
+                    ])
+
+                # Pad and resize into a collage
+                r = len(image) % n
+                frame_pad = n - r
+                if r != 0:
+                    collage_resized = np.pad(collage_resized, [[0, n - r], [0, 0], [0, 0], [0, 0]])
+                collage_resized = einops.rearrange(
+                    collage_resized, "(b dh dw) h w c -> b (dh h) (dw w) c",
+                    dh=self.video_low_res_collage, dw=self.video_low_res_collage
+                )
+
+                # Build the idx inverting the re-arangement, and the building the pooling
+                # targets
+                collage_idx = np.arange(len(collage_resized)*crop_patch_h*crop_patch_w).reshape(
+                    len(collage_resized), crop_patch_h, crop_patch_w)
+                # import pdb; pdb.set_trace()
+                # collage_idx = collage_idx.transpose(0, 2, 1)
+                collage_idx = einops.rearrange(
+                    collage_idx, "b (dh h) (dw w) -> (b dh dw) h w",
+                    dh=self.video_low_res_collage, dw=self.video_low_res_collage
+                )[:len(image)]
+                low_res_idx = arange_video_for_pooling(collage_idx, self.video_low_res, self.video_low_res)
+
+                # Add the new frames, and offset the patch_ids for the original frames
+                resized = np.concatenate([collage_resized, resized], 0)
+                high_res_offset = np.prod(collage_resized.shape[:3]) // (image_patch_size**2)
+            else:
+                high_res_offset = 0
+                low_res_idx = arange_frames_for_pooling(
+                    patch_idx, len(image), self.video_low_res, self.video_low_res)
             low_h, low_w = low_res_idx.shape[1:3]
 
             per_row = np.full(
@@ -371,16 +431,18 @@ class HeMultiModalPreprocessor(InterleavedTextPreprocessor, ImagePreprocessor):
             low_res_joint = [
                 [self.tokenizer.image_start_token_id],
                 extra_tokens,
-            ] * len(resized) + [[self.tokenizer.image_end_token_id]]
+            ] * len(image) + [[self.tokenizer.image_end_token_id]]
 
             high_res_idx = np.arange(crop_patch_w*crop_patch_h).reshape([crop_patch_h, crop_patch_w])
+            high_res_idx += high_res_offset
             high_res_idx = arange_frames_for_pooling(high_res_idx, len(image), self.video_high_res, self.video_high_res)
             high_h, high_w = high_res_idx.shape[1:3]
             max_high_res_per_crop = high_w * high_h
             max_high_res_tokens = min(max_high_res_tokens, max_high_res_per_crop*len(image))
 
-            low_to_high = np.eye((low_h*2*low_w*2), dtype=np.float32)
-            low_to_high = low_to_high.reshape([low_h*low_w*4, low_h*2, low_w*2])
+            low_res_f = self.low_to_high_interpolation_factor
+            low_to_high = np.eye((low_h*low_res_f*low_w*low_res_f), dtype=np.float32)
+            low_to_high = low_to_high.reshape([low_h*low_w*low_res_f*low_res_f, low_h*low_res_f, low_w*low_res_f])
             low_to_high = torchvision.transforms.Resize(
                 [high_h, high_w], InterpolationMode.BILINEAR, antialias=False)(
                 torch.from_numpy(low_to_high)).numpy().astype(np.float32)
@@ -391,8 +453,10 @@ class HeMultiModalPreprocessor(InterleavedTextPreprocessor, ImagePreprocessor):
             # Re-arrange to match how the importance scores are predicted (four per a patch)
             # This save us having to transpose it in the model
             low_to_high_frames = einops.rearrange(
-                low_to_high_frames, "fi fo (lh dh lw dw) h w -> (fi lw lh dw dh) (fo h w) ",
-                dh=2, dw=2, lh=low_h, lw=low_w)
+                low_to_high_frames,
+                # "fi fo (lh dh lw dw) h w -> (fi lw lh dw dh) (fo h w) ",
+                "fi fo (lh dh lw dw) h w -> (fi lh lw dh dw) (fo h w) ",
+                dh=low_res_f, dw=low_res_f, lh=low_h, lw=low_w)
 
             n_low = sum(len(x) for x in low_res_joint)
             high_res_pos_ids = np.ones(np.prod(high_res_idx.shape[:-1]), dtype=np.int32)
@@ -432,14 +496,8 @@ class HeMultiModalPreprocessor(InterleavedTextPreprocessor, ImagePreprocessor):
                 return max_k
             else:
                 return [max_k] * num_k
-        if num_k is None:
-            num_k = 1
         if sample_k is None:
-            return rng.randint(min_k, max_k, size=num_k)
-        elif sample_k == "lin0.2":
-            probs = np.linspace(start=1, stop=0.2, num=max_k-min_k)
-            probs = probs / probs.sum()
-            return np.random.choice(max_k-min_k, [num_k], p=probs, replace=True) + min_k
+            return rng.randint(min_k, max_k, size=num_k if num_k else ())
         else:
             raise NotImplementedError(sample_k)
 
@@ -452,20 +510,18 @@ class HeMultiModalPreprocessor(InterleavedTextPreprocessor, ImagePreprocessor):
         is_training=False,
         rng=None,
         require_image_features=False,
-        max_k: Optional[int] = None,
-        min_k: Optional[int] = None,
-        num_k: Optional[int] = None,
-        sample_k: Optional[str] = None,
+        max_high_res: Optional[int] = None,
+        min_high_res: Optional[int] = None,
+        sample_high_res: Optional[str] = None,
     ):
         """Interleave images and text tokens into multi-modal features for the model"""
-        max_k = max_k or self.num_high_res_features
-        min_k = min_k or self.multi_res_min
-        num_k = num_k or self.multi_res_selection
+        max_high_res = max_high_res or self.num_high_res_features
+        min_high_res = min_high_res or self.multi_res_min
 
-        if num_k is not None and num_k != 1:
-            raise NotImplementedError()
+        if not is_training:
+            n_high_res = max_high_res
         else:
-            n_high_res = self._sample(rng, min_k, max_k, num_k, sample_k)
+            n_high_res = self._sample(rng, min_high_res, max_high_res, None, sample_high_res)
         if isinstance(images, (list, tuple)):
             if len(images) > 1:
                 raise NotImplementedError("Multi-image input")
@@ -480,11 +536,16 @@ class HeMultiModalPreprocessor(InterleavedTextPreprocessor, ImagePreprocessor):
                 pooled_idx,
                 _high_res_data
             ) = self.video_to_patches_and_tokens(images, n_high_res, is_training, rng)
+            prefix = []
             if self.time_mode == "fps-prefix":
                 tmp = np.array(frame_times)
                 deltas = tmp[1:] - tmp[:-1]
                 fps = np.mean(deltas)
-                prefix = self.tokenizer.encode(f"FPS {fps:0.2f}")
+                prefix.append(f"FPS {fps:0.2f}")
+            if self.indicate_k:
+                prefix.append(f"K={n_high_res}")
+            if prefix:
+                prefix = self.tokenizer.encode(" ".join(prefix))
                 image_tokens = np.concatenate([prefix, image_tokens])
                 image_pos_ids = np.concatenate([np.arange(len(prefix)), len(prefix) + image_pos_ids])
             elif self.time_mode is not None:

@@ -29,7 +29,11 @@ class HeVideoPreprocessorConfig(BaseConfig):
     time_mode: Optional[str] = None
     """How to encode video times"""
 
+    video_low_res_collage: Optional[int] = None
+
     loss_token_weighting: Optional[str] = None
+    multi_res_min: Optional[int] = None
+    indicate_k: bool = False
 
     def get_max_mm_tokens(self, vision_backbone_config):
         lens = self.get_padding_lens(vision_backbone_config)
@@ -38,6 +42,8 @@ class HeVideoPreprocessorConfig(BaseConfig):
 
         assert not self.use_col_tokens
         seq_len += self.max_frames * extra_per_frame + 8  # img start, img end,
+        if self.indicate_k:
+            seq_len += 5
         if self.time_mode == "fps-prefix":
             seq_len += 8
         elif self.time_mode is not None:
@@ -47,9 +53,11 @@ class HeVideoPreprocessorConfig(BaseConfig):
     def get_padding_lens(self, vision_backbone_config: MolmoVisionBackboneConfig):
         return self.build(None, vision_backbone_config, None).get_video_padding_lens(self.max_frames)
 
-    def build(self, tokenizer, vision_backbone_config: MolmoVisionBackboneConfig, max_sequence_length):
+    def build(self, tokenizer, vision_backbone_config: MolmoVisionBackboneConfig,
+              max_sequence_length, low_to_high_interpolation_factor=2):
         vit = vision_backbone_config.vit
         return HeMultiModalPreprocessor(
+            low_to_high_interpolation_factor=low_to_high_interpolation_factor,
             loss_token_weighting=self.loss_token_weighting,
             time_mode=self.time_mode,
             tokenizer=tokenizer,
@@ -64,5 +72,9 @@ class HeVideoPreprocessorConfig(BaseConfig):
             max_sequence_length=max_sequence_length,
             video_low_res=self.low_res_pooling,
             video_high_res=self.high_res_pooling,
-            num_high_res_features=self.num_high_res_features
+            indicate_k=self.indicate_k,
+            multi_res_min=self.multi_res_min,
+            num_high_res_features=self.num_high_res_features,
+            video_low_res_collage=self.video_low_res_collage,
+
         )

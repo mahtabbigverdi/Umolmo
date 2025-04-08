@@ -10,9 +10,10 @@ import torch
 from PIL import Image
 
 from olmo import tokenizer
-from olmo.data.image_preprocessor import ImagePreprocessor
+from olmo.data.image_preprocessor import ImagePreprocessor, load_image
 from olmo.data.interleaved_text_preprocessor import InterleavedTextPreprocessor
 from olmo.io import resource_path
+from olmo.models.he_molmo.he_preprocessor import HeMultiModalPreprocessor
 from olmo.models.molmo.data_formatter import DataFormatter
 from olmo.tokenizer import get_special_token_ids
 
@@ -472,13 +473,14 @@ class VideoTextPreprocessor(InterleavedTextPreprocessor, ImagePreprocessor):
 @dataclass
 class VideoPreprocessor:
     formater: DataFormatter
-    mm_preprocessor: VideoTextPreprocessor
+    mm_preprocessor: Union[VideoTextPreprocessor, HeMultiModalPreprocessor]
     for_inference: bool = False
     is_training: bool = False
     frame_sample_mode: str = "fps"
     include_image: bool = False
     max_frames: int = 24
     candidate_sampling_fps: Tuple[float] = (0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0)
+    image_to_video: Any = None
 
     def __post_init__(self):
         self.candidate_sampling_fps = tuple(self.candidate_sampling_fps)  # type: ignore[assignment]
@@ -486,13 +488,17 @@ class VideoPreprocessor:
     def __call__(self, example, rng=np.random):
         example = dict(example)
 
-        assert "video" in example, "Video is required for video preprocessor"
-
-        try:
-            frames, frame_times = load_video_decord_or_pyav(example["video"], self.max_frames, self.frame_sample_mode, self.candidate_sampling_fps)
-        except Exception as e:
-            e.add_note(f"Could not load video: {example['video']}")
-            raise e
+        if self.image_to_video and "image" in example:
+            image = load_image(example["image"])
+            frames, frame_times, patch_ids = self.image_to_video(image, rng)
+        else:
+            patch_ids = None
+            assert "video" in example, "Video is required for video preprocessor"
+            try:
+                frames, frame_times = load_video_decord_or_pyav(example["video"], self.max_frames, self.frame_sample_mode, self.candidate_sampling_fps)
+            except Exception as e:
+                e.add_note(f"Could not load video: {example['video']}")
+                raise e
 
         if "message_list" in example:
             # If there are multiple conversations for this example, shuffle their order

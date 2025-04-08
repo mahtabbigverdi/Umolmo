@@ -53,6 +53,7 @@ class TokenScorerConfig(BaseConfig):
     vector_query: Optional[str] = None
     vector_query_scaling: Optional[str] = None
     importance_norm: bool = False
+    low_to_high_interpolation_factor: int = 2
 
 
 @dataclasses.dataclass
@@ -220,12 +221,12 @@ class HeMolmo(ModelBase):
                 out_dim += 2
             self.image_query_ln = nn.Linear(n_low_features, out_dim, bias=True)
 
-        if ts_config.selection_model == "prior_only":
+        if ts_config.selection_model in ["prior_only", "random"]:
             pass
         elif ts_config.selection_model == "linear":
-            self.importance_ln = nn.Linear(n_low_features, 4, bias=False)
+            self.importance_ln = nn.Linear(n_low_features, ts_config.low_to_high_interpolation_factor**2, bias=False)
         else:
-            self.importance_ln = MLP(n_low_features, 1024, 4,
+            self.importance_ln = MLP(n_low_features, 1024, ts_config.low_to_high_interpolation_factor**2,
                                      scale=1024**(-.5) if ts_config.normalize_importance_scores else None)
 
         if ts_config.importance_norm:
@@ -423,6 +424,7 @@ class HeMolmo(ModelBase):
         image_masks: Optional[torch.Tensor] = None,
         subsegment_ids: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.Tensor] = None,
+        patch_ids: Optional[torch.Tensor] = None,
 
         # Data for token selection
         high_res_tokens_idx: Optional[torch.Tensor] = None,
@@ -508,6 +510,11 @@ class HeMolmo(ModelBase):
                 image_starts = input_ids == self._image_start_token_id
                 image_segment_ids = torch.cumsum(image_starts, -1)
                 bi_dir_mask = can_attend_bk & (image_segment_ids[:, None, :] == image_segment_ids[:, :, None])
+            elif self.config.bi_directional_attn == "within_resolution":
+                # low-res to low-res, high-res to high-res
+                is_high_res = torch.cumsum((input_ids == self._image_end_token_id).to(torch.int32), -1) > 0
+                is_high_res = F.pad(is_high_res[:, :-1], [1, 0, 0, 0])
+                bi_dir_mask = can_attend_bk & (is_high_res[:, None, :] == is_high_res[:, :, None])
             elif self.config.bi_directional_attn == "image-to-question":
                 raise NotImplementedError()
                 # bi_dir_mask = (is_image_token[:, :, None] & response_mask[:, None, :])
@@ -613,7 +620,7 @@ class HeMolmo(ModelBase):
                         mask
                     )
                     low_res_importance_flat = None
-                elif ts_cfg.selection_model == "prior_only":
+                elif ts_cfg.selection_model in ["prior_only", "random"]:
                     low_res_importance_flat = None
                     high_res_importance = None
                 elif ts_cfg.selection_model in ["transformer-selector"]:
@@ -640,7 +647,7 @@ class HeMolmo(ModelBase):
 
                     # features are for the low-res patches and need to interpolates
                     if not ts_cfg.four_scores_per_low_res_patch:
-                        low_res_importance_flat = torch.tile(torch.mean(low_res_importance_flat, dim=-1, keepdim=True), [1, 1, 4])
+                        low_res_importance_flat = torch.tile(torch.mean(low_res_importance_flat, dim=-1, keepdim=True), [1, 1, ts_cfg.low_to_high_interpolation_factor**2])
                     high_res_importance = torch.matmul(
                         low_res_importance_flat.reshape(batch_size, 1, -1),
                         low_to_high
@@ -651,7 +658,10 @@ class HeMolmo(ModelBase):
                     high_res_importance = high_res_importance + self.low_to_high_scorer(
                         low_res_x, low_res_mask, high_image_features, mask)
 
-                if ts_cfg.high_res_patch_prior or ts_cfg.vector_query:
+                if ts_cfg.selection_model == "random":
+                    high_res_importance = torch.zeros(high_image_features.shape[:2], device=x.device)
+                    high_res_importance.random_(0, 1)
+                elif ts_cfg.high_res_patch_prior or ts_cfg.vector_query:
                     features = high_image_features
                     if not ts_cfg.bp_patch_prior:
                         features = features.detach()
@@ -696,11 +706,13 @@ class HeMolmo(ModelBase):
             selection_mask = high_res_features_weights > 0
             selection_out: SelectionOutput = self.token_selector(
                 high_res_importance, high_res_mask, selection_mask)
+            if ts_cfg.selection_model == "random":
+                selection_out.token_importance = None
 
             selection = selection_out.selection
 
-            batch_idx = torch.arange(batch_size, device=x.device)
-            batch_idx = torch.tile(batch_idx[:, None], [1, selection_mask.shape[1]])
+            batch_ix = torch.arange(batch_size, device=x.device)
+            batch_idx = torch.tile(batch_ix[:, None], [1, selection_mask.shape[1]])
 
             # To [batch, n_high_res, dim] -> [batch, n_selected, dim]
             selected_features = high_image_features[batch_idx, selection].to(dtype=x.dtype)
@@ -714,7 +726,7 @@ class HeMolmo(ModelBase):
 
             if selection_out.token_importance is not None:
                 token_scores = torch.ones([batch_size, x.shape[1]], dtype=x.dtype, device=x.device)
-                token_scores.view(-1)[is_high_res_patch.view(-1)] = selection_out.token_importance.view(-1)[selection_valid]
+                token_scores.view(-1)[is_high_res_patch.view(-1)] = selection_out.token_importance.to(x.dtype).view(-1)[selection_valid]
             else:
                 token_scores = None
         else:
@@ -804,9 +816,11 @@ class HeMolmo(ModelBase):
                               attn_key_values=attn_key_values,
                               metrics=metrics,
                               internal=dict(
-                                high_res_pos_ids=high_res_pos_ids,
                                 selected=selection_out.selection,
                                 high_res_importance=high_res_importance.detach(),
+                                low_res_importance=None if low_res_importance_flat is None else low_res_importance_flat.detach()
+                                # high_res_pos_ids=high_res_pos_ids,
+                                # low_to_high=low_to_high,
                               ),
                               hidden_states=tuple(all_hidden_states) if output_hidden_states else None)  # type: ignore[arg-type]
         else:
