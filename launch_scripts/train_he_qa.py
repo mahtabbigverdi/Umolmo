@@ -14,11 +14,11 @@ from launch_scripts.utils import DEBUG_MODEL, VISION_BACKBONES, LLMS, \
     get_evaluator, get_evaluation
 from olmo.data.data_loader import RootSizeMixture, DataLoaderConfig
 from olmo.eval.inf_evaluator import InfDatasetEvaluatorConfig
-from olmo.models.he_molmo.he_data_formater import HeDataFormatter
 from olmo.models.he_molmo.he_molmo import TokenScorerConfig, HeMolmoConfig
 from olmo.models.he_molmo.he_preprocessor import HePreprocessorConfig
 from olmo.models.he_molmo.token_selector import TokenSelectionConfig
 from olmo.models.model import FSDPWrapStrategy
+from olmo.models.molmo.data_formatter import DataFormatter
 from olmo.nn.vision_backbone import MolmoVisionBackbone
 from olmo.torch_util import get_world_size
 from olmo.train.optim import OptimizerConfig, OptimizerType, SchedulerConfig, SchedulerType
@@ -53,7 +53,7 @@ if __name__ == "__main__":
         model_cfg = HeMolmoConfig(
             DEBUG_MODEL.llm,
             DEBUG_MODEL.vision_backbone,
-            data_formatter=HeDataFormatter(
+            data_formatter=DataFormatter(
                 system_prompt="style_and_length_v2"
             ),
             mm_preprocessor=HePreprocessorConfig(
@@ -74,38 +74,6 @@ if __name__ == "__main__":
         model_init = None
         eval_interval = 20
         log_interval = 5
-        eval_examples = 64
-        duration = 200
-    if args.checkpoint in ["debug_large"]:
-        debug = True
-        model_cfg = HeMolmoConfig(
-            replace(LLMS["qwen2.5_3b"], init_path=None, n_layers=8),
-            vision_backbone=MolmoVisionBackbone(
-                vit=replace(VISION_BACKBONES["metaclip_l14_336"], init_path=None, image_num_layers=4),
-                vit_layers=[-3, -1],
-                image_padding_embed=None,
-            ),
-            data_formatter=HeDataFormatter(
-                system_prompt="style_and_length_v2"
-            ),
-            mm_preprocessor=HePreprocessorConfig(
-                crop_mode="overlap-and-resize-c2",
-                max_crops=12,
-                overlap_margins=(4, 4)
-            ),
-            token_scorer=TokenScorerConfig(
-                source="all_layers",
-                low_res_features_drop=0.1,
-                high_res_patch_prior_drop=0.1
-            ),
-            token_selector=TokenSelectionConfig(
-                loss="batch-mean"
-            ),
-        )
-        global_batch_size = 4
-        model_init = None
-        eval_interval = 20
-        log_interval = 2
         eval_examples = 64
         duration = 200
     else:
@@ -129,7 +97,6 @@ if __name__ == "__main__":
 
     if isinstance(model_cfg, HeMolmoConfig):
         seq_len = 384 + model_cfg.mm_preprocessor.num_high_res_features
-        model_cfg.mm_preprocessor.max_query_len = 128 + 64
     else:
         seq_len = 1664
 
