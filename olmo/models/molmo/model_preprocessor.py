@@ -34,7 +34,7 @@ from olmo.models.molmo.data_formatter import DataFormatter
 def batch_pixels_to_patches(array, patch_size):
     """Reshape images of [n_images, h, w, 3] -> [n_images, n_patches, pixels_per_patch]"""
     if len(array.shape) == 3:
-        n_crops, w, h = array.shape
+        n_crops, h, w = array.shape
         h_patches = h//patch_size
         w_patches = w//patch_size
         array = np.reshape(array, [n_crops, h_patches, patch_size, w_patches, patch_size])
@@ -42,7 +42,7 @@ def batch_pixels_to_patches(array, patch_size):
         array = np.reshape(array, [n_crops, h_patches*w_patches, patch_size*patch_size])
         return array
     else:
-        n_crops, w, h, c = array.shape
+        n_crops, h, w, c = array.shape
         h_patches = h//patch_size
         w_patches = w//patch_size
         array = np.reshape(array, [n_crops, h_patches, patch_size, w_patches, patch_size, c])
