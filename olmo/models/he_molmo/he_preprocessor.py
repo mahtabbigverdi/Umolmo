@@ -406,10 +406,11 @@ class HeMultiModalPreprocessor(InterleavedTextPreprocessor, ImagePreprocessor):
                 # targets
                 collage_idx = np.arange(len(collage_resized)*crop_patch_h*crop_patch_w).reshape(
                     len(collage_resized), crop_patch_h, crop_patch_w)
-                # import pdb; pdb.set_trace()
-                # collage_idx = collage_idx.transpose(0, 2, 1)
+
+                # Use (b dw dh) not (b dh dw) to transpose the order we iterate through the
+                # items in the collage from top-down to left-to-right
                 collage_idx = einops.rearrange(
-                    collage_idx, "b (dh h) (dw w) -> (b dh dw) h w",
+                    collage_idx, "b (dh h) (dw w) -> (b dw dh) h w",
                     dh=self.video_low_res_collage, dw=self.video_low_res_collage
                 )[:len(image)]
                 low_res_idx = arange_video_for_pooling(collage_idx, self.video_low_res, self.video_low_res)
