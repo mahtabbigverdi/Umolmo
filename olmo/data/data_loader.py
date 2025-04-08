@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Union, Tuple
 
 import numpy as np
 import omegaconf
 from torch.utils.data import DataLoader, DistributedSampler
 
 from olmo.config import BaseConfig
-from olmo.data.dataset import DeterministicDataset
+from olmo.data.dataset import DeterministicDataset, Dataset
 from olmo.data.get_dataset import get_dataset_by_name
 from olmo.data.iterable_dataset_mixture import IterableDatasetMixture
 from olmo.models.molmo.molmo import MolmoConfig
@@ -25,6 +25,21 @@ class RootSizeMixture(BaseConfig):
 
 
 @dataclass
+class DatasetWithKwargs(BaseConfig):
+    dataset_name: str
+    sampling_rate: Optional[float] = None
+    root_size_factor: Optional[float] = None
+    max_high_res: Optional[int] = None
+    min_high_res: Optional[int] = None
+
+    def get_kwargs(self):
+        if self.max_high_res is None:
+            return dict(max_high_res=self.max_high_res, min_high_res=self.min_high_res)
+        else:
+            return {}
+
+
+@dataclass
 class DataLoaderConfig(BaseConfig):
     """Configuration for a torch `DataLoader`"""
 
@@ -36,6 +51,8 @@ class DataLoaderConfig(BaseConfig):
 
     root_size_mixture: Optional[List[RootSizeMixture]] = None
     """Mixture-of-mixtures where sub-mixtures rates are determined by the root dataset size"""
+
+    kwargs_mixture: Optional[List[DatasetWithKwargs]] = None
 
     split: str = omegaconf.MISSING
     """Dataset split to load"""
@@ -130,18 +147,32 @@ class DataLoaderConfig(BaseConfig):
     ) -> DataLoader:
         if device is None:
             device = "cpu"
+        max_seq_len = self.sequence_length if self.pad else None
+        preprocessor = model_config.build_preprocessor(
+            for_inference=False, is_training=True, max_seq_len=max_seq_len)
+
         if self.dataset:
-            datasets = [get_dataset_by_name(
-                self.dataset, self.split)]
+            ds = get_dataset_by_name(self.dataset, self.split)
+            datasets = [DeterministicDataset(ds, preprocessor, self.seed)]
             rates = [1]
         else:
-            if self.mixture:
-                mixture = {}
+            mixture: Dict[str, Tuple[Dataset, float, Optional[Dict]]] = {}
+            if self.kwargs_mixture:
+                for task in self.kwargs_mixture:
+                    log.info(f"Loading train dataset {task.dataset_name}/{self.split}")
+                    dataset = get_dataset_by_name(task.dataset_name, self.split)
+                    if task.sampling_rate is None:
+                        size = task.sampling_rate
+                    elif task.root_size_factor < 1:
+                        size = np.sqrt(len(dataset) * task.sampling_rate)
+                    else:
+                        size = np.sqrt(task.root_size_factor)
+                    mixture[task.dataset_name] = (dataset, size, task.get_kwargs())
+            elif self.mixture:
                 for name, rate in self.mixture.items():
                     log.info(f"Loading train dataset {name}/{self.split}")
-                    mixture[name] = (get_dataset_by_name(name, self.split), rate)
+                    mixture[name] = (get_dataset_by_name(name, self.split), rate, None)
             else:
-                mixture = {}
                 for root_size_mixture in self.root_size_mixture:
                     group_datasets = {}
                     for name, as_size in root_size_mixture.mixture.items():
@@ -155,23 +186,19 @@ class DataLoaderConfig(BaseConfig):
                             size = as_size
                         group_datasets[name] = (dataset, np.sqrt(size))
                     total_rate = sum(x[1] for x in group_datasets.values())
-                    mixture.update({name: (ds, r/total_rate*root_size_mixture.rate)
+                    mixture.update({name: (ds, r/total_rate*root_size_mixture.rate, None)
                                     for name, (ds, r) in group_datasets.items()})
 
             total_rate = sum(x[1] for x in mixture.values())
             mixture = sorted(mixture.items(), key=lambda x: x[0])
-            rates = [rate/total_rate for (_, (_, rate)) in mixture]
-            datasets = [ds for (_, (ds, _)) in mixture]
+            rates = [rate/total_rate for (_, (_, rate, _)) in mixture]
+            datasets = []
+            for _, (dataset, _, kwargs) in mixture:
+                datasets.append(DeterministicDataset(dataset, preprocessor, self.seed, preprocessor_kwargs=kwargs))
             log.info("Sampling rates:")
             names = list(x[0] for x in mixture)
             for ix in np.argsort(rates)[::-1]:
                 log.info(f"{names[ix]}: {100*rates[ix]:0.2f}")
-
-        max_seq_len = self.sequence_length if self.pad else None
-        preprocessor = model_config.build_preprocessor(
-            for_inference=False, is_training=True, max_seq_len=max_seq_len)
-        datasets = [DeterministicDataset(ds, preprocessor, self.seed) for ds in datasets]
-
         dataset = IterableDatasetMixture(
             start_index=self.start_index,
             datasets=datasets,

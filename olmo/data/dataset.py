@@ -38,11 +38,12 @@ class Dataset:
 class DeterministicDataset:
     """Dataset wrapper that supports padding and control the random seed based on the epoch"""
 
-    def __init__(self, dataset: Dataset, preprocessor, seed, n_pad=0):
+    def __init__(self, dataset: Dataset, preprocessor, seed, n_pad=0, preprocessor_kwargs=None):
         self.dataset = dataset
         self.preprocessor = preprocessor
         self.seed = seed
         self.n_pad = n_pad
+        self.preprocessor_kwargs = preprocessor_kwargs if preprocessor_kwargs else {}
 
     def __len__(self):
         return len(self.dataset) + self.n_pad
@@ -66,7 +67,7 @@ class DeterministicDataset:
         else:
             item = self.dataset.get(idx, rng)
         if self.preprocessor:
-            item = self.preprocessor(item, rng)
+            item = self.preprocessor(item, rng, **self.preprocessor_kwargs)
         return item
 
 
