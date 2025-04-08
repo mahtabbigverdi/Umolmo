@@ -117,18 +117,6 @@ class VideoOlmo(ModelBase):
         self._image_low_res_id = self.special_ids[tokenizer.IMAGE_LOW_RES_TOKEN]
         self._image_high_res_id = self.special_ids[tokenizer.IMAGE_PATCH_TOKEN]
 
-        # load the HF model. Initially, don't even shard
-        # Hard Coded for now. Needs to be passed in via config. Has to be aligned with the image encoder to re-use pre-processor
-        hf_source = "google/siglip2-so400m-patch14-384"
-        cache_dir = os.path.join(VIDEO_DATA_HOME, "hf_init_encoders")
-        self.frame_selection_model = AutoModel.from_pretrained(
-            hf_source,
-            torch_dtype=torch.float32,
-            cache_dir=cache_dir,
-        )
-        for param in self.frame_selection_model.parameters():
-            param.requires_grad = False
-
     def reset_parameters(self):
         """Re-initialize the weights from scratch"""
         self.transformer.reset_parameters()

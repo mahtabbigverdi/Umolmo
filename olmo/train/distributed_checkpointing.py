@@ -257,45 +257,12 @@ def load_model_and_optim_state(
                     group["params"][idx] = original_key
                     break
 
-    import os
-    from transformers import AutoModel
-    from olmo.data.dataset import VIDEO_DATA_HOME
-
-    hf_source = "google/siglip2-so400m-patch14-384"
-    cache_dir = os.path.join(VIDEO_DATA_HOME, "hf_init_encoders")
-    frame_selection_model = AutoModel.from_pretrained(hf_source, cache_dir=cache_dir)
-
-    class WrapperModule(nn.Module):
-        def __init__(self, module):
-            super().__init__()
-            self.frame_selection_model = module
-    wrapped_model = WrapperModule(frame_selection_model)
-    frame_sel_sd = wrapped_model.state_dict()
-
     model_key_list = list(state_dict['model'].keys())
     skipped_key_list = []
     for model_key in model_key_list:
         if f"model.{model_key}" not in metadata.state_dict_metadata:
-            assert model_key in frame_sel_sd
             state_dict['model'].pop(model_key)
             skipped_key_list.append(model_key)
-
-    def convert_state_dict_to_dtensor(state_dict, mesh, placements):
-        converted_state_dict = {}
-        for key, tensor in state_dict.items():
-            if not isinstance(tensor, DTensor):
-                converted_state_dict[key] = DTensor.from_local(tensor, mesh, placements)
-            else:
-                converted_state_dict[key] = tensor
-        return converted_state_dict
-
-    # Create a device mesh, e.g., for available CUDA devices
-    mesh = DeviceMesh("cuda", torch.arange(get_world_size()))
-
-    # Define placements; for instance, Replicate means the tensor is replicated across devices
-    placements = [Replicate()]
-
-    frame_sel_sd_dtensor = convert_state_dict_to_dtensor(frame_sel_sd, mesh, placements)
 
     dist_cp.load(
         state_dict,
@@ -304,7 +271,44 @@ def load_model_and_optim_state(
         process_group=process_group,
     )
 
-    state_dict['model'].update(frame_sel_sd_dtensor)
+    if len(skipped_key_list) > 0:
+        import os
+        from transformers import AutoModel
+        from olmo.data.dataset import VIDEO_DATA_HOME
+
+        hf_source = "google/siglip2-so400m-patch14-384"
+        cache_dir = os.path.join(VIDEO_DATA_HOME, "hf_init_encoders")
+        frame_selection_model = AutoModel.from_pretrained(hf_source, cache_dir=cache_dir)
+
+        class WrapperModule(nn.Module):
+            def __init__(self, module):
+                super().__init__()
+                self.frame_selection_model = module
+
+        wrapped_model = WrapperModule(frame_selection_model)
+        frame_sel_sd = wrapped_model.state_dict()
+
+        for model_key in skipped_key_list:
+            assert model_key in frame_sel_sd, f"Missing key {model_key} not from frame selection model"
+
+        # Create a device mesh, e.g., for available CUDA devices
+        mesh = DeviceMesh("cuda", torch.arange(get_world_size()))
+
+        # Define placements; for instance, Replicate means the tensor is replicated across devices
+        placements = [Replicate()]
+
+        def convert_state_dict_to_dtensor(state_dict, mesh, placements):
+            converted_state_dict = {}
+            for key, tensor in state_dict.items():
+                if not isinstance(tensor, DTensor):
+                    converted_state_dict[key] = DTensor.from_local(tensor, mesh, placements)
+                else:
+                    converted_state_dict[key] = tensor
+            return converted_state_dict
+
+        frame_sel_sd_dtensor = convert_state_dict_to_dtensor(frame_sel_sd, mesh, placements)
+
+        state_dict['model'].update(frame_sel_sd_dtensor)
 
     if key_mapping is not None:
         for current_key, original_key in key_mapping.items():

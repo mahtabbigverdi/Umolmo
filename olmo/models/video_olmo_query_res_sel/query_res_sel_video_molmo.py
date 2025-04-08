@@ -517,54 +517,9 @@ class QueryBasedVideoOlmo(ModelBase):
 
                 final_tensors[instance_idx, input_id_start:] = input_ids[instance_idx, input_id_start:]
 
-                # try:
-                #     assert torch.all(final_tensors[instance_idx, :input_id_start] == input_ids[instance_idx, :input_id_start]), "input_ids should be the same as final_tensors in debug"
-                # except:
-                #     print("input_ids up to input_id_start should be the same as final_tensors up to input_id_start in debug")
-                #     print("single_instance_high_res_instance", single_instance_high_res_instance)
-                #     print("high_res_indices", high_res_indices)
-                #
-                #     print("final_tensors[instance_idx, :input_id_start].sum()", (final_tensors[instance_idx, :input_id_start] != -1).sum())
-                #     print("input_ids[instance_idx, :input_id_start].sum()", (input_ids[instance_idx, :input_id_start] != -1).sum())
-                #
-                #     import pdb; pdb.set_trace()
-
-                # try:
-                #     assert torch.all(final_tensors[instance_idx] == input_ids[instance_idx]), "input_ids should be the same as final_tensors in debug"
-                # except:
-                #     print("input_ids should be the same as final_tensors in debug")
-                #     print("single_instance_high_res_instance", single_instance_high_res_instance)
-                #     print("high_res_indices", high_res_indices)
-                #     import pdb; pdb.set_trace()
-
-                try:
-                    # assert torch.all(low_res_pooled_idx[instance_idx] == final_low_res_pooled_idx[instance_idx]), "low_res_pooled_idx should be the same as final_low_res_pooled_idx in debug"
-                    assert low_res_pooled_idx[instance_idx].shape == final_low_res_pooled_idx[instance_idx].shape
-                except:
-                    print("low_res_pooled_idx should be the same as final_low_res_pooled_idx in debug")
-                    print("single_instance_high_res_instance", single_instance_high_res_instance)
-                    print("high_res_indices", high_res_indices)
-                    raise AssertionError("low_res_pooled_idx should be the same shape as final_low_res_pooled_idx in debug")
-
-                try:
-                    # assert torch.all(high_res_pooled_idx[instance_idx] == final_high_res_pooled_idx[instance_idx]), "high_res_pooled_idx should be the same as final_high_res_pooled_idx in debug"
-                    assert high_res_pooled_idx[instance_idx].shape == final_high_res_pooled_idx[instance_idx].shape
-                except:
-                    print("high_res_pooled_idx should be the same as final_high_res_pooled_idx in debug")
-                    print("single_instance_high_res_instance", single_instance_high_res_instance)
-                    print("high_res_indices", high_res_indices)
-                    raise AssertionError("high_res_pooled_idx should be the same shape as final_high_res_pooled_idx in debug")
-
             input_ids = final_tensors
             low_res_pooled_idx = final_low_res_pooled_idx
             high_res_pooled_idx = final_high_res_pooled_idx
-
-            try:
-                assert torch.all(final_tensors == input_ids), "input_ids should be the same as final_tensors in debug"
-            except AssertionError:
-                print("input_ids should be the same as final_tensors in debug")
-                print("single_instance_high_res_instance", single_instance_high_res_instance)
-                print("high_res_indices", high_res_indices)
 
         if input_embeddings is not None:
             x = input_embeddings
