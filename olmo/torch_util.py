@@ -36,7 +36,8 @@ def seed_all(seed: int):
 def init_process_group() -> bool:
     dist.init_process_group(
         backend="nccl",
-        timeout=timedelta(minutes=int(os.environ.get("NCCL_TIMEOUT_MINUTES", 10)))
+        timeout=timedelta(minutes=int(os.environ.get("NCCL_TIMEOUT_MINUTES", 10))),
+        device_id=torch.device(f"cuda:{get_local_rank()}")
     )
 
     # The math backend is very slow, make sure we don't use it accidentally
