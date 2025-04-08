@@ -29,6 +29,8 @@ class ImagePooling2DType(StrEnum):
     """How to pool patch features"""
     attention = "attention"
     attention_meanq = "attention_meanq"
+    attention_meanq_2x = "attention_meanq_2x"
+    attention_meanq_4x = "attention_meanq_4x"
     attention_2wide = "attention_2wide"
     none = "none"
     stack = "stack"
@@ -160,12 +162,13 @@ class MolmoVisionBackbone(nn.Module):
         if config.image_pooling_2d in {ImagePooling2DType.attention, ImagePooling2DType.attention_meanq}:
             self.image_pooling_2d = ViTMultiHeadDotProductAttention(config.vit, input_dim=pool_dim)
             input_dim = vit_cfg.image_emb_dim
-        elif config.image_pooling_2d == ImagePooling2DType.attention_2wide:
-            cfg = deepcopy(config.vit)
-            vit_cfg.image_emb_dim *= 2
-            vit_cfg.image_head_dim *= 2
-            self.image_pooling_2d = ViTMultiHeadDotProductAttention(cfg, input_dim=pool_dim)
-            input_dim = vit_cfg.image_emb_dim
+        elif config.image_pooling_2d in [ImagePooling2DType.attention_2wide, ImagePooling2DType.attention_meanq_2x, ImagePooling2DType.attention_meanq_4x]:
+            mha_cfg = deepcopy(config.vit)
+            factor = 4 if config.image_pooling_2d ==ImagePooling2DType.attention_meanq_4x else 2
+            mha_cfg.image_emb_dim *= factor
+            mha_cfg.image_head_dim *= factor
+            self.image_pooling_2d = ViTMultiHeadDotProductAttention(mha_cfg, input_dim=pool_dim)
+            input_dim = mha_cfg.image_emb_dim
         elif config.image_pooling_2d in [ImagePooling2DType.none, ImagePooling2DType.stack]:
             self.image_pooling_2d = None
             nlayers = 1 if config.vit_layers is None else len(config.vit_layers)
@@ -263,6 +266,8 @@ class MolmoVisionBackbone(nn.Module):
             self.image_pooling_2d = checkpoint_wrapper(self.image_pooling_2d)
 
     def apply_compile(self, **kwargs):
+        self.image_pooling_2d.compile(**kwargs)
+        self.image_projector.compile(**kwargs)
         if self.config.compile_vit == "blocks":
             for block in self.image_vit.transformer.resblocks:
                 block.compile(**kwargs)
@@ -346,7 +351,7 @@ class MolmoVisionBackbone(nn.Module):
             else:
                 attn_mask = None
 
-            if cfg.image_pooling_2d == ImagePooling2DType.attention_meanq:
+            if cfg.image_pooling_2d in [ImagePooling2DType.attention_meanq, ImagePooling2DType.attention_meanq_2x, ImagePooling2DType.attention_meanq_4x]:
                 if self.config.pooling_attention_mask:
                     denom = valid.view(-1, to_pool.shape[-2]).float().sum(-1)
                     denom = torch.where(denom == 0, 1, denom)
