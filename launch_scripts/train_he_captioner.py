@@ -97,7 +97,9 @@ if __name__ == "__main__":
             token_scorer=TokenScorerConfig(
                 source="all_layers",
                 low_res_features_drop=0.1,
-                high_res_patch_prior_drop=0.1
+                high_res_patch_prior_drop=0.1,
+                normalize_importance_scores=True,
+                importance_norm=True
             ),
             token_selector=TokenSelectionConfig(
                 loss="batch-mean"
