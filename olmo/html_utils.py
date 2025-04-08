@@ -143,11 +143,11 @@ def example_to_html_dict(ex, preprocessor, show_patches=False, show_crops=False)
         if ex.get("pooled_patches_idx") is not None:
             for k in ex["pooled_patches_idx"].tolist():
                 patches_used[tuple(k)] = {"border-color": "blue", "z-index": 100}
-        if ex.get("low_res_idx") is not None:
-            for k in ex["low_res_idx"].tolist():
+        if ex.get("low_res_tokens_idx") is not None:
+            for k in ex["low_res_tokens_idx"].tolist():
                 patches_used[tuple(k)] = {"border-color": "red", "z-index": 110, "opacity": 0.7}
-        if ex.get("high_res_idx") is not None:
-            for k in ex["high_res_idx"].tolist():
+        if ex.get("high_res_tokens_idx") is not None:
+            for k in ex["high_res_tokens_idx"].tolist():
                 patches_used[tuple(k)] = {"border-color": "blue", "z-index": 100, "border-width": "thin"}
 
         for patch_ids, style in patches_used.items():
