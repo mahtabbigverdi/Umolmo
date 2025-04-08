@@ -646,14 +646,18 @@ class LLaVAVideo178K(DatasetBase):
         "ytb_KWmrJ_jxozc.mp4"
     ])
 
-    def __init__(self, split, answer_type="multi_choice", flat=False, max_per_video=None):
+    def __init__(self, split, answer_type="multi_choice", flat=False, max_per_video=None,
+                 id_source="", cap_source="lv"):
         if split == "val":
             split = "validation"    
         assert split in ["train", "validation"]
         assert answer_type in ["multi_choice", "open_ended", "caption", "all"]
+        assert cap_source in ["lv", "human"]
         self.answer_type = answer_type
         self.flat = flat
         self.max_per_video = max_per_video
+        self.id_source = id_source
+        self.cap_source = cap_source
         super().__init__(split)
 
     def load(self):
@@ -666,6 +670,13 @@ class LLaVAVideo178K(DatasetBase):
             subset_video_names = set(shuffled_video_names[int(len(shuffled_video_names) * 0.95):])
         else:
             raise NotImplementedError(self.split)
+
+        # Add human caption data as the captions in training
+        allowed_subset_to_caption = {}
+        if self.id_source:
+            data_frame = pd.read_parquet(self.id_source)
+            for _, row in data_frame.iterrows():
+                allowed_subset_to_caption[row['video_path']] = row['merged_caption']
 
         data = {}
         data_list_format = []
@@ -688,6 +699,10 @@ class LLaVAVideo178K(DatasetBase):
                     break
 
                 for qa_data in first_file_data:
+                    relative_video_path = os.path.join(qa_data['data_source'], qa_data['video'])
+                    if self.id_source and relative_video_path not in allowed_subset_to_caption:
+                        continue
+
                     video_path = os.path.join(self.data_path, qa_data['data_source'], qa_data['video'])
                     video_name = os.path.basename(video_path)
                     if video_name in self.files_not_found or video_name in self.corrupt_files:
@@ -713,6 +728,9 @@ class LLaVAVideo178K(DatasetBase):
                             question = question[len("<image>\n"):]
                         answer = conversations[conv_idx + 1]['value']
                         answer = answer.lstrip().strip()
+
+                        if self.id_source and self.cap_source == "human":
+                            answer = allowed_subset_to_caption[relative_video_path]
 
                         messages.append(dict(
                             question=question,
@@ -880,11 +898,54 @@ def load_all_frames_decord_or_pyav(video_path: str) -> np.ndarray:
 
 
 if __name__ == "__main__":
-    dataset = LLaVAVideo178K("train", "all")
+    dataset = LLaVAVideo178K("train", "caption",
+                             id_source="/weka/oe-training-default/mm-olmo/video_captions/video-captions-9k.parquet",
+                             cap_source="lv")
     print(f"Total samples: {len(dataset)}")
 
     set_video_paths = set(dataset.video_paths)
     print(f"Unique video names: {len(set_video_paths)}")
+
+    caption_length = []
+    for i in range(len(dataset)):
+        ex = dataset[i]
+        caption_length.append(len(ex["message_list"][0]['answer'].split(" ")))
+
+    print("LLava annotations on annotated train set. Max and mean length of words")
+    print(np.max(caption_length))
+    print(np.mean(caption_length))
+
+    dataset = LLaVAVideo178K("train", "caption",
+                             id_source="/weka/oe-training-default/mm-olmo/video_captions/video-captions-9k.parquet",
+                             cap_source="human")
+    print(f"Total samples: {len(dataset)}")
+
+    set_video_paths = set(dataset.video_paths)
+    print(f"Unique video names: {len(set_video_paths)}")
+
+    caption_length = []
+    for i in range(len(dataset)):
+        ex = dataset[i]
+        caption_length.append(len(ex["message_list"][0]['answer'].split(" ")))
+
+    print("Human annotations on annotated train set. Max and mean length of words")
+    print(np.max(caption_length))
+    print(np.mean(caption_length))
+
+    dataset = LLaVAVideo178K("train", "caption")
+    print(f"Total samples: {len(dataset)}")
+
+    set_video_paths = set(dataset.video_paths)
+    print(f"Unique video names: {len(set_video_paths)}")
+
+    caption_length = []
+    for i in range(len(dataset)):
+        ex = dataset[i]
+        caption_length.append(len(ex["message_list"][0]['answer'].split(" ")))
+
+    print("LLava annotations on overall train set. Max and mean length of words")
+    print(np.max(caption_length))
+    print(np.mean(caption_length))
 
     # Code to create a shuffled video names file that can be used to get train/val split
     # # get list of video names

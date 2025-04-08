@@ -23,9 +23,7 @@ from olmo.models.molmo.model_preprocessor import MolmoPreprocessorConfig, \
 
 from olmo.nn.vision_backbone import MolmoVisionBackboneConfig
 
-import os
 from transformers import AutoProcessor
-from olmo.data.dataset import VIDEO_DATA_HOME
 
 def get_sampling_fps(
     video_fps: float,
@@ -66,13 +64,31 @@ def get_sampling_fps(
     return selected_sampling_fps
 
 
+def get_frame_times_and_chosen_fps(selected_sampling_fps, total_frames, max_frames, video_fps):
+    if selected_sampling_fps is None:
+        frame_indices = np.linspace(0, total_frames, max_frames, endpoint=False)
+    else:
+        step_size = max(int(video_fps / selected_sampling_fps), 1)
+        frame_indices = np.arange(0, total_frames, step_size)
+    if len(frame_indices) > max_frames:
+        frame_indices = frame_indices[:max_frames]
+
+    frame_times = [i / int(video_fps) for i in frame_indices]
+    if selected_sampling_fps is None:
+        tmp = np.array(frame_times)
+        deltas = tmp[1:] - tmp[:-1]
+        selected_sampling_fps = np.mean(deltas)
+
+    return selected_sampling_fps, frame_times, frame_indices
+
+
 def load_decord_video(
     video_path: str,
     max_frames: int = 8,
     use_timeout: bool = False,
     frame_sample_mode: str = "fps",
     candidate_sampling_fps: Tuple[float] = (0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0),
-) -> np.ndarray:
+) -> Tuple[np.ndarray, List[float], float]:
     """
     Load a video and returns frames as RGB numpy array.
     """
@@ -84,15 +100,7 @@ def load_decord_video(
     total_frames = len(vr)  # Total frame count
     selected_sampling_fps = get_sampling_fps(video_fps, max_frames, total_frames, frame_sample_mode, candidate_sampling_fps)
 
-    if selected_sampling_fps is None:
-        frame_indices = np.linspace(0, total_frames, max_frames, endpoint=False)
-    else:
-        step_size = max(int(video_fps / selected_sampling_fps), 1)
-        frame_indices = np.arange(0, total_frames, step_size)
-    if len(frame_indices) > max_frames:
-        frame_indices = frame_indices[:max_frames]
-
-    frame_times = [i / int(video_fps) for i in frame_indices]
+    sampling_fps, frame_times, frame_indices = get_frame_times_and_chosen_fps(selected_sampling_fps, total_frames, max_frames, video_fps)
 
     if use_timeout:
         # Fetch frames in batch (faster than looping)
@@ -111,7 +119,7 @@ def load_decord_video(
                 return None, None  # Return None to indicate failure
 
     else:
-        return vr.get_batch(frame_indices).asnumpy(), frame_times
+        return vr.get_batch(frame_indices).asnumpy(), frame_times, sampling_fps
 
 
 def load_pyav_video(
@@ -119,7 +127,7 @@ def load_pyav_video(
     max_frames: int = 8,
     frame_sample_mode: str = "fps",
     candidate_sampling_fps: Tuple[float] = (0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0),
-) -> np.ndarray:
+) -> Tuple[np.ndarray, List[float], float]:
     """
     Load a video and returns frames as RGB numpy array.
     """
@@ -131,15 +139,7 @@ def load_pyav_video(
 
     selected_sampling_fps = get_sampling_fps(video_fps, max_frames, total_frames, frame_sample_mode, candidate_sampling_fps)
 
-    if selected_sampling_fps is None:
-        frame_indices = np.linspace(0, total_frames, max_frames, endpoint=False)
-    else:
-        step_size = max(int(video_fps / selected_sampling_fps), 1)
-        frame_indices = np.arange(0, total_frames, step_size)
-
-    if len(frame_indices) > max_frames:
-        frame_indices = frame_indices[:max_frames]
-    frame_times = [i / int(video_fps) for i in frame_indices]
+    sampling_fps, frame_times, frame_indices = get_frame_times_and_chosen_fps(selected_sampling_fps, total_frames, max_frames, video_fps)
 
     frame_idx, frames = 0, []
     for frame in iio.imiter(video_path, plugin="pyav"):
@@ -148,7 +148,7 @@ def load_pyav_video(
         frame_idx += 1
         if len(frames) == max_frames:
             break
-    return np.stack(frames), frame_times
+    return np.stack(frames), frame_times, sampling_fps
 
 
 def load_video_decord_or_pyav(
@@ -156,7 +156,7 @@ def load_video_decord_or_pyav(
     max_frames: int = 24,
     frame_sample_mode: str = "fps",
     candidate_sampling_fps: Tuple[float] = (0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0),
-) -> Tuple[np.ndarray, List[float]]:
+) -> Tuple[np.ndarray, List[float], float]:
     """
     Load a video and returns frames as RGB numpy array.
     """
@@ -281,10 +281,10 @@ class MultiModalVideoPreprocessorConfig(MolmoPreprocessorConfig):
         extra_per_frame = 2  # start/end tokens
         if self.time_mode == "per-frame":
             extra_per_frame += 8  # time markers
-        elif self.time_mode == "fps-prefix":
-            seq_len += 10  # time prefix
+        elif self.time_mode in ["time-delta-prefix", "sampled-fps-prefix", "fps-prefix"]:
+            seq_len += 10 # time delta prefix or fps prefix
         else:
-            assert self.time_mode is None or self.time_mode == "skip_time"
+            assert self.time_mode == "skip_time" or self.time_mode is None
         if self.use_col_tokens:
             sz = vision_backbone_config.vit.image_default_input_size
             patch_size = vision_backbone_config.vit.image_patch_size
@@ -341,7 +341,7 @@ class VideoTextPreprocessor(InterleavedTextPreprocessor, ImagePreprocessor):
     periodic_high_res_frame: Optional[int] = None
 
     def __post_init__(self):
-        assert self.time_mode in ["per-frame", "prefix", "skip_time"] or self.time_mode is None
+        assert self.time_mode in ["per-frame", "time-delta-prefix", "sampled-fps-prefix", "skip_time", "fps-prefix"] or self.time_mode is None
 
         if self.query_based_resolution_selection:
             self.frame_selection_pre_processor = AutoProcessor.from_pretrained("google/siglip2-so400m-patch14-384")
@@ -425,7 +425,8 @@ class VideoTextPreprocessor(InterleavedTextPreprocessor, ImagePreprocessor):
     def __call__(
         self,
         frames,
-        frame_times,
+        frame_times: List[float],
+        sampled_fps: float,
         message_list: Union[List[str], List[List[str]]],
         weight=None,
         is_training=False,
@@ -451,11 +452,18 @@ class VideoTextPreprocessor(InterleavedTextPreprocessor, ImagePreprocessor):
         low_res_pooled_idx_no_offset = []
         high_res_pooled_idx_no_offset = []
 
-        if self.time_mode == "fps-prefix":
-            tmp = np.array(frame_times)
-            deltas = tmp[1:] - tmp[:-1]
-            fps = np.mean(deltas)
-            prefix = self.tokenizer.encode(f"FPS {fps:0.2f}")
+        average_time_delta = 1 / sampled_fps
+        if self.time_mode == "sampled-fps-prefix":
+            prefix = self.tokenizer.encode(f"FPS {sampled_fps:0.2f}")
+            video_tokens.append(prefix)
+
+        elif self.time_mode == "time-delta-prefix":
+            prefix = self.tokenizer.encode(f"Sampling Delta {average_time_delta:0.2f}")
+            video_tokens.append(prefix)
+
+        elif self.time_mode == "fps-prefix":
+            # This mode is for backward compatibility. Don't use for new runs - it pairs the fps and average time delta
+            prefix = self.tokenizer.encode(f"FPS {average_time_delta:0.2f}")
             video_tokens.append(prefix)
 
         high_res_index_list = []
@@ -561,7 +569,7 @@ class VideoPreprocessor:
         assert "video" in example, "Video is required for video preprocessor"
 
         try:
-            frames, frame_times = load_video_decord_or_pyav(example["video"], self.max_frames, self.frame_sample_mode, self.candidate_sampling_fps)
+            frames, frame_times, chosen_fps = load_video_decord_or_pyav(example["video"], self.max_frames, self.frame_sample_mode, self.candidate_sampling_fps)
         except Exception as e:
             e.add_note(f"Could not load video: {example['video']}")
             raise e
@@ -578,6 +586,7 @@ class VideoPreprocessor:
             processed_video = self.mm_preprocessor(
                 frames,
                 frame_times,
+                chosen_fps,
                 message_list,
                 weight=example.get("weight"),
                 is_training=self.is_training,

@@ -39,6 +39,14 @@ def get_dataset_by_name(dataset_name, split) -> Dataset:
         return LLaVAVideo178K(split=split, answer_type="caption")
     if dataset_name == "llava_video_178k_cap_flat":
         return LLaVAVideo178K(split=split, answer_type="caption", flat=True)
+    if dataset_name == "llava_video_human_cap":
+        return LLaVAVideo178K(split=split, answer_type="caption",
+                              id_source="/weka/oe-training-default/mm-olmo/video_captions/video-captions-9k.parquet",
+                              cap_source="human")
+    if dataset_name == "llava_video_human_cap_id_lv":
+        return LLaVAVideo178K(split=split, answer_type="caption",
+                              id_source="/weka/oe-training-default/mm-olmo/video_captions/video-captions-9k.parquet",
+                              cap_source="lv")
     if dataset_name == "mvbench":
         return MVBench(split=split)
     if dataset_name.startswith("temp_compass"):
