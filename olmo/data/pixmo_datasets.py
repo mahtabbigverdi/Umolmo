@@ -495,6 +495,7 @@ class PixMoCap(Dataset):
             image=ex["image"],
             message_list=messages,
             metadata=dict(
+                image_path=ex["image"],
                 image_url=ex.pop("image_url"),
             )
         )

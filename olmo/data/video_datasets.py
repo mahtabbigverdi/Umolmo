@@ -606,6 +606,7 @@ class MVBench(DatasetBase):
                     'video': video_path,
                     "metadata": dict(
                         example_id=f"{k}_{qa_idx}",
+                        video_path=video_path,
                         task_type=k,
                         prefix=v[1],
                         data_type=v[2],
