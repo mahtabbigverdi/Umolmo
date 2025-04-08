@@ -11,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, asdict
 from datetime import datetime
 from json import JSONEncoder
-from os.path import exists, join, dirname, isdir, isfile
+from os.path import exists, join, dirname, isdir, isfile, basename
 from pathlib import Path
 from typing import Dict, Tuple, List, Union
 
@@ -22,7 +22,8 @@ from torchvision.datasets.utils import list_dir
 from tqdm import tqdm
 
 from olmo.io import read_json, is_url, write_json, file_exists, dir_is_empty, list_directory, is_dir
-from olmo.util import prepare_cli_environment
+from olmo.train.trainer_config import RuntimeData, WandbConfig
+from olmo.util import prepare_cli_environment, resource_path
 
 METRIC_ORDER = ["name", "wandb", "step", "checkpoint", "src", "num_statements", "is_repeating",
                 "f1", "consistency", "recall", "recall_at_10", "loss", "acc"]
@@ -537,32 +538,12 @@ class NumpyArrayEncoder(JSONEncoder):
         return JSONEncoder.default(self, obj)
 
 
-def get_wandb_run_id(prediction_file):
-    model_dir = dirname(prediction_file)
-    wandb_dir = join(model_dir, 'wandb')
-    if exists(join(wandb_dir, "wandb")):
-        wandb_dir = join(wandb_dir, "wandb")
-    if not exists(wandb_dir):
-        logging.warning(f"Wandb directory not found in {model_dir}")
-        return None
-
-    run_dirs = [d for d in os.listdir(wandb_dir) if d.startswith('run-')]
-    if not run_dirs:
-        logging.warning(f"No run directories found in {wandb_dir}")
-        return None
-
-    latest_run_dir = max(run_dirs, key=lambda d: os.stat(join(wandb_dir, d)).st_mtime)
-    latest_run_id = latest_run_dir.split('-')[-1]
-    return latest_run_id
-
-
 def get_wandb_run(prediction_file):
-    run_id = get_wandb_run_id(prediction_file)
-    if run_id is None:
-        return
-    wandb_entity = os.environ.get("WANDB_ENTITY", "prior-ai2")
-    wandb_project = os.environ.get("WANDB_PROJECT", "cockatoo")
-    return wandb.Api().run(f"{wandb_entity}/{wandb_project}/{run_id}") # load wandb run from run_id
+    checkpoint = int(re.match(".*/predictions-ck([0-9]+)-", prediction_file).group(1))
+    checkpoint_dir = join(dirname(dirname(prediction_file)), f"step{checkpoint}")
+    data = RuntimeData.load(resource_path(checkpoint_dir, "config.yaml"), key="runtime_data")
+    wandb_data = WandbConfig.load(resource_path(checkpoint_dir, "config.yaml"), key="wandb")
+    return wandb.Api().run(f"{wandb_data.entity}/{wandb_data.project}/{data.wandb_id}")
 
 
 def _format(val):
@@ -692,8 +673,9 @@ def main():
 
         results_file = prefix + "results_v3.json"
         if args.save_metrics and file_exists(results_file):
-           logging.info(f"Loading metrics from {results_file}")
-           results = read_json(results_file)
+            logging.info(f"Loading metrics from {results_file}")
+            with open(resource_path(dirname(results_file), basename(results_file))) as f:
+                results = json.load(f)
         else:
             try:
                 captions = read_json(file)
@@ -771,29 +753,28 @@ def main():
             run = get_wandb_run(file)
             if run is None:
                 url = ''
-                loss = ''
-                acc = ''
             else:
-                wandb_keys = {
-                    "caption_val/Loss": "loss",
-                    "caption_val/Accuracy": "acc",
-                    "val/Loss": "mix_loss",
-                    "val/Accuracy": "mix_acc",
-                }
-                hist = run.scan_history(
-                    keys=["_step"] + list(wandb_keys), min_step=step, max_step=step+1)
+                hist = run.scan_history(min_step=step, max_step=step+1)
+                wandb_results = {}
                 for summary in hist:
                     assert summary["_step"] == step
-                    for wandb_key, out_key in wandb_keys.items():
-                        val = summary[wandb_key]
-                        results[out_key] = val*100
-                    break
-                else:
+                    for k in ["cap", "caption_val", "pixmo_cap"]:
+                        if f"{k}/Accuracy" in summary:
+                            wandb_results["acc"] = summary[f"{k}/Accuracy"]*100
+                            wandb_results["Loss"] = summary[f"{k}/CrossEntropyLoss"]
+                    for k in ["val", "cap_transcript", "pixmo_cap_transcript"]:
+                        if f"{k}/Accuracy" in summary:
+                            wandb_results["mixed-acc"] = summary[f"{k}/Accuracy"]*100
+                            wandb_results["mixed-loss"] = summary[f"{k}/CrossEntropyLoss"]
+                if not wandb_results:
                     logging.warning(f"Unable to find loss for {run.id} {step}")
+                else:
+                    results.update(wandb_results)
                 url = f"https://wandb.ai/prior-ai2/cockatoo/runs/{run.id}"
 
         if "recall" in results and "consistency" in results:
-            results["f1"] = 2*results["recall"] * results["consistency"] / (results["recall"] + results["consistency"])
+            # results["f1"] = 2*results["recall"] * results["consistency"] / (results["recall"] + results["consistency"])
+            results["avg"] = (results["recall"] + results["consistency"]) / 2.0
 
         config_file = join(dirname(dirname(file)), "config.yaml")
         all_results.append(results)
