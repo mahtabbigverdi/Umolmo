@@ -1,5 +1,7 @@
+import logging
 import math
 import os
+import time
 from copy import deepcopy
 from dataclasses import dataclass
 from functools import partial
@@ -19,6 +21,8 @@ from olmo.util import resource_path
 
 from torch.distributed.fsdp import fully_shard
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
+
+log = logging.getLogger(__name__)
 
 
 class VisionBackboneType(StrEnum):
@@ -414,6 +418,7 @@ class VisionTransformer(nn.Module):
 
     def reset_with_pretrained_weights(self):
         if self.config.init_path:
+            log.info(f"Loading ViT init params from {self.config.init_path}")
             is_sharded = hasattr(self.transformer.resblocks[0], "unshard")
             if not is_sharded or get_global_rank() == 0:
                 parent, name = self.config.init_path.rsplit("/", 1)
@@ -527,7 +532,32 @@ class SiglipVisionTransformer(nn.Module):
     def reset_with_pretrained_weights(self):
         # FIXME just repeating the code in `VisionTransformer`
         if self.config.init_path:
+            t0 = time.perf_counter()
+            log.info(f"Loading ViT parameters from {self.config.init_path}")
             is_sharded = hasattr(self.transformer.resblocks[0], "unshard")
+
+            if self.config.init_path.startswith("model:"):
+                path = self.config.init_path[len("model:"):].rstrip("/") + "/model_and_optim"
+                import torch.distributed.checkpoint as dist_cp
+                from olmo.train.remote_filesystem import RemoteFileSystemReader
+                assert is_sharded
+                sd_options = dist_cp_sd.StateDictOptions(full_state_dict=False, cpu_offload=False, strict=False)
+                state_dict = dist_cp_sd.get_model_state_dict(self, options=sd_options)
+                state_dict = {f"model.vision_backbone.image_vit.{k}": v for k, v in state_dict.items()}
+                dist_cp.load(
+                    state_dict,
+                    checkpoint_id=path,
+                    storage_reader=RemoteFileSystemReader(path),
+                )
+                state_dict = {k[len("model.vision_backbone.image_vit."):]: v for k, v in state_dict.items()}
+                key_errors = dist_cp_sd.set_model_state_dict(
+                    model=self,
+                    model_state_dict=state_dict,
+                    options=dist_cp_sd.StateDictOptions(strict=False)
+                )
+                log.info(f"Done in {time.perf_counter()-t0:0.1} seconds")
+                return
+
             if not is_sharded or get_global_rank() == 0:
                 parent, name = self.config.init_path.rsplit("/", 1)
                 state_dict_path = resource_path(parent, name, cache_dir=os.environ.get("MOLMO_CACHE_DIR"))
@@ -551,6 +581,7 @@ class SiglipVisionTransformer(nn.Module):
             # But sanity check the missing keys just in case
             for key in key_errors.unexpected_keys:
                 assert key.startswith("transformer.resblocks.")
+            log.info(f"Done in {time.perf_counter()-t0:0.1} seconds")
         else:
             self.reset_parameters()
 

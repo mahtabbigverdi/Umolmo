@@ -10,6 +10,7 @@ import dataclasses
 import logging
 import math
 import os
+import time
 from abc import abstractmethod
 from dataclasses import field
 from functools import partial
@@ -599,6 +600,8 @@ class Llm(nn.Module):
         if self.config.init_path is None:
             self.reset_parameters()
         else:
+            t0 = time.perf_counter()
+            log.info(f"Loading LLM parameters from {self.config.init_path}")
             is_sharded = hasattr(self.blocks[0], "unshard")
             if not is_sharded or get_global_rank() == 0:
                 parent, name = self.config.init_path.rstrip("/").rsplit("/", 1)
@@ -627,6 +630,8 @@ class Llm(nn.Module):
 
             assert len(key_errors.unexpected_keys) == 0
             assert set(key_errors.missing_keys) <= {"wte.new_embedding"}
+            log.info(f"Done in {time.perf_counter()-t0:0.1f} seconds")
+
             if self.config.additional_vocab_size is not None:
                 nn.init.normal_(self.wte.new_embedding, std=self.config.new_embedding_init_range)
 
