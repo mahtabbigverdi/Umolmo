@@ -199,7 +199,7 @@ if __name__ == "__main__":
 
     evaluator = InfDatasetEvaluatorConfig(
         label="val",
-        subset_num_batches=2048//(8*get_world_size()),
+        max_examples=2048,
         data=DataLoaderConfig(
             mixture=mixture,
             pad="to_max",
