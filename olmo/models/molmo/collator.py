@@ -24,19 +24,17 @@ numpy_to_torch_dtype_dict = {
 
 def _collate(tensors, max_sequence_length=None, dtype=None, pad=None, pad_value=-1, allow_truncate=True):
     tensor = [x for x in tensors if x is not None][0]
+    max_tensor_len = max((0 if x is None else x.shape[0]) for x in tensors)
     if pad == "to_max":
         max_len = max_sequence_length
         if not allow_truncate:
-            if not all(x.shape[0] <= max_len for x in tensors if x is not None):
-                import pdb; pdb.set_trace()
-            assert all(x.shape[0] <= max_len for x in tensors if x is not None)
+            assert max_tensor_len <= max_len
+    elif pad == "truncate":
+        max_len = min(max_tensor_len, max_sequence_length)
+        if not allow_truncate:
+            assert max_tensor_len <= max_len
     elif pad is None:
-        max_len = max((0 if x is None else x.shape[0]) for x in tensors)
-        if max_sequence_length:
-            if allow_truncate:
-                max_len = min(max_len, max_sequence_length)
-            elif max_sequence_length < max_len:
-                raise ValueError(f"{max_sequence_length} would truncate a non-truncatable tensor with length of {max_len}")
+        max_len = max_tensor_len
     else:
         raise NotImplementedError(pad)
 
