@@ -84,7 +84,8 @@ class HePreprocessorConfig(BaseConfig):
         self,
         tokenizer,
         vision_backbone_config: MolmoVisionBackboneConfig,
-        max_seq_len=None
+        max_seq_len=None,
+        low_to_high_interpolation_factor=2
     ):
         vit = vision_backbone_config.vit
         assert self.image_pooling_w == self.image_pooling_h
@@ -92,6 +93,7 @@ class HePreprocessorConfig(BaseConfig):
         return HeMultiModalPreprocessor(
             tokenizer=tokenizer,
             max_text_tokens=self.max_text_len,
+            low_to_high_interpolation_factor=low_to_high_interpolation_factor,
             num_high_res_features=self.num_high_res_features,
             loss_token_weighting=self.loss_token_weighting,
             normalize=vit.normalize,
@@ -311,6 +313,7 @@ class HeMultiModalPreprocessor(InterleavedTextPreprocessor, ImagePreprocessor):
                     -1
                 )
 
+            low_res_f = self.low_to_high_interpolation_factor
             low_to_high = np.eye((low_h*low_res_f*low_w*low_res_f), dtype=np.float32)
             low_to_high = low_to_high.reshape([low_h*low_w*low_res_f*low_res_f, low_h*low_res_f, low_w*low_res_f])
             low_to_high = torchvision.transforms.Resize(

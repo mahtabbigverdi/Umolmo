@@ -113,7 +113,7 @@ class HeMolmoConfig(BaseModelConfig):
         """
         return Preprocessor(
             self.data_formatter,
-            self.mm_preprocessor.build(self.build_tokenizer(), self.vision_backbone, max_seq_len=max_seq_len),
+            self.mm_preprocessor.build(self.build_tokenizer(), self.vision_backbone, max_seq_len=max_seq_len, low_to_high_interpolation_factor=self.token_scorer.low_to_high_interpolation_factor),
             for_inference=for_inference,
             is_training=is_training,
             include_image=include_image,
@@ -648,6 +648,8 @@ class HeMolmo(ModelBase):
                     # features are for the low-res patches and need to interpolates
                     if not ts_cfg.four_scores_per_low_res_patch:
                         low_res_importance_flat = torch.tile(torch.mean(low_res_importance_flat, dim=-1, keepdim=True), [1, 1, ts_cfg.low_to_high_interpolation_factor**2])
+                    # if not ts_cfg.mean_score_per_low_res_patch:
+                    #     low_res_importance_flat + low_res_importance_flat + torch.mean(low_res_importance_flat, dim=-1, keepdim=True)
                     high_res_importance = torch.matmul(
                         low_res_importance_flat.reshape(batch_size, 1, -1),
                         low_to_high
