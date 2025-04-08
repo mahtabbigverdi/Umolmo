@@ -340,7 +340,7 @@ class ImagePreprocessor:
             return (image * np.array(OPENAI_CLIP_STD, dtype=np.float32)[None, None, :] +
                     np.array(OPENAI_CLIP_MEAN, dtype=np.float32)[None, None, :])
         elif self.normalize == "siglip":
-            return image / np.asarray(2.0, dtype=np.float32) + 1
+            return (image + 1) / np.asarray(2.0, dtype=np.float32)
         else:
             raise NotImplementedError()
 
@@ -370,14 +370,15 @@ class ImagePreprocessor:
                 image, output_size, pad_value=self.pad_value, rng=rng, is_training=is_training,
                 resize_method=resize)
 
-    def build_resized_image(self, image, is_training, rng):
-        resized, resized_mask = self.resize_image(image, self.base_image_input_size, is_training, rng)
+    def build_resized_image(self, image, is_training, rng, image_size=None):
+        image_size = image_size or self.base_image_input_size
+        resized, resized_mask = self.resize_image(image, image_size, is_training, rng)
         resized = self.normalize_image(resized)
         if len(resized.shape) == 3:
             resized = np.expand_dims(resized, 0)
         resized_mask = np.expand_dims(resized_mask, 0)
-        crop_patch_w = self.base_image_input_size[1] // self.image_patch_size
-        crop_patch_h = self.base_image_input_size[0] // self.image_patch_size
+        crop_patch_w = image_size[1] // self.image_patch_size
+        crop_patch_h = image_size[0] // self.image_patch_size
         resize_idx = np.arange(crop_patch_w*crop_patch_h).reshape([crop_patch_h, crop_patch_w])
         return resized, resized_mask, resize_idx
 
