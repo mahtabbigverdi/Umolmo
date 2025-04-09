@@ -3,6 +3,7 @@ import dataclasses
 import json
 import logging
 import os
+import pickle
 import re
 import sys
 from datetime import datetime
@@ -12,6 +13,7 @@ from typing import Optional, List, Tuple
 import omegaconf
 import torch
 import wandb
+from torch import distributed as dist
 
 from olmo.config import BaseConfig
 from olmo.data.data_loader import DataLoaderConfig
@@ -20,6 +22,7 @@ from olmo.eval.inf_evaluator import InfDatasetEvaluator, EvaluatorConfig, \
 from olmo.eval.loss_evaluator import LossDatasetEvaluatorConfig, LossDatasetEvaluator
 from olmo.exceptions import OLMoCliError
 from olmo.io import file_exists, write_file, get_bytes_range, read_file
+from olmo.models.model_config import BaseModelConfig
 from olmo.models.molmo.model_preprocessor import MolmoPreprocessorConfig
 from olmo.nn.image_vit import VitConfig
 from olmo.nn.llm import LlmConfig
@@ -31,11 +34,11 @@ from olmo.torch_util import (
     get_global_rank,
     get_local_rank,
     peak_gpu_memory,
-    seed_all, )
+    seed_all, get_world_size, )
 from olmo.train.checkpointer import load_model_state
 from olmo.train.trainer_config import FSDPConfig
 from olmo.util import (
-    resource_path, log_metrics_to_console, prepare_torchrun_environment, clean_opt,
+    resource_path, log_metrics_to_console, prepare_torchrun_environment, clean_opt, flatten_lists,
 )
 
 log = logging.getLogger(__name__)
@@ -66,6 +69,13 @@ def get_gcs_url(output_file):
 
 
 @dataclasses.dataclass
+class SaveEvalDataConfig(BaseConfig):
+    post_processed_inputs: bool = True
+    example_metadata: bool = True
+    model_internal_data: bool = True
+
+
+@dataclasses.dataclass
 class DatasetEvaluatorConfig(BaseConfig):
     """Configuration for an offline dataset evaluation, it could be for loss or generation"""
 
@@ -89,12 +99,20 @@ class DatasetEvaluatorConfig(BaseConfig):
     generative_evaluator: Optional[EvaluatorConfig] = None
     """Specifies how to compute metrics and save the predictions if doing a generative eval"""
 
+    save_data: Optional[SaveEvalDataConfig] = None
+    """
+    Save low-level inputs/outputs, these can be used to make visualizations, but can also occupy 
+    a lot of disk space
+    """
+
     @property
     def generative(self):
         return self.generative_evaluator is not None
 
     def build_evaluator(self, model_config, device, default_save_dir, console_log_interval, include_image=False):
         if self.generative:
+            if self.save_data:
+                raise NotImplementedError()
             cfg = InfDatasetEvaluatorConfig(
                 self.label, self.data, self.generative_evaluator,
                 max_new_tokens=self.max_new_tokens,
@@ -114,7 +132,7 @@ class DatasetEvaluatorConfig(BaseConfig):
                 max_examples=self.max_examples,
                 console_log_interval=console_log_interval
             )
-            return cfg.build_dataset_evaluator(model_config=model_config, device=device)
+            return cfg.build_dataset_evaluator(model_config=model_config, device=device, save_data=self.save_data)
 
 
 @dataclasses.dataclass
@@ -356,7 +374,10 @@ class ModelEvaluator:
                 logging.warning(f"{metrics_file} already exists! File will be overwritten")
 
             save_dir = self.get_save_dir(evaluation)
+            collect_internal = evaluation.collect_visualization_data
             if evaluation.generative:
+                if collect_internal:
+                    raise NotImplementedError()
                 evaluator: InfDatasetEvaluator = evaluation.build_evaluator(
                     model.config, device, save_dir, self.config.console_log_interval)
                 metrics = evaluator.run(
@@ -366,13 +387,28 @@ class ModelEvaluator:
                     pbar=self.config.pbar,
                 )
             else:
+                evaluation.collect_visualization_data = collect_internal
                 evaluator: LossDatasetEvaluator = evaluation.build_evaluator(
                     model.config, device, save_dir, self.config.console_log_interval)
                 metrics = evaluator.run(
                     model, device,
                     autocast_precision=self.config.autocast_precision,
-                    pbar=self.config.pbar
+                    pbar=self.config.pbar,
                 )
+            if collect_internal:
+                metrics, internal = metrics
+                if get_global_rank() == 0:
+                    out = [None for _ in range(get_world_size())]
+                    dist.gather_object(internal, out)
+                    selection_data = flatten_lists(out)
+                    if save_dir is not None:
+                        logging.info(f"Saving selections to {save_dir}")
+                        os.makedirs(save_dir, exist_ok=True)
+                        with open(join(save_dir, "selection.npy"), "wb") as f:
+                            pickle.dump(selection_data, f)
+                else:
+                    dist.gather_object(internal)
+                    selection_data = None
 
             # Post-process the metrics by saving the wandb.Html outputs to disk
             if save_dir and get_global_rank() == 0:

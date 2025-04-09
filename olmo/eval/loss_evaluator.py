@@ -19,6 +19,8 @@ from olmo.torch_util import move_to_device, get_world_size
 
 __all__ = ["LossMetrics", "LossDatasetEvaluator", "LossDatasetEvaluatorConfig"]
 
+from scripts.mm_eval import SaveEvalDataConfig
+
 log = logging.getLogger(__name__)
 
 
@@ -88,6 +90,7 @@ class LossDatasetEvaluator:
     num_batches: Optional[int] = None
     console_log_interval: Optional[int] = None
     z_loss: Optional[float] = None
+    save_data: Optional[SaveEvalDataConfig] = None
 
     def run(self, model, device, autocast_precision, loss_fn=None, pbar=False):
         # Reset metrics.
@@ -108,14 +111,14 @@ class LossDatasetEvaluator:
             eval_batches = islice(eval_batches, num_eval_batches)
 
         # Run model over batches.
+        viz_data = []
         with torch.inference_mode():
             for eval_step, batch in enumerate(tqdm(eval_batches, total=num_eval_batches, disable=not pbar)):
                 batch = move_to_device(batch, device)
                 response_mask = (batch["loss_masks"] > 0)
                 with torch.autocast("cuda", enabled=True, dtype=autocast_precision):
-                    model_out = model(
-                        **{k: v for k, v in batch.items() if k not in ["labels", "loss_masks", "metadata"]},
-                        response_mask=response_mask)
+                    inputs = {k: v for k, v in batch.items() if k not in ["labels", "loss_masks", "metadata"]}
+                    model_out = model(**inputs, response_mask=response_mask)
                 logits = model_out.logits
                 loss_masks = batch["loss_masks"]
                 loss_masks = loss_masks * (loss_masks > 0)
@@ -132,10 +135,25 @@ class LossDatasetEvaluator:
                     z_loss = (z_loss * loss_masks.view(-1)).sum()
                 self.evaluator.update(batch, model_out, ce_loss, z_loss)
 
+                # Maybe save internal data
+                if self.save_data:
+                    for i in range(len(response_mask)):
+                        saved_data = {}
+                        if self.save_data.example_metadata:
+                            saved_data["example_metadata"] = batch["metadata"][i]
+                        if self.save_data.post_processed_inputs:
+                            saved_data["post_processed_inputs"] = {k: v[i].detach().cpu() for k, v in inputs.items()}
+                        if self.save_data.model_internal_data:
+                            saved_data["model_internal_data"] = {k: v[i].detach().cpu() for k, v in model_out.internal.items()},
+                        viz_data.append(saved_data)
+
                 if self.console_log_interval and not pbar:
                     if eval_step + 1 == num_eval_batches or (eval_step + 1) % self.console_log_interval == 0:
                         log.info(f"[eval_step={eval_step + 1}/{num_eval_batches}]")
-        return self.evaluator.compute()
+        if self.save_data:
+            return self.evaluator.compute(), viz_data
+        else:
+            return self.evaluator.compute()
 
 
 @dataclass
@@ -169,9 +187,11 @@ class LossDatasetEvaluatorConfig(BaseConfig):
             config.data = DataLoaderConfig.update_legacy_settings(config.data)
         return config
 
-    def build_dataset_evaluator(self, model_config: MolmoConfig, device) -> LossDatasetEvaluator:
+    def build_dataset_evaluator(self, model_config: MolmoConfig, device, save_data: SaveEvalDataConfig) -> LossDatasetEvaluator:
         eval_loader = self.data.build_eval_dataloader(
-            model_config, self.device_batch_size, for_inference=False)
+            model_config, self.device_batch_size, for_inference=False,
+            include_metadata=save_data and save_data.example_metadata
+        )
         if self.max_examples is not None:
             num_batches = max(1, self.max_examples // (self.device_batch_size*get_world_size()))
         elif self.subset_num_batches is not None:
@@ -184,5 +204,6 @@ class LossDatasetEvaluatorConfig(BaseConfig):
             eval_loader=eval_loader,
             evaluator=LossMetrics(device),
             num_batches=num_batches,
-            console_log_interval=self.console_log_interval
+            console_log_interval=self.console_log_interval,
+            save_data=save_data
         )
