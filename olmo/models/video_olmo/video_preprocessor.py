@@ -470,7 +470,10 @@ class VideoTextPreprocessor(InterleavedTextPreprocessor, ImagePreprocessor):
             prefix = self.tokenizer.encode(f"FPS {average_time_delta:0.2f}")
             video_tokens.append(prefix)
 
-        video_token_prefix_len = len(np.concatenate(video_tokens, 0))
+        if  len(video_tokens) > 0:
+            video_token_prefix_len = len(np.concatenate(video_tokens, 0))
+        else:
+            video_token_prefix_len = 0
 
         high_res_index_list = []
         for frame_idx, frame in enumerate(frames):
