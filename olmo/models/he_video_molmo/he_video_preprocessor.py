@@ -31,6 +31,8 @@ class HeVideoPreprocessorConfig(BaseConfig):
 
     video_low_res_collage: Optional[int] = None
 
+    low_to_high_interpolation: str = "bilinear"
+
     loss_token_weighting: Optional[str] = None
     multi_res_min: Optional[int] = None
     indicate_k: bool = False
@@ -57,6 +59,7 @@ class HeVideoPreprocessorConfig(BaseConfig):
               max_sequence_length, low_to_high_interpolation_factor=2):
         vit = vision_backbone_config.vit
         return HeMultiModalPreprocessor(
+            low_to_high_interpolation=self.low_to_high_interpolation,
             low_to_high_interpolation_factor=low_to_high_interpolation_factor,
             loss_token_weighting=self.loss_token_weighting,
             time_mode=self.time_mode,

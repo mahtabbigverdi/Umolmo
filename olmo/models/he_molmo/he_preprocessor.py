@@ -150,6 +150,7 @@ class HeMultiModalPreprocessor(InterleavedTextPreprocessor, ImagePreprocessor):
     video_low_res_collage: int = None
     time_mode: str = "fps-prefix"
     low_to_high_interpolation_factor: int = 2
+    low_to_high_interpolation: str = "bilinear"
 
     # For multi-crop image
     image_low_res_from_crops: Optional[int] = None
@@ -316,8 +317,14 @@ class HeMultiModalPreprocessor(InterleavedTextPreprocessor, ImagePreprocessor):
             low_res_f = self.low_to_high_interpolation_factor
             low_to_high = np.eye((low_h*low_res_f*low_w*low_res_f), dtype=np.float32)
             low_to_high = low_to_high.reshape([low_h*low_w*low_res_f*low_res_f, low_h*low_res_f, low_w*low_res_f])
-            low_to_high = torchvision.transforms.Resize(
-                [h, w], InterpolationMode.BILINEAR, antialias=False)(
+            if self.low_to_high_interpolation == "bilinear":
+                mode = InterpolationMode.BILINEAR
+            elif self.low_to_high_interpolation == "nearest":
+                mode = InterpolationMode.NEAREST_EXACT
+            else:
+                raise NotImplementedError(self.low_to_high_interpolation)
+            model = self.low_to_high_interpolation_factor
+            low_to_high = torchvision.transforms.Resize([h, w], mode, antialias=False)(
                 torch.from_numpy(low_to_high)).numpy()
             # Re-arrange to match how the importance scores are predicted (four per a patch)
             # This save us having to transpose it in model
@@ -411,6 +418,7 @@ class HeMultiModalPreprocessor(InterleavedTextPreprocessor, ImagePreprocessor):
                 # items in the collage from top-down to left-to-right
                 collage_idx = einops.rearrange(
                     collage_idx, "b (dh h) (dw w) -> (b dw dh) h w",
+                    # collage_idx, "b (dh h) (dw w) -> (b dh dw) h w",
                     dh=self.video_low_res_collage, dw=self.video_low_res_collage
                 )[:len(image)]
                 low_res_idx = arange_video_for_pooling(collage_idx, self.video_low_res, self.video_low_res)
@@ -447,8 +455,14 @@ class HeMultiModalPreprocessor(InterleavedTextPreprocessor, ImagePreprocessor):
             low_res_f = self.low_to_high_interpolation_factor
             low_to_high = np.eye((low_h*low_res_f*low_w*low_res_f), dtype=np.float32)
             low_to_high = low_to_high.reshape([low_h*low_w*low_res_f*low_res_f, low_h*low_res_f, low_w*low_res_f])
+            if self.low_to_high_interpolation == "bilinear":
+                mode = InterpolationMode.BILINEAR
+            elif self.low_to_high_interpolation == "nearest":
+                mode = InterpolationMode.NEAREST_EXACT
+            else:
+                raise NotImplementedError(self.low_to_high_interpolation)
             low_to_high = torchvision.transforms.Resize(
-                [high_h, high_w], InterpolationMode.BILINEAR, antialias=False)(
+                [high_h, high_w], mode, antialias=False)(
                 torch.from_numpy(low_to_high)).numpy().astype(np.float32)
 
             low_to_high_frames = np.zeros([n_frames, n_frames] + list(low_to_high.shape), dtype=np.float32)
