@@ -4,7 +4,7 @@ from typing import Callable, Tuple, Optional
 import numpy as np
 from scipy.stats import beta, dirichlet, norm, multinomial
 
-from olmo.config import BaseConfig
+from olmo.config import BaseConfig, D
 from olmo.data.image_preprocessor import siglip_resize_and_pad, select_tiling
 
 
@@ -130,7 +130,6 @@ if __name__ == '__main__':
     print(path.get_indices(rng))
 
 
-
 @dataclasses.dataclass
 class ImageAsVideoConfig(BaseConfig):
     min_repeats: int
@@ -141,7 +140,12 @@ class ImageAsVideoConfig(BaseConfig):
     preferred_step_size: Optional[int] = None
     max_repeats: Optional[int] = None
     path_mode: str = "zigzag"
-    build_source_ids: bool = False
+
+    @classmethod
+    def update_legacy_settings(cls, config: D) -> D:
+        if "build_source_ids" in config:
+            del config["build_source_ids"]
+        return config
 
     def build(self, max_frames, vit_config):
         if vit_config.resize_mode == "siglip":
@@ -161,7 +165,6 @@ class ImageAsVideoConfig(BaseConfig):
             max_crops=self.max_crops,
             max_repeats=self.max_repeats,
             path_mode=self.path_mode,
-            build_source_ids=self.build_source_ids
         )
 
 
@@ -179,7 +182,6 @@ class ImagePan:
     max_pixels: int = None
     max_crops: Optional[int] = None
     path_mode: str = "zigzag"
-    build_source_ids: bool = False
 
     def build_path(self, h, w, rng):
         if self.path_mode == "outside-in-v1":
@@ -273,21 +275,16 @@ class ImagePan:
         h_steps = self.build_steps(h_steps, target_h - c_h, c_h - self.min_overlap*d)
         w_steps = self.build_steps(w_steps, target_w - c_w, c_w - self.min_overlap*d)
         crops = np.zeros([len(h_steps), len(w_steps), c_h, c_w, 3])
-        if self.build_source_ids:
-            source_ids = np.zeros([len(h_steps), len(w_steps), c_h//d, c_w//d], dtype=np.int32)
-        else:
-            source_ids = None
+        source_ids = np.zeros([len(h_steps), len(w_steps), c_h//d, c_w//d], dtype=np.int32)
         image_ids = np.arange(target_h*target_w//(d*d)).reshape([target_h//d, target_w//d])
         for x, x0 in enumerate(h_steps):
             for y, y0 in enumerate(w_steps):
                 crops[x, y] = image[x0:x0+c_h, y0:y0+c_w]
-                if source_ids is not None:
-                    source_ids[x, y] = image_ids[x0//d:(x0+c_h)//d, y0//d:(y0+c_w)//d]
+                source_ids[x, y] = image_ids[x0//d:(x0+c_h)//d, y0//d:(y0+c_w)//d]
 
         path = self.build_path(len(h_steps), len(w_steps), rng)
         crops = crops[path[:, 0], path[:, 1]].reshape([-1, c_h, c_w, 3])
-        if source_ids is not None:
-            source_ids = source_ids[path[:, 0], path[:, 1]].reshape([-1, c_h//d, c_w//d])
+        source_ids = source_ids[path[:, 0], path[:, 1]].reshape([-1, c_h//d, c_w//d])
 
         n_frames = len(h_steps)*len(w_steps)
         if n_frames < self.max_frames:
@@ -305,7 +302,7 @@ class ImagePan:
             if source_ids is not None:
                 source_ids = np.repeat(source_ids, repeats+1, axis=0)
         assert len(crops) <= self.max_frames
-        return crops, np.arange(len(crops)), source_ids
+        return crops, np.arange(len(crops)), dict(source_ids=source_ids, image_size=[target_h, target_w])
 
 
 if __name__ == '__main__':

@@ -257,7 +257,7 @@ class MultiModalVideoPreprocessorConfig(MolmoPreprocessorConfig):
             padding_lens["low_res_pooled_idx"] = low_res_tokens*self.max_frames
         return padding_lens
 
-    def get_max_image_tokens(self, vision_backbone_config: MolmoVisionBackboneConfig):
+    def get_max_mm_tokens(self, vision_backbone_config: MolmoVisionBackboneConfig):
         lens = self.get_image_padding_lens(vision_backbone_config)
         seq_len = lens["low_res_pooled_idx"] + lens.get("high_res_pooled_idx", 0)
         extra_per_frame = 2  # start/end tokens
@@ -490,9 +490,9 @@ class VideoPreprocessor:
 
         if self.image_to_video and "image" in example:
             image = load_image(example["image"])
-            frames, frame_times, patch_ids = self.image_to_video(image, rng)
+            frames, frame_times, image_to_video_metadata = self.image_to_video(image, rng)
         else:
-            patch_ids = None
+            image_to_video_metadata = None
             assert "video" in example, "Video is required for video preprocessor"
             try:
                 frames, frame_times = load_video_decord_or_pyav(example["video"], self.max_frames, self.frame_sample_mode, self.candidate_sampling_fps)
@@ -535,6 +535,8 @@ class VideoPreprocessor:
         else:
             h, w = frames[0].shape[:2]
         formatter_metadata["image_size"] = (w, h)
+        if image_to_video_metadata is not None:
+            formatter_metadata.update(image_to_video_metadata)
 
         if "metadata" in example or formatter_metadata:
             metadata = example.get("metadata", {})

@@ -146,7 +146,7 @@ if __name__ == "__main__":
         num_workers = args.num_workers
 
     if args.seq_len == "auto":
-        max_for_image = model_cfg.mm_preprocessor.get_max_image_tokens(model_cfg.vision_backbone)
+        max_for_image = model_cfg.mm_preprocessor.get_max_mm_tokens(model_cfg.vision_backbone)
         if args.mixture in ["lv_flat"]:
             seq_len = 256 + max_for_image
         else:

@@ -66,6 +66,12 @@ class DataLoaderConfig(BaseConfig):
     sequence_length: Optional[int] = None
     """Max sequence length to truncate examples to in the Collator"""
 
+    max_text_seq_len: Optional[int] = None
+    """Max sequence length excluding MM tokens
+    
+    If set, the sequence_length is computed as `max_text_seq_len` + the max length of the MM tokens
+    """
+
     shuffle: Optional[bool] = True
     """Should the data be shuffled"""
 
@@ -109,7 +115,12 @@ class DataLoaderConfig(BaseConfig):
                 # exactly the same number of batches
                 n_pad = (n_steps*global_batch_size) - len(dataset)
 
-        max_seq_len = self.sequence_length if self.pad else None
+        if self.pad is None:
+            max_seq_len = None
+        elif self.max_text_seq_len:
+            max_seq_len = self.max_text_seq_len + model_config.mm_preprocessor.get_max_mm_tokens(model_config.vision_backbone)
+        else:
+            max_seq_len = self.sequence_length
         preprocessor = model_config.build_preprocessor(
             for_inference=for_inference, is_training=False, include_image=include_image, max_seq_len=max_seq_len)
         dataset = DeterministicDataset(
@@ -130,7 +141,7 @@ class DataLoaderConfig(BaseConfig):
             dataset,
             batch_size=batch_size,
             collate_fn=model_config.build_collator(
-                self.sequence_length, self.pad, include_metadata=include_metadata),
+                max_seq_len, self.pad, include_metadata=include_metadata),
             num_workers=self.num_workers,
             sampler=sampler,
             pin_memory=self.pin_memory,
@@ -147,10 +158,15 @@ class DataLoaderConfig(BaseConfig):
     ) -> DataLoader:
         if device is None:
             device = "cpu"
-        max_seq_len = self.sequence_length if self.pad else None
+
+        if self.pad is None:
+            max_seq_len = None
+        elif self.max_text_seq_len:
+            max_seq_len = self.max_text_seq_len + model_config.mm_preprocessor.get_max_mm_tokens(model_config.vision_backbone)
+        else:
+            max_seq_len = self.sequence_length
         preprocessor = model_config.build_preprocessor(
             for_inference=False, is_training=True, max_seq_len=max_seq_len)
-
         if self.dataset:
             ds = get_dataset_by_name(self.dataset, self.split)
             datasets = [DeterministicDataset(ds, preprocessor, self.seed)]
@@ -161,7 +177,7 @@ class DataLoaderConfig(BaseConfig):
                 for task in self.kwargs_mixture:
                     log.info(f"Loading train dataset {task.dataset_name}/{self.split}")
                     dataset = get_dataset_by_name(task.dataset_name, self.split)
-                    if task.sampling_rate is None:
+                    if task.sampling_rate is not None:
                         size = task.sampling_rate
                     elif task.root_size_factor < 1:
                         size = np.sqrt(len(dataset) * task.sampling_rate)
@@ -212,7 +228,7 @@ class DataLoaderConfig(BaseConfig):
             batch_size=dataset.device_batch_size,
             drop_last=self.drop_last,
             collate_fn=model_config.build_collator(
-                self.sequence_length, self.pad, include_metadata=False),
+                max_seq_len, self.pad, include_metadata=False),
             num_workers=self.num_workers,
             pin_memory=self.pin_memory,
             prefetch_factor=None if self.num_workers == 0 else self.prefetch_factor,
