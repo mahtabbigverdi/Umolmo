@@ -96,7 +96,7 @@ On weka, our existing model can be found in `/weka/oe-training-default/mm-olmo/r
 We generally evaluate captioning offline on the `dense_caption_eval` task, the prediction file
 can be built with:
 
-`torchrun --nproc-per-node 8 launch_scripts/eval_captioner.py /weka/oe-training-default/mm-olmo/released-models-0924/qwen2-7b-dense-captioner`
+`torchrun --nproc-per-node 8 launch_scripts/eval.py --task dense_caption_eval /weka/oe-training-default/mm-olmo/released-models-0924/qwen2-7b-dense-captioner`
 
 Then the eval script can be run like this (the OPENAI_API_KEY must be set in the environment)
 

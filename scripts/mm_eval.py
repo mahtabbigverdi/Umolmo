@@ -19,7 +19,8 @@ from olmo.config import BaseConfig
 from olmo.data.data_loader import DataLoaderConfig
 from olmo.eval.inf_evaluator import InfDatasetEvaluator, EvaluatorConfig, \
     InfDatasetEvaluatorConfig
-from olmo.eval.loss_evaluator import LossDatasetEvaluatorConfig, LossDatasetEvaluator
+from olmo.eval.loss_evaluator import LossDatasetEvaluatorConfig, LossDatasetEvaluator, \
+    SaveEvalDataConfig
 from olmo.exceptions import OLMoCliError
 from olmo.io import file_exists, write_file, get_bytes_range, read_file
 from olmo.models.model_config import BaseModelConfig
@@ -66,13 +67,6 @@ def cast_float_dtype(t: torch.Tensor, dtype: str):
 def get_gcs_url(output_file):
     assert output_file.startswith("gs://")
     return f"https://storage.cloud.google.com/{output_file[5:]}?authuser=1"
-
-
-@dataclasses.dataclass
-class SaveEvalDataConfig(BaseConfig):
-    post_processed_inputs: bool = True
-    example_metadata: bool = True
-    model_internal_data: bool = True
 
 
 @dataclasses.dataclass
@@ -148,7 +142,7 @@ class EvalConfig(BaseConfig):
     model: Optional[BaseModelConfig] = None
     """Model config to use, load the one in the `load_path`` if None"""
 
-    # FIXME can remove these since they can be overriden through `model_config`
+    # FIXME can remove these override options since they can be overriden through `model_config`
     max_crops_override: Optional[int] = None
     """Override the max crops used in the model"""
 
@@ -374,10 +368,7 @@ class ModelEvaluator:
                 logging.warning(f"{metrics_file} already exists! File will be overwritten")
 
             save_dir = self.get_save_dir(evaluation)
-            collect_internal = evaluation.collect_visualization_data
             if evaluation.generative:
-                if collect_internal:
-                    raise NotImplementedError()
                 evaluator: InfDatasetEvaluator = evaluation.build_evaluator(
                     model.config, device, save_dir, self.config.console_log_interval)
                 metrics = evaluator.run(
@@ -387,7 +378,6 @@ class ModelEvaluator:
                     pbar=self.config.pbar,
                 )
             else:
-                evaluation.collect_visualization_data = collect_internal
                 evaluator: LossDatasetEvaluator = evaluation.build_evaluator(
                     model.config, device, save_dir, self.config.console_log_interval)
                 metrics = evaluator.run(
@@ -395,19 +385,19 @@ class ModelEvaluator:
                     autocast_precision=self.config.autocast_precision,
                     pbar=self.config.pbar,
                 )
-            if collect_internal:
-                metrics, internal = metrics
+            if evaluation.save_data:
+                metrics, saved_data = metrics
                 if get_global_rank() == 0:
                     out = [None for _ in range(get_world_size())]
-                    dist.gather_object(internal, out)
+                    dist.gather_object(saved_data, out)
                     selection_data = flatten_lists(out)
                     if save_dir is not None:
-                        logging.info(f"Saving selections to {save_dir}")
+                        logging.info(f"Saving eval data to {save_dir}")
                         os.makedirs(save_dir, exist_ok=True)
-                        with open(join(save_dir, "selection.npy"), "wb") as f:
-                            pickle.dump(selection_data, f)
+                        data = pickle.dumps(selection_data)
+                        write_file(save_dir, "eval_data.pkl", data, True)
                 else:
-                    dist.gather_object(internal)
+                    dist.gather_object(saved_data)
                     selection_data = None
 
             # Post-process the metrics by saving the wandb.Html outputs to disk

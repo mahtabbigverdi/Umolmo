@@ -1,4 +1,5 @@
 """Class to build metrics for a model based on the loss"""
+import dataclasses
 import logging
 from dataclasses import dataclass, field
 from itertools import islice
@@ -14,12 +15,11 @@ from wandb.sdk.data_types.base_types.wb_value import WBValue
 
 from olmo.config import BaseConfig, D
 from olmo.data.data_loader import DataLoaderConfig
+from olmo.eval.save_eval_data_config import SaveEvalDataConfig
 from olmo.models.molmo.molmo import MolmoConfig
 from olmo.torch_util import move_to_device, get_world_size
 
 __all__ = ["LossMetrics", "LossDatasetEvaluator", "LossDatasetEvaluatorConfig"]
-
-from scripts.mm_eval import SaveEvalDataConfig
 
 log = logging.getLogger(__name__)
 
@@ -187,7 +187,7 @@ class LossDatasetEvaluatorConfig(BaseConfig):
             config.data = DataLoaderConfig.update_legacy_settings(config.data)
         return config
 
-    def build_dataset_evaluator(self, model_config: MolmoConfig, device, save_data: SaveEvalDataConfig) -> LossDatasetEvaluator:
+    def build_dataset_evaluator(self, model_config: MolmoConfig, device, save_data: SaveEvalDataConfig=None) -> LossDatasetEvaluator:
         eval_loader = self.data.build_eval_dataloader(
             model_config, self.device_batch_size, for_inference=False,
             include_metadata=save_data and save_data.example_metadata

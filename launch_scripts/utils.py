@@ -118,6 +118,34 @@ def get_evaluator(name) -> EvaluatorConfig:
         raise NotImplementedError(name)
 
 
+def get_default_max_tokens(name):
+    if name.startswith("named_entity"):
+        max_new_tokens = 256
+    elif name == "math_vista_demo":
+        max_new_tokens = 384
+    elif name in ["chart_qa_scifi", "chart_qa_ex", "chart_qa_exp", "chart_qa_prompting_explanation"] or name.endswith("_demo"):
+        max_new_tokens = 256
+    elif name.startswith("user_questions_for_elo"):
+        max_new_tokens = 768  # Can have counts of 20+ so make sure there is room
+    elif name in ["pointing_eval", "pointing"]:
+        max_new_tokens = 192  # 192 is enought for counts <=10 in the point tag format
+    elif "countbench_qa" in name or "pixmo_count" in name:
+        max_new_tokens = 192
+    elif name == "android_control_hl_cot":
+        max_new_tokens = 64
+    elif name.startswith("android_control"):
+        max_new_tokens = 16
+    elif name == "llava_video_178k_oe" or name == "llava_video_178k_cap" or name.startswith("temp_compass") or name == "mlvu_gen":
+        max_new_tokens = 192
+    elif "refc" in name or "mvbench" in name or name == "llava_video_178k_mc":
+        max_new_tokens = 32
+    elif name == "ego_schema":
+        max_new_tokens = 32
+    else:
+        max_new_tokens = 12
+    return max_new_tokens
+
+
 def get_evaluation(name, seq_len, max_examples, for_inference=True,
                    num_workers=2, device_batch_size=None,
                    persistent_workers=False, include_image=False) -> InfDatasetEvaluatorConfig:
@@ -162,30 +190,7 @@ def get_evaluation(name, seq_len, max_examples, for_inference=True,
         evaluator.n_to_log = 0
         evaluator.save_predictions = None
 
-        if name.startswith("named_entity"):
-            max_new_tokens = 256
-        elif name == "math_vista_demo":
-            max_new_tokens = 384
-        elif name in ["chart_qa_scifi", "chart_qa_ex", "chart_qa_exp", "chart_qa_prompting_explanation"] or name.endswith("_demo"):
-            max_new_tokens = 256
-        elif name.startswith("user_questions_for_elo"):
-            max_new_tokens = 768  # Can have counts of 20+ so make sure there is room
-        elif name in ["pointing_eval", "pointing"]:
-            max_new_tokens = 192  # 192 is enought for counts <=10 in the point tag format
-        elif "countbench_qa" in name or "pixmo_count" in name:
-            max_new_tokens = 192
-        elif name == "android_control_hl_cot":
-            max_new_tokens = 64
-        elif name.startswith("android_control"):
-            max_new_tokens = 16
-        elif name == "llava_video_178k_oe" or name == "llava_video_178k_cap" or name.startswith("temp_compass") or name == "mlvu_gen":
-            max_new_tokens = 192
-        elif "refc" in name or "mvbench" in name or name == "llava_video_178k_mc":
-            max_new_tokens = 32
-        elif name == "ego_schema":
-            max_new_tokens = 32
-        else:
-            max_new_tokens = 12
+        max_new_tokens = get_default_max_tokens(name)
 
         return InfDatasetEvaluatorConfig(
             max_examples=max_examples,
