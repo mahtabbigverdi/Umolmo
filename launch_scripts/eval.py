@@ -49,6 +49,7 @@ def main():
         max_new_tokens = args.max_new_tokens
     else:
         max_new_tokens = get_default_max_tokens(args.task)
+        log.info(f"Using default of {max_new_tokens} max tokens for task {args.task}")
 
     eval_config = DatasetEvaluatorConfig(
         data=DataLoaderConfig(
