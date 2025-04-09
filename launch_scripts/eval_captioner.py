@@ -5,11 +5,12 @@ from typing import cast
 from omegaconf import OmegaConf
 
 from olmo.eval.inf_evaluator import EvaluatorConfig
+from olmo.models.molmo.molmo import MolmoConfig
 from olmo.train.trainer_config import FSDPConfig, FSDPPrecision
 from olmo.models.model import FSDPWrapStrategy
 from olmo.data.data_loader import DataLoaderConfig
 from olmo.torch_util import get_world_size
-from olmo.util import clean_opt, prepare_torchrun_environment, select_checkpoint
+from olmo.util import clean_opt, prepare_torchrun_environment, select_checkpoint, resource_path
 from scripts.mm_eval import ModelEvaluator, EvalConfig, DatasetEvaluatorConfig
 
 log = logging.getLogger(__name__)
@@ -55,8 +56,12 @@ def main():
         max_examples=args.max_examples
     )
 
+    model_cfg_path = resource_path(select_checkpoint(checkpoint_dir), "config.yaml")
+    model_cfg = MolmoConfig.load(model_cfg_path, key="model", validate_paths=False)
+
     cfg = EvalConfig(
         pbar=False,
+        model=model_cfg,
         evaluations=[eval_config],
         load_path=checkpoint_dir,
         console_log_interval=10,

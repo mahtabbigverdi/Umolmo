@@ -127,6 +127,10 @@ class EvalConfig(BaseConfig):
     load_path: str = "./"
     """The directory to load the model from"""
 
+    model: Optional[BaseModelConfig] = None
+    """Model config to use, load the one in the `load_path`` if None"""
+
+    # FIXME can remove these since they can be overriden through `model_config`
     max_crops_override: Optional[int] = None
     """Override the max crops used in the model"""
 
@@ -266,8 +270,11 @@ class ModelEvaluator:
             model.to_empty(device=device)
             model.reset_parameters()
         else:
-            model_cfg_path = resource_path(cfg.load_path, "config.yaml")
-            model_cfg = MolmoConfig.load(model_cfg_path, key="model", validate_paths=False)
+            if self.config.model:
+                model_cfg = self.config.model
+            else:
+                model_cfg_path = resource_path(cfg.load_path, "config.yaml")
+                model_cfg = MolmoConfig.load(model_cfg_path, key="model", validate_paths=False)
             with torch.device("meta"):
                 model: Molmo = model_cfg.build_model()
 
