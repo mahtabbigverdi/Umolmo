@@ -264,6 +264,8 @@ class MultiModalVideoPreprocessorConfig(MolmoPreprocessorConfig):
                 padding_lens['siglip_text_token_ids'] = 64
                 padding_lens['high_res_indices'] = self.max_frames
 
+                padding_lens['frame_start_index'] = 1
+
                 if self.crop_mode in ['resize', 'frame_sampling']:
                     # number of image tokens + number of column tokens + start_token + end_token
                     padding_lens['low_res_token_place_holders'] = low_res_tokens + int(np.sqrt(low_res_tokens)) + 1 + 1
@@ -468,6 +470,8 @@ class VideoTextPreprocessor(InterleavedTextPreprocessor, ImagePreprocessor):
             prefix = self.tokenizer.encode(f"FPS {average_time_delta:0.2f}")
             video_tokens.append(prefix)
 
+        video_token_prefix_len = len(np.concatenate(video_tokens, 0))
+
         high_res_index_list = []
         for frame_idx, frame in enumerate(frames):
             is_high_res = self.periodic_high_res_frame is not None and frame_idx % self.periodic_high_res_frame == 0
@@ -527,6 +531,7 @@ class VideoTextPreprocessor(InterleavedTextPreprocessor, ImagePreprocessor):
 
         if self.query_based_resolution_selection:
             out["high_res_indices"] = np.array(high_res_index_list)
+            out["frame_start_index"] = np.array([video_token_prefix_len + 1])  # 1 added for the BoS token
 
             siglip_text_token_ids = []
             if isinstance(message_list[0], str):

@@ -312,7 +312,7 @@ class QueryBasedVideoOlmo(ModelBase):
         high_res_token_place_holders: Optional[torch.Tensor] = None,
 
         siglip_text_token_ids: Optional[torch.Tensor] = None,
-        frame_list: Optional[torch.Tensor] = None,
+        frame_start_index: Optional[torch.Tensor] = None,
 
         past_key_values: Optional[Sequence[Tuple[torch.Tensor, torch.Tensor]]] = None,
         use_cache: bool = False,
@@ -412,7 +412,6 @@ class QueryBasedVideoOlmo(ModelBase):
             image_reshaped = image_reshaped.reshape(batch_size, num_frames, 378, 378, 3)
             # pi = (image_reshaped[0,0].cpu().numpy() + 1)/2 * 255
             # Image.fromarray(pi.astype(np.uint8)).save("patches.png")
-            # Image.fromarray(frame_list[0, 0].cpu().numpy().astype(np.uint8)).save("model_orig.png")
 
             # reorder to B, C, H, W
             image_reshaped = image_reshaped.permute(0, 1, 4, 2, 3)
@@ -428,35 +427,6 @@ class QueryBasedVideoOlmo(ModelBase):
             bmm = torch.bmm(embedded_image, embedded_text.unsqueeze(2))
             bmm = bmm.squeeze(2)
 
-            # import pdb; pdb.set_trace()
-            #
-            # frame_list_processed = (frame_list / 255) * 2 - 1
-            # frame_list_processed = frame_list_processed[0, :1, :, :378, :378]
-            #
-            # embedded_frame_list = self.siglip_vision_forward(self.frame_selection_model.vision_model, frame_list_processed)
-            # embedded_frame_list = embedded_frame_list / (embedded_frame_list.norm(p=2, dim=-1, keepdim=True) + 1e-6)
-            #
-            # hf_source = "google/siglip2-so400m-patch14-384"
-            # cache_dir = os.path.join(VIDEO_DATA_HOME, "hf_init_encoders")
-            # local_frame_selection_model = AutoModel.from_pretrained(hf_source, cache_dir=cache_dir)
-            #
-            # local_embedded_image = self.siglip_vision_forward(local_frame_selection_model.vision_model, frame_list_processed.cpu())
-            # local_embedded_image = local_embedded_image / (local_embedded_image.norm(p=2, dim=-1, keepdim=True) + 1e-6)
-            #
-            # print(embedded_frame_list.cpu() @ local_embedded_image.cpu().t())
-            # # embedded_frame_list.cpu() @ local_embedded_image.cpu().t() ==> tensor([[0.3756]], grad_fn=<MmBackward0>). Confirms this is the gap
-
-            # cpu_frame_selection_model = self.frame_selection_model.cpu()
-            # copied_to_cpu_embedded_frame_list = self.siglip_vision_forward(cpu_frame_selection_model.vision_model, frame_list_processed.cpu())
-            # copied_to_cpu_embedded_frame_list = copied_to_cpu_embedded_frame_list / (copied_to_cpu_embedded_frame_list.norm(p=2, dim=-1, keepdim=True) + 1e-6)
-
-            # local_embedded_image.cpu() @ embedded_text.cpu().t() <- confirmed that using local image and cuda text with frame list works. so will work for patches too
-            # embedded_frame_list[0, :1].cpu() @ embedded_image[0, :1].cpu().t()  <- confirmed that the embedding is matching for patches and frame list
-
-            # local_embedded_text = local_frame_selection_model.text_model(siglip_text_token_ids.cpu(), position_ids=siglip_position_ids.cpu()).pooler_output
-            # local_embedded_text = local_embedded_text / (local_embedded_text.norm(p=2, dim=-1, keepdim=True) + 1e-6)
-            # embedded_text.cpu() @ local_embedded_text.cpu().t()
-
             # each batch has the same values
             low_res_image_col_token_place_holder = low_res_token_place_holders[0]
             high_res_image_col_token_place_holder = high_res_token_place_holders[0]
@@ -470,7 +440,6 @@ class QueryBasedVideoOlmo(ModelBase):
                                                         dtype=high_res_pooled_idx_no_offset.dtype)
 
             final_tensors = torch.zeros_like(input_ids, device=input_ids.device, dtype=input_ids.dtype)
-            final_tensors[:, 0] = input_ids[:, 0]  # bos_token_id at the start needs to be kept in place
 
             for instance_idx in range(batch_size):
                 num_candidate_frames = (high_res_indices[instance_idx] != -1).sum().to(bmm.device)
@@ -481,9 +450,11 @@ class QueryBasedVideoOlmo(ModelBase):
                 siglip_based_high_res_instance = set(generated_indices.cpu().numpy().tolist())
 
                 single_instance_high_res_instance = high_res_indices[instance_idx]
-                input_id_start = 1  # bos_token_id at the start needs to be kept in place
-                token_position_offset = 0
 
+                input_id_start = frame_start_index[instance_idx][0]  # bos_token_id and fps tokens at the start need to be kept in place
+                final_tensors[instance_idx, :input_id_start] = input_ids[:, :input_id_start]
+
+                token_position_offset = 0
                 low_res_pooling_start = 0
                 high_res_pooling_start = 0
 
@@ -683,7 +654,8 @@ class QueryBasedVideoOlmo(ModelBase):
             high_res_token_place_holders=batch.get("high_res_token_place_holders"),
             low_res_pooled_idx_no_offset=batch.get("low_res_pooled_idx_no_offset"),
             high_res_pooled_idx_no_offset=batch.get("high_res_pooled_idx_no_offset"),
-            siglip_text_token_ids=batch.get("siglip_text_token_ids")
+            siglip_text_token_ids=batch.get("siglip_text_token_ids"),
+            frame_start_index=batch.get("frame_start_index"),
         )
 
         llm_cfg = self.config.llm
