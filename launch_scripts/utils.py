@@ -133,7 +133,9 @@ def get_evaluator(name) -> EvaluatorConfig:
 
 
 def get_default_max_tokens(name):
-    if name.startswith("named_entity"):
+    if name == "dense_caption_eval":
+        return 448
+    elif name.startswith("named_entity"):
         max_new_tokens = 256
     elif name == "math_vista_demo":
         max_new_tokens = 384
