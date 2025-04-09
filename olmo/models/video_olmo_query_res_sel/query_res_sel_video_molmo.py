@@ -1,30 +1,39 @@
 import dataclasses
-import math
 from dataclasses import field
+
 from typing import ClassVar, Optional, Sequence, Tuple, Iterator, List, Dict
 
+import math
 import torch
 import torch.nn.functional as F
+
 from torch.distributed.fsdp import fully_shard
 
-from olmo import tokenizer
+import os
+from transformers import AutoModel
+from olmo.data.dataset import VIDEO_DATA_HOME
+
 from olmo.config import D
-from olmo.data.image_as_video import ImageAsVideoConfig
-from olmo.models.model import FSDPWrapStrategy, OLMoOutput, OLMoGenerateOutput, ModelBase
-from olmo.models.molmo.data_formatter import DataFormatter
 from olmo.models.molmo.molmo import MolmoConfig
-from olmo.models.video_olmo.video_preprocessor import MultiModalVideoPreprocessorConfig, \
-    VideoPreprocessor
-from olmo.nn.beam_search import BeamSearch, Constraint, FinalSequenceScorer, Sampler
-from olmo.nn.image_vit import ResidualAttentionBlock, VisionTransformer
-from olmo.nn.legacy_config import convert_legacy_config
+from olmo.models.molmo.data_formatter import DataFormatter
+
+from olmo.models.video_olmo.video_preprocessor import VideoTextPreprocessor, \
+    MultiModalVideoPreprocessorConfig, VideoPreprocessor
+
+from olmo import tokenizer
 from olmo.nn.llm import LlmConfig, Llm, OLMoBlock
+from olmo.nn.legacy_config import convert_legacy_config
+from olmo.nn.image_vit import ResidualAttentionBlock, VisionTransformer
 from olmo.nn.vision_backbone import MolmoVisionBackbone, MolmoVisionBackboneConfig
+
 from olmo.torch_util import BufferCache, get_default_device
+from olmo.models.model import FSDPWrapStrategy, OLMoOutput, OLMoGenerateOutput, ModelBase
+
+from olmo.nn.beam_search import BeamSearch, Constraint, FinalSequenceScorer, Sampler
 
 
 @dataclasses.dataclass
-class VideoOlmoConfig(MolmoConfig):
+class QueryBasedVideoOlmoConfig(MolmoConfig):
     """VideoOlmo model configuration"""
     _model_name: ClassVar[str] = "video_olmo"
 
@@ -37,8 +46,6 @@ class VideoOlmoConfig(MolmoConfig):
 
     mm_preprocessor: MultiModalVideoPreprocessorConfig = field(default_factory=MultiModalVideoPreprocessorConfig)
     """How to crop images and encoding jointly with text"""
-
-    image_as_video: Optional[ImageAsVideoConfig] = None
 
     shared_low_high_embedding: bool = True
 
@@ -69,7 +76,6 @@ class VideoOlmoConfig(MolmoConfig):
         return VideoPreprocessor(
             self.data_formatter,
             self.mm_preprocessor.build(self.build_tokenizer(), self.vision_backbone, max_seq_len),
-            image_to_video=None if self.image_as_video is None else self.image_as_video.build(self.mm_preprocessor.max_frames, self.vision_backbone.vit),
             for_inference=for_inference,
             is_training=is_training,
             frame_sample_mode=self.mm_preprocessor.frame_sample_mode,
@@ -79,17 +85,15 @@ class VideoOlmoConfig(MolmoConfig):
         )
 
     def build_model(self, device=None):
-        return VideoOlmo(self, device)
+        return QueryBasedVideoOlmo(self, device)
 
     @property
     def max_sequence_length(self):
         return self.llm.max_sequence_length
 
 
-class VideoOlmo(ModelBase):
-    """VideoOlmo model"""
-
-    def __init__(self, config: VideoOlmoConfig, device=None):
+class QueryBasedVideoOlmo(ModelBase):
+    def __init__(self, config: QueryBasedVideoOlmoConfig, device=None):
         super().__init__()
         self.config = config
         self.__cache = BufferCache()
@@ -110,6 +114,18 @@ class VideoOlmo(ModelBase):
         self._image_start_token_id = self.special_ids[tokenizer.IM_START_TOKEN]
         self._image_low_res_id = self.special_ids[tokenizer.IMAGE_LOW_RES_TOKEN]
         self._image_high_res_id = self.special_ids[tokenizer.IMAGE_PATCH_TOKEN]
+
+        # load the HF model. Initially, don't even shard
+        # Hard Coded for now. Needs to be passed in via config. Has to be aligned with the image encoder to re-use pre-processor
+        hf_source = "google/siglip2-so400m-patch14-384"
+        cache_dir = os.path.join(VIDEO_DATA_HOME, "hf_init_encoders")
+        self.frame_selection_model = AutoModel.from_pretrained(
+            hf_source,
+            torch_dtype=torch.float32,
+            cache_dir=cache_dir,
+        )
+        for param in self.frame_selection_model.parameters():
+            param.requires_grad = False
 
     def reset_parameters(self):
         """Re-initialize the weights from scratch"""
@@ -257,6 +273,22 @@ class VideoOlmo(ModelBase):
             params = [(np[0], np[1][:idx]) if "experts.mlp" in np[0] else np for np in params]  # type: ignore
         return sum(p.numel() for _, p in params)
 
+    @staticmethod
+    def siglip_vision_forward(model, pixel_values):
+        hidden_states = model.embeddings(pixel_values)
+
+        encoder_outputs = model.encoder(
+            inputs_embeds=hidden_states,
+            output_attentions=model.config.output_attentions,
+            output_hidden_states=model.config.output_hidden_states,
+            return_dict=model.config.use_return_dict
+        )
+
+        last_hidden_state = encoder_outputs[0]
+        last_hidden_state = model.post_layernorm(last_hidden_state)
+
+        return model.head(last_hidden_state)
+
     def forward(
         self,
         input_ids: torch.LongTensor,
@@ -272,6 +304,15 @@ class VideoOlmo(ModelBase):
         image_masks: Optional[torch.Tensor] = None,
         low_res_pooled_idx: Optional[torch.Tensor] = None,
         high_res_pooled_idx: Optional[torch.Tensor] = None,
+
+        high_res_indices: Optional[torch.Tensor] = None,
+        low_res_pooled_idx_no_offset: Optional[torch.Tensor] = None,
+        high_res_pooled_idx_no_offset: Optional[torch.Tensor] = None,
+        low_res_token_place_holders: Optional[torch.Tensor] = None,
+        high_res_token_place_holders: Optional[torch.Tensor] = None,
+
+        siglip_text_token_ids: Optional[torch.Tensor] = None,
+        frame_start_index: Optional[torch.Tensor] = None,
 
         past_key_values: Optional[Sequence[Tuple[torch.Tensor, torch.Tensor]]] = None,
         use_cache: bool = False,
@@ -349,6 +390,107 @@ class VideoOlmo(ModelBase):
         # shape: (batch_size, seq_len, d_model)
         if input_ids is not None:
             input_ids = input_ids * (input_ids != -1).to(input_ids.dtype)
+
+        if images is not None:
+            siglip_position_ids = torch.arange(siglip_text_token_ids.shape[1])
+            siglip_position_ids = siglip_position_ids.repeat([siglip_text_token_ids.shape[0], 1]).to(siglip_text_token_ids.device)
+            embedded_text = self.frame_selection_model.text_model(
+                input_ids=siglip_text_token_ids,
+                position_ids=siglip_position_ids
+            ).pooler_output
+
+            if self.frame_selection_model.vision_model.embeddings.position_ids.sum() == 0:
+                self.frame_selection_model.vision_model.embeddings.position_ids = (torch.arange(729).unsqueeze(0).
+                                                                                   to(self.frame_selection_model.vision_model.embeddings.position_ids.device))
+
+            num_frames = images.shape[1]
+            # break patches
+            image_reshaped = images.reshape(batch_size, num_frames, 27, 27, 14, 14, 3)
+            # rearrange to original order
+            image_reshaped = image_reshaped.permute(0, 1, 2, 4, 3, 5, 6)
+            # reshape to image arrangement
+            image_reshaped = image_reshaped.reshape(batch_size, num_frames, 378, 378, 3)
+            # pi = (image_reshaped[0,0].cpu().numpy() + 1)/2 * 255
+            # Image.fromarray(pi.astype(np.uint8)).save("patches.png")
+
+            # reorder to B, C, H, W
+            image_reshaped = image_reshaped.permute(0, 1, 4, 2, 3)
+            # merge batch_size and num_frames
+            image_reshaped = image_reshaped.reshape(-1, 3, 378, 378)
+
+            embedded_image = self.siglip_vision_forward(self.frame_selection_model.vision_model, image_reshaped)
+            embedded_image = embedded_image.reshape(-1, num_frames, embedded_image.shape[-1])
+
+            embedded_image = embedded_image / (embedded_image.norm(p=2, dim=-1, keepdim=True) + 1e-6)
+            embedded_text = embedded_text / (embedded_text.norm(p=2, dim=-1, keepdim=True) + 1e-6)
+
+            bmm = torch.bmm(embedded_image, embedded_text.unsqueeze(2))
+            bmm = bmm.squeeze(2)
+
+            # each batch has the same values
+            low_res_image_col_token_place_holder = low_res_token_place_holders[0]
+            high_res_image_col_token_place_holder = high_res_token_place_holders[0]
+
+            num_image_tokens_in_low_res = torch.sum(low_res_image_col_token_place_holder == self.special_ids[tokenizer.IMAGE_LOW_RES_TOKEN])
+            num_image_tokens_in_high_res = torch.sum(high_res_image_col_token_place_holder == self.special_ids[tokenizer.IMAGE_PATCH_TOKEN])
+
+            final_low_res_pooled_idx = -1 * torch.ones(low_res_pooled_idx_no_offset.shape, device=low_res_pooled_idx_no_offset.device,
+                                                       dtype=low_res_pooled_idx_no_offset.dtype)
+            final_high_res_pooled_idx = -1 * torch.ones(high_res_pooled_idx_no_offset.shape, device=high_res_pooled_idx_no_offset.device,
+                                                        dtype=high_res_pooled_idx_no_offset.dtype)
+
+            final_tensors = torch.zeros_like(input_ids, device=input_ids.device, dtype=input_ids.dtype)
+
+            for instance_idx in range(batch_size):
+                num_candidate_frames = (high_res_indices[instance_idx] != -1).sum().to(bmm.device)
+                num_frames_to_select = (high_res_indices[instance_idx] == 1).sum().to(bmm.device)
+                generated_indices = torch.topk(bmm[instance_idx, :num_candidate_frames], k=num_frames_to_select, dim=0).indices.detach()
+
+                # Using set() may slow everything down. Will monitor performance.
+                siglip_based_high_res_instance = set(generated_indices.cpu().numpy().tolist())
+
+                single_instance_high_res_instance = high_res_indices[instance_idx]
+
+                input_id_start = frame_start_index[instance_idx][0]  # bos_token_id and fps tokens at the start need to be kept in place
+                final_tensors[instance_idx, :input_id_start] = input_ids[:, :input_id_start]
+
+                token_position_offset = 0
+                low_res_pooling_start = 0
+                high_res_pooling_start = 0
+
+                for flag_idx in range(num_frames):
+                    # TODO: This is a hacky way to know when the relevant frames have ended. Use a better way
+                    high_res_flag = single_instance_high_res_instance[flag_idx]
+                    if high_res_flag == -1:
+                        continue
+
+                    # high_res = high_res_flag == 1
+                    high_res = flag_idx in siglip_based_high_res_instance
+
+                    if high_res:
+                        final_tensors[instance_idx][input_id_start:input_id_start + len(high_res_image_col_token_place_holder)] = high_res_image_col_token_place_holder
+                        input_id_start += len(high_res_image_col_token_place_holder)
+
+                        ids_w_o_offset = high_res_pooled_idx_no_offset[instance_idx, high_res_pooling_start: high_res_pooling_start + num_image_tokens_in_high_res]
+                        final_high_res_pooled_idx[instance_idx, high_res_pooling_start: high_res_pooling_start + num_image_tokens_in_high_res] = ids_w_o_offset + token_position_offset
+                        token_position_offset += ids_w_o_offset.shape[0] * ids_w_o_offset.shape[1]
+
+                        high_res_pooling_start += num_image_tokens_in_high_res
+                    else:
+                        final_tensors[instance_idx][input_id_start:input_id_start + len(low_res_image_col_token_place_holder)] = low_res_image_col_token_place_holder
+                        input_id_start += len(low_res_image_col_token_place_holder)
+
+                        ids_w_o_offset = low_res_pooled_idx_no_offset[instance_idx, low_res_pooling_start: low_res_pooling_start + num_image_tokens_in_low_res]
+                        final_low_res_pooled_idx[instance_idx, low_res_pooling_start: low_res_pooling_start + num_image_tokens_in_low_res] = ids_w_o_offset + token_position_offset
+                        token_position_offset += ids_w_o_offset.shape[0] * ids_w_o_offset.shape[1]
+
+                        low_res_pooling_start += num_image_tokens_in_low_res
+
+                final_tensors[instance_idx, input_id_start:] = input_ids[instance_idx, input_id_start:]
+
+            input_ids = final_tensors
+            low_res_pooled_idx = final_low_res_pooled_idx
+            high_res_pooled_idx = final_high_res_pooled_idx
 
         if input_embeddings is not None:
             x = input_embeddings
@@ -506,7 +648,14 @@ class VideoOlmo(ModelBase):
             images=batch.get("images"),
             image_masks=batch.get("image_masks"),
             low_res_pooled_idx=batch.get("low_res_pooled_idx"),
-            high_res_pooled_idx=batch.get("high_res_pooled_idx")
+            high_res_pooled_idx=batch.get("high_res_pooled_idx"),
+            high_res_indices=batch.get("high_res_indices"),
+            low_res_token_place_holders=batch.get("low_res_token_place_holders"),
+            high_res_token_place_holders=batch.get("high_res_token_place_holders"),
+            low_res_pooled_idx_no_offset=batch.get("low_res_pooled_idx_no_offset"),
+            high_res_pooled_idx_no_offset=batch.get("high_res_pooled_idx_no_offset"),
+            siglip_text_token_ids=batch.get("siglip_text_token_ids"),
+            frame_start_index=batch.get("frame_start_index"),
         )
 
         llm_cfg = self.config.llm

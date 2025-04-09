@@ -10,6 +10,7 @@ from launch_scripts.utils import get_evaluation, VIDEO_DEBUG_MODEL
 from launch_scripts.train_multitask_model import get_training_mixture
 from olmo.models.molmo.molmo import MolmoConfig
 from olmo.models.video_olmo.video_preprocessor import MultiModalVideoPreprocessorConfig
+from olmo.models.video_olmo_query_res_sel.query_res_sel_video_molmo import QueryBasedVideoOlmoConfig
 from olmo.nn.image_vit import VitConfig
 
 from olmo.train.optim import OptimizerType, OptimizerConfig, SchedulerConfig, SchedulerType
@@ -21,7 +22,6 @@ from olmo.train.trainer_config import (
 from olmo.models.model import FSDPWrapStrategy
 from olmo.models.video_olmo.video_olmo import VideoOlmoConfig
 from olmo.data.data_loader import DataLoaderConfig, RootSizeMixture
-from olmo.torch_util import get_world_size
 from olmo.util import clean_opt, prepare_torchrun_environment, select_checkpoint
 from scripts.train import run_trainer
 
@@ -47,6 +47,8 @@ if __name__ == "__main__":
     parser.add_argument("--connector_learning_rate", default=5e-6, type=float)
     parser.add_argument("--duration", default=10000, type=int)
     parser.add_argument("--log_interval", default=20, type=int)
+    parser.add_argument("--eval_interval", default=1000, type=int)
+    parser.add_argument("--inf_eval_interval", default=2000, type=int)
     parser.add_argument("--prefetch_factor", default=8, type=int)
     parser.add_argument("--freeze_vit", action="store_true")
     parser.add_argument("--num_workers", default=2, type=int)
@@ -55,6 +57,8 @@ if __name__ == "__main__":
     parser.add_argument("--high_res_pooling_h", default=2, type=int)
     parser.add_argument("--high_res_pooling_w", default=2, type=int)
     parser.add_argument("--periodic_high_res_frame", default=None, type=int)
+    parser.add_argument("--run_name", default="multitask_video", type=str)
+    parser.add_argument("--use_query_res_sel", action="store_true")
     args, other_args = parser.parse_known_args()
     
     if args.mixture == "intern_vid":
@@ -84,6 +88,18 @@ if __name__ == "__main__":
                  ["lv_long_cap", ["llava_video_178k_cap"], 0.4]]
         eval_tasks = ["mvbench"]
 
+    elif args.mixture in ["lv_mc_oe_human_cap_id_lv"]:
+        tasks = [["lv_mc", ["llava_video_178k_mc"], 0.2],
+                 ["lv_oe", ["llava_video_178k_oe"], 0.4],
+                 ["lv_long_cap", ["llava_video_human_cap_id_lv"], 0.4]]
+        eval_tasks = ["mvbench"]
+
+    elif args.mixture in ["lv_mc_oe_human_cap"]:
+        tasks = [["lv_mc", ["llava_video_178k_mc"], 0.2],
+                 ["lv_oe", ["llava_video_178k_oe"], 0.4],
+                 ["lv_long_cap", ["llava_video_human_cap"], 0.4]]
+        eval_tasks = ["mvbench"]
+
     elif args.mixture in ["lv_split"]:
         tasks = [["lv_mc", ["llava_video_178k_mc_split"], 0.2],
                  ["lv_oe", ["llava_video_178k_oe"], 0.4],
@@ -103,6 +119,13 @@ if __name__ == "__main__":
     if debug:
         checkpoint = None
         model_cfg = VIDEO_DEBUG_MODEL
+        model_cfg.mm_preprocessor.max_frames = args.max_crops
+        model_cfg.mm_preprocessor.pooling_h = args.image_pooling_h
+        model_cfg.mm_preprocessor.pooling_w = args.image_pooling_w
+        model_cfg.mm_preprocessor.high_res_pooling_h = args.high_res_pooling_h
+        model_cfg.mm_preprocessor.high_res_pooling_w = args.high_res_pooling_w
+        model_cfg.mm_preprocessor.periodic_high_res_frame = args.periodic_high_res_frame
+
         global_batch_size = args.global_batch_size
         model_init = None
         inf_eval_interval = 20
@@ -116,33 +139,45 @@ if __name__ == "__main__":
         global_batch_size = args.global_batch_size
         max_eval_examples = args.max_eval_examples
         log_interval = args.log_interval
-        eval_interval = 1000
-        save_interval = 1000
+        save_interval = args.eval_interval
+        eval_interval = args.eval_interval
+        inf_eval_interval = args.inf_eval_interval
         duration = args.duration
         checkpoint = select_checkpoint(args.checkpoint)
         if exists(join(args.checkpoint, "model.yaml")):
             model_cfg = MolmoConfig.load(join(checkpoint, "model.yaml"))
         else:
             model_cfg = MolmoConfig.load(join(checkpoint, "config.yaml"), key="model")
-        model_cfg = VideoOlmoConfig(
-            llm=model_cfg.llm,
-            vision_backbone=model_cfg.vision_backbone,
-            data_formatter=model_cfg.data_formatter,
-            mm_preprocessor=MultiModalVideoPreprocessorConfig(
-                high_res_pooling_h=args.high_res_pooling_h,
-                high_res_pooling_w=args.high_res_pooling_w,
-                periodic_high_res_frame=args.periodic_high_res_frame,
-                max_frames=args.max_crops,
-                **dict(
-                    model_cfg.mm_preprocessor.asdict(),
-                    crop_mode="resize",
-                    max_crops=args.max_crops,
-                    pooling_h=args.image_pooling_h,
-                    pooling_w=args.image_pooling_w,
-                )
-            ),
-            bi_directional_attn=None
+        video_pre_processor_cfg = MultiModalVideoPreprocessorConfig(
+                        high_res_pooling_h=args.high_res_pooling_h,
+                        high_res_pooling_w=args.high_res_pooling_w,
+                        periodic_high_res_frame=args.periodic_high_res_frame,
+                        max_frames=args.max_crops,
+                        query_based_resolution_selection=args.use_query_res_sel,
+                        **dict(
+                            model_cfg.mm_preprocessor.asdict(),
+                            crop_mode="resize",
+                            max_crops=args.max_crops,
+                            pooling_h=args.image_pooling_h,
+                            pooling_w=args.image_pooling_w,
+                        )
         )
+        if args.use_query_res_sel:
+            model_cfg = QueryBasedVideoOlmoConfig(
+                llm=model_cfg.llm,
+                vision_backbone=model_cfg.vision_backbone,
+                data_formatter=model_cfg.data_formatter,
+                mm_preprocessor=video_pre_processor_cfg,
+                bi_directional_attn=None
+            )
+        else:
+            model_cfg = VideoOlmoConfig(
+                llm=model_cfg.llm,
+                vision_backbone=model_cfg.vision_backbone,
+                data_formatter=model_cfg.data_formatter,
+                mm_preprocessor=video_pre_processor_cfg,
+                bi_directional_attn=None
+            )
         num_workers = args.num_workers
 
     if args.seq_len == "auto":
@@ -202,7 +237,7 @@ if __name__ == "__main__":
     wandb_project = os.environ.get("WANDB_PROJECT", "video_olmo")
 
     cfg = TrainConfig(
-        run_name="multitask_video",
+        run_name=args.run_name,
         save_folder="debug_run" if debug else omegaconf.MISSING,
         seed=6198,
         dry_run=False,
@@ -278,8 +313,8 @@ if __name__ == "__main__":
         softmax_auxiliary_loss=True,
         softmax_auxiliary_loss_scale=1e-4,
         evaluators=evaluations,
-        eval_interval=1000,
-        inf_eval_interval=2000,
+        eval_interval=eval_interval,
+        inf_eval_interval=inf_eval_interval,
         inf_evaluators=inf_evaluators,
         save_final_unsharded_checkpoint=False,
     )

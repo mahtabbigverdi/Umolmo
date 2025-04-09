@@ -42,7 +42,21 @@ DEBUG_MODEL = MolmoConfig(
 
 VIDEO_DEBUG_MODEL = VideoOlmoConfig(
     llm=DEBUG_MODEL.llm,
-    vision_backbone=MolmoVisionBackboneConfig(vit=VitConfig(image_num_layers=1)),
+    vision_backbone=MolmoVisionBackboneConfig(
+        vit=VitConfig(
+            image_num_layers=1,
+            image_model_type="siglip",
+            image_default_input_size=(378, 378),
+            image_emb_dim=1152,
+            image_num_heads=16,
+            image_num_key_value_heads=16,
+            image_head_dim=72,
+            image_mlp_dim=4304,
+            image_mlp_activations="gelu_pytorch_tanh",
+            image_num_pos=729,  # no CLS token
+            resize_mode="siglip",
+        )
+    ),
     data_formatter=DEBUG_MODEL.data_formatter,
     mm_preprocessor=MultiModalVideoPreprocessorConfig(
         crop_mode="resize",
@@ -308,6 +322,7 @@ DINOV2_LARGE_336_VISION_BACKBONE = VitConfig(
     residual_dropout=0.0,
     initializer_range=0.02,
     resize_mode="dino",
+    normalize="dino",
 )
 
 
@@ -571,6 +586,35 @@ QWEN25_7B = LlmConfig(
     ),
 )
 
+
+QWEN25_14B = LlmConfig(
+    init_path="${oc.env:MOLMO_DATA_DIR}/pretrained_llms/qwen2.5-14b.pt",
+    vocab_size=152064,
+    max_sequence_length=4096,
+    residual_dropout=0,
+    embedding_dropout=0,
+    response_residual_dropout=0,
+    attention_dropout=0,
+    rope=True,
+    qkv_bias=True,
+    weight_tying=False,
+    include_bias=False,
+    embedding_size=152064,
+    d_model=5120,
+    mlp_hidden_size=13824*2,
+    n_layers=48,
+    additional_vocab_size=128,
+    n_heads=40,
+    n_kv_heads=8,
+    rope_theta=1000000.0,
+    layer_norm_eps=1e-5,
+    layer_norm_type=LayerNormType.rms,
+    tokenizer=TokenizerConfig(
+        identifier="Qwen/Qwen2.5-14B",
+    ),
+)
+
+
 QWEN2_72B = LlmConfig(
     init_path="${oc.env:MOLMO_DATA_DIR}/pretrained_llms/qwen2-70b.pt",
     additional_vocab_size=128,
@@ -669,6 +713,7 @@ LLMS: Dict[str, LlmConfig] = {
     "olmo2_0325_32b": OLMO2_0325_32B,
     "qwen2_7b": QWEN2_7B,
     "qwen2_72b": QWEN2_72B,
+    "qwen2.5_14b": QWEN25_14B,
     "qwen2.5_7b": QWEN25_7B,
     "qwen2.5_3b": QWEN25_3B,
     "qwen2.5_1.5b": QWEN25_15B,

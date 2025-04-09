@@ -169,14 +169,18 @@ class MolmoPreprocessor(InterleavedTextPreprocessor, ImagePreprocessor):
 
         resize_idx = np.zeros([crop_patch_h, crop_patch_w])
         idx_arr = arange_for_pooling(resize_idx, pool_h, pool_w)
-        resize_tokens = idx_arr.shape[0] * idx_arr.shape[1]
+        resize_h = idx_arr.shape[0]
+        resize_w = idx_arr.shape[1] + int(self.use_col_tokens)
+        resize_tokens = resize_h * resize_w + 2 # start and end tokens
 
         if self.crop_mode in ["resize"]:
             return resize_tokens
 
         h, w = self.compute_overlapping_crops_size(image_h, image_w)
         idx_arr = arange_for_pooling(torch.zeros([h, w]), pool_h, pool_w)
-        overlap_tokens = idx_arr.shape[0] * idx_arr.shape[1]
+        overlap_h = idx_arr.shape[0]
+        overlap_w = idx_arr.shape[1] + int(self.use_col_tokens)
+        overlap_tokens = overlap_h * overlap_w + 2 # start and end tokens
         if self.crop_mode in ["overlap-and-resize-c2"]:
             return overlap_tokens + resize_tokens
         else:

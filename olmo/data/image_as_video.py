@@ -302,7 +302,7 @@ class ImagePan:
             if source_ids is not None:
                 source_ids = np.repeat(source_ids, repeats+1, axis=0)
         assert len(crops) <= self.max_frames
-        return crops, np.arange(len(crops)), dict(source_ids=source_ids, image_size=[target_h, target_w])
+        return crops, np.arange(len(crops)), 1, dict(source_ids=source_ids, image_size=[target_h, target_w])
 
 
 if __name__ == '__main__':

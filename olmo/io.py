@@ -855,9 +855,9 @@ def _s3_get_bytes_range(
     from botocore.exceptions import ClientError
 
     if num_bytes is not None:
-        range_str = f"bytes={bytes_start}-{bytes_start + num_bytes - 1}",
+        range_str = f"bytes={bytes_start}-{bytes_start + num_bytes - 1}"
     elif bytes_start != 0:
-        range_str = f"bytes={bytes_start}-",
+        range_str = f"bytes={bytes_start}-"
     else:
         range_str = "bytes=0-"
 

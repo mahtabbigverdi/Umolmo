@@ -1,4 +1,3 @@
-import dataclasses
 from dataclasses import dataclass
 from os.path import basename, dirname
 from typing import List, Optional, Union, Tuple, Any
@@ -15,7 +14,6 @@ from olmo.data.interleaved_text_preprocessor import InterleavedTextPreprocessor
 from olmo.io import resource_path
 from olmo.models.he_molmo.he_preprocessor import HeMultiModalPreprocessor
 from olmo.models.molmo.data_formatter import DataFormatter
-from olmo.tokenizer import get_special_token_ids
 
 decord.logging.set_level(2)
 from decord import VideoReader, cpu
@@ -27,6 +25,7 @@ from olmo.models.molmo.model_preprocessor import MolmoPreprocessorConfig, \
 
 from olmo.nn.vision_backbone import MolmoVisionBackboneConfig
 
+from transformers import AutoProcessor
 
 def get_sampling_fps(
     video_fps: float,
@@ -67,13 +66,31 @@ def get_sampling_fps(
     return selected_sampling_fps
 
 
+def get_frame_times_and_chosen_fps(selected_sampling_fps, total_frames, max_frames, video_fps):
+    if selected_sampling_fps is None:
+        frame_indices = np.linspace(0, total_frames, max_frames, endpoint=False)
+    else:
+        step_size = max(int(video_fps / selected_sampling_fps), 1)
+        frame_indices = np.arange(0, total_frames, step_size)
+    if len(frame_indices) > max_frames:
+        frame_indices = frame_indices[:max_frames]
+
+    frame_times = [i / int(video_fps) for i in frame_indices]
+    if selected_sampling_fps is None:
+        tmp = np.array(frame_times)
+        deltas = tmp[1:] - tmp[:-1]
+        selected_sampling_fps = np.mean(deltas)
+
+    return selected_sampling_fps, frame_times, frame_indices
+
+
 def load_decord_video(
     video_path: str,
     max_frames: int = 8,
     use_timeout: bool = False,
     frame_sample_mode: str = "fps",
     candidate_sampling_fps: Tuple[float] = (0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0),
-) -> np.ndarray:
+) -> Tuple[np.ndarray, List[float], float]:
     """
     Load a video and returns frames as RGB numpy array.
     """
@@ -85,15 +102,7 @@ def load_decord_video(
     total_frames = len(vr)  # Total frame count
     selected_sampling_fps = get_sampling_fps(video_fps, max_frames, total_frames, frame_sample_mode, candidate_sampling_fps)
 
-    if selected_sampling_fps is None:
-        frame_indices = np.linspace(0, total_frames, max_frames, endpoint=False)
-    else:
-        step_size = max(int(video_fps / selected_sampling_fps), 1)
-        frame_indices = np.arange(0, total_frames, step_size)
-    if len(frame_indices) > max_frames:
-        frame_indices = frame_indices[:max_frames]
-
-    frame_times = [i / int(video_fps) for i in frame_indices]
+    sampling_fps, frame_times, frame_indices = get_frame_times_and_chosen_fps(selected_sampling_fps, total_frames, max_frames, video_fps)
 
     if use_timeout:
         # Fetch frames in batch (faster than looping)
@@ -112,7 +121,7 @@ def load_decord_video(
                 return None, None  # Return None to indicate failure
 
     else:
-        return vr.get_batch(frame_indices).asnumpy(), frame_times
+        return vr.get_batch(frame_indices).asnumpy(), frame_times, sampling_fps
 
 
 def load_pyav_video(
@@ -120,7 +129,7 @@ def load_pyav_video(
     max_frames: int = 8,
     frame_sample_mode: str = "fps",
     candidate_sampling_fps: Tuple[float] = (0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0),
-) -> np.ndarray:
+) -> Tuple[np.ndarray, List[float], float]:
     """
     Load a video and returns frames as RGB numpy array.
     """
@@ -132,15 +141,7 @@ def load_pyav_video(
 
     selected_sampling_fps = get_sampling_fps(video_fps, max_frames, total_frames, frame_sample_mode, candidate_sampling_fps)
 
-    if selected_sampling_fps is None:
-        frame_indices = np.linspace(0, total_frames, max_frames, endpoint=False)
-    else:
-        step_size = max(int(video_fps / selected_sampling_fps), 1)
-        frame_indices = np.arange(0, total_frames, step_size)
-
-    if len(frame_indices) > max_frames:
-        frame_indices = frame_indices[:max_frames]
-    frame_times = [i / int(video_fps) for i in frame_indices]
+    sampling_fps, frame_times, frame_indices = get_frame_times_and_chosen_fps(selected_sampling_fps, total_frames, max_frames, video_fps)
 
     frame_idx, frames = 0, []
     for frame in iio.imiter(video_path, plugin="pyav"):
@@ -149,7 +150,7 @@ def load_pyav_video(
         frame_idx += 1
         if len(frames) == max_frames:
             break
-    return np.stack(frames), frame_times
+    return np.stack(frames), frame_times, sampling_fps
 
 
 def load_video_decord_or_pyav(
@@ -157,7 +158,7 @@ def load_video_decord_or_pyav(
     max_frames: int = 24,
     frame_sample_mode: str = "fps",
     candidate_sampling_fps: Tuple[float] = (0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0),
-) -> Tuple[np.ndarray, List[float]]:
+) -> Tuple[np.ndarray, List[float], float]:
     """
     Load a video and returns frames as RGB numpy array.
     """
@@ -195,8 +196,8 @@ def get_image_collage(frames: np.ndarray, frame_size: int = 128) -> np.ndarray:
 
         # Center the frame in the square
         square_frame[
-        (largest_dim - frame.shape[0]) // 2:(largest_dim - frame.shape[0]) // 2 + frame.shape[0],
-        (largest_dim - frame.shape[1]) // 2:(largest_dim - frame.shape[1]) // 2 + frame.shape[1]
+            (largest_dim - frame.shape[0]) // 2:(largest_dim - frame.shape[0]) // 2 + frame.shape[0],
+            (largest_dim - frame.shape[1]) // 2:(largest_dim - frame.shape[1]) // 2 + frame.shape[1]
         ] = frame
 
         resized = Image.fromarray(square_frame).resize((frame_size, frame_size), Image.Resampling.BILINEAR)
@@ -235,6 +236,9 @@ class MultiModalVideoPreprocessorConfig(MolmoPreprocessorConfig):
     candidate_sampling_fps: Tuple[float] = (0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0)
     """Candidate sampling fps to sample the frames from the video"""
 
+    query_based_resolution_selection: bool = False
+    """Whether to use query based resolution selection"""
+
     def get_image_padding_lens(self, vision_backbone_config: MolmoVisionBackboneConfig):
         """Max numbers of image tokens can be built for one image"""
         padding_lens = dict(
@@ -251,10 +255,28 @@ class MultiModalVideoPreprocessorConfig(MolmoPreprocessorConfig):
             high_res_tokens = preprocessor.compute_num_tokens(h, w, self.high_res_pooling_h, self.high_res_pooling_w)
             n_high_res = 1 + (self.max_frames - 1) // self.periodic_high_res_frame
             n_low_res = self.max_frames - n_high_res
-            padding_lens["low_res_pooled_idx"] = low_res_tokens*n_low_res
-            padding_lens["high_res_pooled_idx"] = high_res_tokens*n_high_res
+            padding_lens["low_res_pooled_idx"] = low_res_tokens * n_low_res
+            padding_lens["high_res_pooled_idx"] = high_res_tokens * n_high_res
+
+            if self.query_based_resolution_selection:
+                padding_lens["low_res_pooled_idx_no_offset"] = low_res_tokens * n_low_res
+                padding_lens["high_res_pooled_idx_no_offset"] = high_res_tokens * n_high_res
+
+                # Hard coded. Improve in the future
+                padding_lens['siglip_text_token_ids'] = 64
+                padding_lens['high_res_indices'] = self.max_frames
+
+                padding_lens['frame_start_index'] = 1
+
+                if self.crop_mode in ['resize', 'frame_sampling']:
+                    # number of image tokens + number of column tokens + start_token + end_token
+                    padding_lens['low_res_token_place_holders'] = low_res_tokens + int(np.sqrt(low_res_tokens)) + 1 + 1
+                    padding_lens['high_res_token_place_holders'] = high_res_tokens + int(np.sqrt(high_res_tokens)) + 1 + 1
+                else:
+                    raise NotImplementedError("padding lens not implemented for crop mode: ", self.crop_mode)
         else:
-            padding_lens["low_res_pooled_idx"] = low_res_tokens*self.max_frames
+            padding_lens["low_res_pooled_idx"] = low_res_tokens * self.max_frames
+
         return padding_lens
 
     def get_max_mm_tokens(self, vision_backbone_config: MolmoVisionBackboneConfig):
@@ -263,10 +285,10 @@ class MultiModalVideoPreprocessorConfig(MolmoPreprocessorConfig):
         extra_per_frame = 2  # start/end tokens
         if self.time_mode == "per-frame":
             extra_per_frame += 8  # time markers
-        elif self.time_mode == "fps-prefix":
-            seq_len += 10  # time prefix
+        elif self.time_mode in ["time-delta-prefix", "sampled-fps-prefix", "fps-prefix"]:
+            seq_len += 10 # time delta prefix or fps prefix
         else:
-            assert self.time_mode is None
+            assert self.time_mode == "skip_time" or self.time_mode is None
         if self.use_col_tokens:
             sz = vision_backbone_config.vit.image_default_input_size
             patch_size = vision_backbone_config.vit.image_patch_size
@@ -296,7 +318,8 @@ class MultiModalVideoPreprocessorConfig(MolmoPreprocessorConfig):
             max_sequence_length=max_sequence_length,
             image_padding_mask=vision_backbone_config.image_padding_embed is not None,
             pad_value=vit.pad_value,
-            time_mode=self.time_mode
+            time_mode=self.time_mode,
+            query_based_resolution_selection=self.query_based_resolution_selection
         )
 
     def __post_init__(self):
@@ -314,11 +337,20 @@ class VideoTextPreprocessor(InterleavedTextPreprocessor, ImagePreprocessor):
     use_col_tokens: bool = True
     image_pooling_w: int = 2
     image_pooling_h: int = 2
+    query_based_resolution_selection: bool = False
     high_res_pooling_w: Optional[int] = None
     high_res_pooling_h: Optional[int] = None
     time_mode: str = "per-frame"
     max_text_tokens: int = None
     periodic_high_res_frame: Optional[int] = None
+
+    def __post_init__(self):
+        assert self.time_mode in ["per-frame", "time-delta-prefix", "sampled-fps-prefix", "skip_time", "fps-prefix"] or self.time_mode is None
+
+        if self.query_based_resolution_selection:
+            self.frame_selection_pre_processor = AutoProcessor.from_pretrained("google/siglip2-so400m-patch14-384")
+        else:
+            self.frame_selection_pre_processor = None
 
     def compute_num_tokens(self, image_h, image_w, pool_h, pool_w) -> int:
         """Return the number of pooled image tokens produced for an image of size image_w, image_h"""
@@ -328,14 +360,20 @@ class VideoTextPreprocessor(InterleavedTextPreprocessor, ImagePreprocessor):
 
         resize_idx = np.zeros([crop_patch_h, crop_patch_w])
         idx_arr = arange_for_pooling(resize_idx, pool_h, pool_w)
-        resize_tokens = idx_arr.shape[0] * idx_arr.shape[1]
+        resize_h = idx_arr.shape[0]
+        resize_w = idx_arr.shape[1]
+        # resize_w = idx_arr.shape[1] + int(self.use_col_tokens)
+        # resize_tokens = resize_h * resize_w + 2 # start and end tokens
+        resize_tokens = resize_h * resize_w
 
         if self.crop_mode in ["resize"]:
             return resize_tokens
 
         h, w = self.compute_overlapping_crops_size(image_h, image_w)
         idx_arr = arange_for_pooling(torch.zeros([h, w]), pool_h, pool_w)
-        overlap_tokens = idx_arr.shape[0] * idx_arr.shape[1]
+        overlap_h = idx_arr.shape[0]
+        overlap_w = idx_arr.shape[1] + int(self.use_col_tokens)
+        overlap_tokens = overlap_h * overlap_w + 2 # start and end tokens
         if self.crop_mode in ["overlap-and-resize-c2"]:
             return overlap_tokens + resize_tokens
         else:
@@ -389,10 +427,12 @@ class VideoTextPreprocessor(InterleavedTextPreprocessor, ImagePreprocessor):
         else:
             raise ValueError()
 
+
     def __call__(
         self,
         frames,
-        frame_times,
+        frame_times: List[float],
+        sampled_fps: float,
         message_list: Union[List[str], List[List[str]]],
         weight=None,
         is_training=False,
@@ -415,37 +455,62 @@ class VideoTextPreprocessor(InterleavedTextPreprocessor, ImagePreprocessor):
         high_res_pooled_idx = []
         video_masks = []
         video_tokens = []
+        low_res_pooled_idx_no_offset = []
+        high_res_pooled_idx_no_offset = []
 
-        if self.time_mode == "fps-prefix":
-            tmp = np.array(frame_times)
-            deltas = tmp[1:] - tmp[:-1]
-            fps = np.mean(deltas)
-            prefix = self.tokenizer.encode(f"FPS {fps:0.2f}")
+        average_time_delta = 1 / sampled_fps
+        if self.time_mode == "sampled-fps-prefix":
+            prefix = self.tokenizer.encode(f"FPS {sampled_fps:0.2f}")
             video_tokens.append(prefix)
 
+        elif self.time_mode == "time-delta-prefix":
+            prefix = self.tokenizer.encode(f"Sampling Delta {average_time_delta:0.2f}")
+            video_tokens.append(prefix)
+
+        elif self.time_mode == "fps-prefix":
+            # This mode is for backward compatibility. Don't use for new runs - it pairs the fps and average time delta
+            prefix = self.tokenizer.encode(f"FPS {average_time_delta:0.2f}")
+            video_tokens.append(prefix)
+
+        if  len(video_tokens) > 0:
+            video_token_prefix_len = len(np.concatenate(video_tokens, 0))
+        else:
+            video_token_prefix_len = 0
+
+        high_res_index_list = []
         for frame_idx, frame in enumerate(frames):
-            frame_pooling_w = self.image_pooling_w
-            frame_pooling_h = self.image_pooling_h
-            patch_id = self.tokenizer.image_low_res_token_id
             is_high_res = self.periodic_high_res_frame is not None and frame_idx % self.periodic_high_res_frame == 0
             if is_high_res:
                 # If the frame is a high res frame, use the high res token length
+                high_res_index_list.append(1)
                 frame_pooling_w = self.high_res_pooling_w
                 frame_pooling_h = self.high_res_pooling_h
                 patch_id = self.tokenizer.image_patch_token_id
 
-            frame_tokens, frame_patches, frame_masks, pooled_idx = self.image_to_patches_and_tokens(
-                frame, frame_pooling_w, frame_pooling_h, patch_id, is_training, rng)
-            offset = sum(np.prod(x.shape[:2]) for x in all_frame_patches)
-            pooled_idx = np.where(
-                pooled_idx >= 0,
-                pooled_idx + offset,
-                pooled_idx
-            )
-            if is_high_res:
-                high_res_pooled_idx.append(pooled_idx)
+                frame_tokens, frame_patches, frame_masks, pooled_idx = self.image_to_patches_and_tokens(
+                    frame, frame_pooling_w, frame_pooling_h, patch_id, is_training, rng)
             else:
-                low_res_pooled_idx.append(pooled_idx)
+                high_res_index_list.append(0)
+                frame_pooling_w = self.image_pooling_w
+                frame_pooling_h = self.image_pooling_h
+                patch_id = self.tokenizer.image_low_res_token_id
+
+                frame_tokens, frame_patches, frame_masks, pooled_idx = self.image_to_patches_and_tokens(
+                    frame, frame_pooling_w, frame_pooling_h, patch_id, is_training, rng)
+
+            offset = sum(np.prod(x.shape[:2]) for x in all_frame_patches)
+            pooled_idx_with_offset = np.where(pooled_idx >= 0, pooled_idx + offset, pooled_idx)
+
+            if is_high_res:
+                high_res_pooled_idx.append(pooled_idx_with_offset)
+                high_res_pooled_idx_no_offset.append(pooled_idx)
+                high_res_token_place_holders = frame_tokens
+
+            else:
+                low_res_pooled_idx.append(pooled_idx_with_offset)
+                low_res_pooled_idx_no_offset.append(pooled_idx)
+                low_res_token_place_holders = frame_tokens
+
             all_frame_patches.append(frame_patches)
             video_masks.append(frame_masks)
             if frame_id_token_ids[frame_idx]:
@@ -463,10 +528,36 @@ class VideoTextPreprocessor(InterleavedTextPreprocessor, ImagePreprocessor):
         out["images"] = all_frame_patches
         if self.image_padding_mask:
             out["image_masks"] = np.concatenate(video_masks, 0)
+
         if low_res_pooled_idx:
             out["low_res_pooled_idx"] = np.concatenate(low_res_pooled_idx, 0)
         if high_res_pooled_idx:
             out["high_res_pooled_idx"] = np.concatenate(high_res_pooled_idx, 0)
+
+        if self.query_based_resolution_selection:
+            out["high_res_indices"] = np.array(high_res_index_list)
+            out["frame_start_index"] = np.array([video_token_prefix_len + 1])  # 1 added for the BoS token
+
+            siglip_text_token_ids = []
+            if isinstance(message_list[0], str):
+                siglip_text_input_ids = self.frame_selection_pre_processor(text=message_list[0], padding="max_length", truncation=True, max_length=64)
+                siglip_text_token_ids.append(siglip_text_input_ids['input_ids'].numpy()[0])
+            else:
+                for message_set_idx, message_tuple in enumerate(message_list):
+                    if len(siglip_text_token_ids) != 0:
+                        break
+
+                    for message_idx, message in enumerate(message_tuple):
+                        siglip_text_input_ids = self.frame_selection_pre_processor(text=message, padding="max_length", truncation=True, max_length=64)
+                        siglip_text_token_ids.append(siglip_text_input_ids['input_ids'].numpy()[0])
+                        break
+
+            out['siglip_text_token_ids'] = np.concatenate(siglip_text_token_ids, axis=0)
+            out['low_res_pooled_idx_no_offset'] = np.concatenate(low_res_pooled_idx_no_offset, axis=0)
+            out['low_res_token_place_holders'] = low_res_token_place_holders
+            out['high_res_pooled_idx_no_offset'] = np.concatenate(high_res_pooled_idx_no_offset, axis=0)
+            out['high_res_token_place_holders'] = high_res_token_place_holders
+
         return out
 
 
@@ -490,12 +581,12 @@ class VideoPreprocessor:
 
         if self.image_to_video and "image" in example:
             image = load_image(example["image"])
-            frames, frame_times, image_to_video_metadata = self.image_to_video(image, rng)
+            frames, frame_times, chosen_fps, image_to_video_metadata = self.image_to_video(image, rng)
         else:
             image_to_video_metadata = None
             assert "video" in example, "Video is required for video preprocessor"
             try:
-                frames, frame_times = load_video_decord_or_pyav(example["video"], self.max_frames, self.frame_sample_mode, self.candidate_sampling_fps)
+                frames, frame_times, chosen_fps = load_video_decord_or_pyav(example["video"], self.max_frames, self.frame_sample_mode, self.candidate_sampling_fps)
             except Exception as e:
                 e.add_note(f"Could not load video: {example['video']}")
                 raise e
@@ -510,6 +601,7 @@ class VideoPreprocessor:
             processed_video = self.mm_preprocessor(
                 frames,
                 frame_times,
+                chosen_fps,
                 message_list,
                 weight=example.get("weight"),
                 is_training=self.is_training,

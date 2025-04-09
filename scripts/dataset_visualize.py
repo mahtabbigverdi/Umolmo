@@ -13,7 +13,7 @@ from olmo.models.molmo.model_preprocessor import Preprocessor, MolmoPreprocessor
 from olmo.tokenizer import build_tokenizer
 
 from olmo.models.video_olmo.video_preprocessor import VideoPreprocessor
-from olmo.models.video_olmo.video_preprocessor import MultiModalVideoPreprocessor
+from olmo.models.video_olmo.video_preprocessor import VideoTextPreprocessor
 
 
 def build_qualitative_table(name, split, n, preprocessor, is_training=None, for_inference=False, shuffle=True,
@@ -122,7 +122,7 @@ def main():
                 system_prompt=args.system_prompt,
                 always_start_with_space=True,
             ),
-            MultiModalVideoPreprocessor(
+            VideoTextPreprocessor(
                 tokenizer=build_tokenizer(args.tokenizer),
                 crop_mode=args.crop_mode,
                 max_crops=args.max_crops,
