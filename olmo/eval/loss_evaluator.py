@@ -144,7 +144,7 @@ class LossDatasetEvaluator:
                         if self.save_data.post_processed_inputs:
                             saved_data["post_processed_inputs"] = {k: v[i].detach().cpu() for k, v in inputs.items()}
                         if self.save_data.model_internal_data:
-                            saved_data["model_internal_data"] = {k: v[i].detach().cpu() for k, v in model_out.internal.items()},
+                            saved_data["model_internal_data"] = {k: v[i].detach().cpu() for k, v in model_out.internal.items()}
                         viz_data.append(saved_data)
 
                 if self.console_log_interval and not pbar:
