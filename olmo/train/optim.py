@@ -142,13 +142,16 @@ class OptimizerConfig(BaseConfig):
                 raise RuntimeError(f"model param {name} was not in any group")
 
         # Maybe split up groups if we are using weight decay on some of its params
+        # Note its important to avoid creating empty optimizer groups since that will
+        # trip up torch's distributed checkpointer
         non_weight_decay_params = set(model.get_non_weight_decay_params())
         param_groups = []
         for param_group in group_configs:
             params = param_group["params"]
             params.sort(key=lambda x: _clean_param_name(param_names[x]))
             if param_group["weight_decay"] == 0:
-                param_groups.append(param_group)
+                if len(params) > 0:
+                    param_groups.append(param_group)
             else:
                 no_wd_params = [p for p in params if p in non_weight_decay_params]
                 wd_params = [p for p in params if p not in non_weight_decay_params]
