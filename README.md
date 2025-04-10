@@ -284,7 +284,7 @@ as long as `--skip_if_metrics_cached` is set.
 
 
 ## Beaker
-`Dockerfile` can be used to build a beaker image. I have one built at `chrisc/molmo-torch2.6.0-cuda12.4`.
+`Dockerfile` can be used to build a beaker image. I have one built at `chrisc/molmo-torch2.6.0-cuda12.6-video`.
 Some gantry settings to use:
  
 ### Environment
