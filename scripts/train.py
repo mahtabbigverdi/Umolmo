@@ -2,6 +2,7 @@
 
 import logging
 import os
+import re
 import socket
 import sys
 import time
@@ -67,7 +68,7 @@ def run_trainer(cfg: TrainConfig) -> None:
         if lastest_checkpoint:
             log.info(f"Resuming from {lastest_checkpoint}")
             if get_global_rank() == 0:
-                saved_config = TrainConfig.load(join(cfg.save_folder, "config.yaml"))
+                saved_config: TrainConfig = TrainConfig.load(join(cfg.save_folder, "config.yaml"))
                 if saved_config.model != cfg.model:
                     log.warning("Model config does not match the one resuming from")
                 if saved_config.optimizer != cfg.optimizer:
@@ -237,6 +238,15 @@ def run_trainer(cfg: TrainConfig) -> None:
                 wandb_cfg["beaker_url"] = beaker_logger.beaker.experiment.url(beaker_logger.experiment)
         if is_resuming:
             wandb_cfg["resuming_from"] = start_from
+        if is_resuming and cfg.wandb.allow_resume:
+            resume_run_id = saved_config.runtime_data.wandb_id
+            resume_step = int(re.match(r".*step([0-9]+).*", lastest_checkpoint).group(1))
+            resume_from = f"{resume_run_id}?_step={resume_step}"
+            run_id = resume_run_id
+        else:
+            run_id = None
+            resume_from = None
+
         wandb.init(
             dir=str(wandb_dir),
             project=cfg.wandb.project,
@@ -245,6 +255,8 @@ def run_trainer(cfg: TrainConfig) -> None:
             name=cfg.wandb.name,
             tags=cfg.wandb.tags,
             config=wandb_cfg,
+            id=run_id,
+            resume_from=resume_from
         )
         wandb_url = wandb.run.get_url()
         if beaker_logger is not None:

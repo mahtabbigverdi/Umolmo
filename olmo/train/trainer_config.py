@@ -58,6 +58,7 @@ class WandbConfig(BaseConfig):
     log_artifacts: bool = False
     rank_zero_only: bool = True
     log_interval: int = 1
+    allow_resume: bool = False
 
 
 @dataclass
