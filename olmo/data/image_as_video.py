@@ -140,6 +140,7 @@ class ImageAsVideoConfig(BaseConfig):
     preferred_step_size: Optional[int] = None
     max_repeats: Optional[int] = None
     path_mode: str = "zigzag"
+    frame_mode: str = "steps"
 
     @classmethod
     def update_legacy_settings(cls, config: D) -> D:
@@ -165,6 +166,7 @@ class ImageAsVideoConfig(BaseConfig):
             max_crops=self.max_crops,
             max_repeats=self.max_repeats,
             path_mode=self.path_mode,
+            frame_mode=self.frame_mode
         )
 
 
@@ -182,10 +184,17 @@ class ImagePan:
     max_pixels: int = None
     max_crops: Optional[int] = None
     path_mode: str = "zigzag"
+    frame_mode: str = "steps"
 
-    def build_path(self, h, w, rng):
+    def build_path(self, h, w, rng: np.random.RandomState):
         if self.path_mode == "outside-in-v1":
             return OutsideInPath.build_path(h, w, rng, 0.05, 0.1)
+        elif self.path_mode == "left-to-right-up-down":
+            path = []
+            for y in range(h):
+                for x in range(w):
+                    path.append([y, x])
+            return np.array(path)
         elif self.path_mode == "zigzag":
             path = []
             for x in range(h):
@@ -255,25 +264,33 @@ class ImagePan:
         # FIXME resize extremely large images
         image, _ = self.resize_fn(image, [target_h, target_w])
 
-        h_r = (target_h - c_h) // d
-        h_step_sizes = self.get_candidate_step_sizes(h_r, c_h)
-        w_r = (target_w - c_w) // d
-        w_step_sizes = self.get_candidate_step_sizes(w_r, c_w)
+        if self.frame_mode == "crops":
+            h_steps = np.arange(tiling[0]) * crop_window_size
+            w_steps = np.arange(tiling[1]) * crop_window_size
+            assert h_steps.max() + c_h == target_h
+            assert w_steps.max() + c_w == target_w
+        elif self.frame_mode == "steps":
+            h_r = (target_h - c_h) // d
+            h_step_sizes = self.get_candidate_step_sizes(h_r, c_h)
+            w_r = (target_w - c_w) // d
+            w_step_sizes = self.get_candidate_step_sizes(w_r, c_w)
 
-        candidates = np.stack([
-            np.tile(h_step_sizes[:, None, :], [1, len(w_step_sizes), 1]),
-            np.tile(w_step_sizes[None, :, :], [len(h_step_sizes), 1, 1]),
-        ], -2).reshape([-1, 2, 2])
-        candidates = candidates[np.prod(candidates[:, :, 1], -1) <= self.max_frames-self.min_repeats]
+            candidates = np.stack([
+                np.tile(h_step_sizes[:, None, :], [1, len(w_step_sizes), 1]),
+                np.tile(w_step_sizes[None, :, :], [len(h_step_sizes), 1, 1]),
+            ], -2).reshape([-1, 2, 2])
+            candidates = candidates[np.prod(candidates[:, :, 1], -1) <= self.max_frames-self.min_repeats]
 
-        scores = np.square(np.maximum(candidates[:, :, 0], self.preferred_step_size)).sum(-1)
-        ix_candidates = np.argwhere(scores == scores.min())[:, 0]
-        ix = ix_candidates[rng.randint(0, len(ix_candidates))]
-        (_, h_steps), (_, w_steps) = candidates[ix]
+            scores = np.square(np.maximum(candidates[:, :, 0], self.preferred_step_size)).sum(-1)
+            ix_candidates = np.argwhere(scores == scores.min())[:, 0]
+            ix = ix_candidates[rng.randint(0, len(ix_candidates))]
+            (_, h_steps), (_, w_steps) = candidates[ix]
+            assert h_steps*w_steps <= self.max_frames
+            h_steps = self.build_steps(h_steps, target_h - c_h, c_h - self.min_overlap*d)
+            w_steps = self.build_steps(w_steps, target_w - c_w, c_w - self.min_overlap*d)
+        else:
+            raise NotImplementedError(self.frame_mode)
 
-        assert h_steps*w_steps <= self.max_frames
-        h_steps = self.build_steps(h_steps, target_h - c_h, c_h - self.min_overlap*d)
-        w_steps = self.build_steps(w_steps, target_w - c_w, c_w - self.min_overlap*d)
         crops = np.zeros([len(h_steps), len(w_steps), c_h, c_w, 3])
         source_ids = np.zeros([len(h_steps), len(w_steps), c_h//d, c_w//d], dtype=np.int32)
         image_ids = np.arange(target_h*target_w//(d*d)).reshape([target_h//d, target_w//d])
@@ -290,7 +307,7 @@ class ImagePan:
         if n_frames < self.max_frames:
             n_target_frames = rng.randint(n_frames, self.max_frames)
             n_repeat = n_target_frames - n_frames
-            if self.max_repeats:
+            if self.max_repeats is not None:
                 n_repeat = min(self.max_repeats, n_repeat)
         else:
             n_repeat = 0
