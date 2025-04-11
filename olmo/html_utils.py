@@ -162,12 +162,10 @@ def example_to_html_dict(ex, preprocessor, show_patches=False, show_crops=False)
             box = [xs.min(), ys.min(), xs.max()+patch_size, ys.max()+patch_size]
             boxes_to_show[crop_ix].append(BoxesToVisualize(np.array([box]), style=style))
 
+        all_crops = []
         for crop_ix, (crop, boxes) in enumerate(zip(images, boxes_to_show)):
-            if len(boxes) > 0:
-                out[f"patch-{crop_ix}"] = get_html_image_with_boxes(
-                    build_embedded_image(crop), boxes)
-            else:
-                out[f"patch-{crop_ix}"] = crop
+            all_crops.append(get_html_image_with_boxes(build_embedded_image(crop), boxes))
+        out[f"crops"] = "\n".join(all_crops)
 
     if show_patches:
         pooled_patches_idx = ex["pooled_patches_idx"]
