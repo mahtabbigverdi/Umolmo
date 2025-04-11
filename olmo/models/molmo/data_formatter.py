@@ -315,7 +315,7 @@ class DataFormatter(BaseConfig):
     message_format: str = "none"  # How to format messages
     system_prompt: Optional[str] = None  # How to generate system prompts
     always_start_with_space: bool = False  # Always include a leading space for the first bit of text
-    default_inference_len: int = 65  # Inference len for length-conditioned prompting
+    default_inference_len: Optional[int] = 65  # Inference len for length-conditioned prompting
     select_answer: str = "best"  # How to select answer for questions with many answers
     debug: bool = False  # deterministic mode for debugging
     image_last: bool = False
