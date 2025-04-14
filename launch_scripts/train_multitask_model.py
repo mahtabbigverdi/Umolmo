@@ -279,8 +279,8 @@ if __name__ == "__main__":
                 num_workers=num_workers,
                 include_image=args.include_image,
             )
-        evaluation.data.persistent_workers = True
-        evaluations.append(evaluation)
+            evaluation.data.persistent_workers = True
+            evaluations.append(evaluation)
 
     cfg = TrainConfig(
         run_name="multitask_train",
