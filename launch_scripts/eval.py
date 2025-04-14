@@ -56,7 +56,7 @@ def main():
             args.task, split=args.split,
             sequence_length=args.seq_len,
             drop_last=False, seed=6198,
-            shuffle=False,
+            shuffle=True if args.max_examples else False,
             pad="to_max" if args.fsdp else None,  # TODO maybe this should be done even with FSDP
             num_workers=2,
             pin_memory=True,
