@@ -90,7 +90,7 @@ class BeakerLogger:
     def log_progress(self, on_step, target_step):
         self.beaker.experiment.set_description(self.experiment, f"[{100*on_step/target_step:04.1f}%] " + self.original_description)
 
-    def close(self):
+    def finish(self):
         self.beaker.experiment.set_description(self.experiment, f"[Done] " + self.original_description)
 
 
@@ -497,7 +497,8 @@ class Trainer:
 
         # torch.distributed.checkpointing can experience weird transients errors, where one
         # process will hit "800 operation not permitted"
-        # barrier/synchronize since it seems to fix the issue
+        # barrier/synchronize/gc to try and fix the issue
+        gc_cuda()
         barrier()
         torch.cuda.synchronize(self.device)
 
@@ -1149,8 +1150,8 @@ class Trainer:
             gc.disable()
         if wandb.run is not None:
             wandb.finish(exit_code=exit_code, quiet=True)
-        if self.beaker_logger is not None:
-            self.beaker_logger.close()
+        if self.beaker_logger is not None and exit_code == 0:
+            self.beaker_logger.finish()
 
     def __enter__(self) -> Trainer:
         return self
