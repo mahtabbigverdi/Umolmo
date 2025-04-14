@@ -462,10 +462,36 @@ OLMO2_1124_13B = replace(
 )
 
 
+OLMO2_1124_13B_INSTRUCT = replace(
+    OLMO_1024_PREVIEW,
+    init_path="${oc.env:MOLMO_DATA_DIR}/pretrained_llms/olmo2-1124-13b-instruct.pt",
+    d_model=5120,
+    n_heads=40,
+    n_layers=40,
+    mlp_hidden_size=27648,
+    tokenizer=TokenizerConfig(
+        identifier="allenai/OLMo-2-1124-13B-Instruct",
+    ),
+)
+
 
 OLMO2_0325_32B = replace(
     OLMO_1024_PREVIEW,
     init_path="${oc.env:MOLMO_DATA_DIR}/pretrained_llms/olmo2-0325-32b.pt",
+    d_model=5120,
+    n_heads=40,
+    n_kv_heads=8,
+    n_layers=64,
+    mlp_hidden_size=55296,
+    tokenizer=TokenizerConfig(
+        identifier="allenai/OLMo-2-0325-32B",
+    ),
+)
+
+
+OLMO2_0325_32B_INSTRUCT = replace(
+    OLMO_1024_PREVIEW,
+    init_path="${oc.env:MOLMO_DATA_DIR}/pretrained_llms/olmo2-0325-32b-instruct.pt",
     d_model=5120,
     n_heads=40,
     n_kv_heads=8,
@@ -617,6 +643,34 @@ QWEN25_14B = LlmConfig(
 )
 
 
+QWEN25_14B_INSTRUCT = LlmConfig(
+    init_path="${oc.env:MOLMO_DATA_DIR}/pretrained_llms/qwen2.5-14b-instruct.pt",
+    vocab_size=152064,
+    max_sequence_length=4096,
+    residual_dropout=0,
+    embedding_dropout=0,
+    response_residual_dropout=0,
+    attention_dropout=0,
+    rope=True,
+    qkv_bias=True,
+    weight_tying=False,
+    include_bias=False,
+    embedding_size=152064,
+    d_model=5120,
+    mlp_hidden_size=13824*2,
+    n_layers=48,
+    additional_vocab_size=128,
+    n_heads=40,
+    n_kv_heads=8,
+    rope_theta=1000000.0,
+    layer_norm_eps=1e-5,
+    layer_norm_type=LayerNormType.rms,
+    tokenizer=TokenizerConfig(
+        identifier="Qwen/Qwen2.5-14B-Instruct",
+    ),
+)
+
+
 QWEN2_72B = LlmConfig(
     init_path="${oc.env:MOLMO_DATA_DIR}/pretrained_llms/qwen2-70b.pt",
     additional_vocab_size=128,
@@ -712,9 +766,12 @@ LLMS: Dict[str, LlmConfig] = {
     "olmo_1024_preview": OLMO_1024_PREVIEW,
     "olmo2_1124_7b": OLMO2_1124_7B,
     "olmo2_1124_13b": OLMO2_1124_13B,
+    "olmo2_1124_13b_instruct": OLMO2_1124_13B_INSTRUCT,
     "olmo2_0325_32b": OLMO2_0325_32B,
+    "olmo2_0325_32b_instruct": OLMO2_0325_32B_INSTRUCT,
     "qwen2_7b": QWEN2_7B,
     "qwen2_72b": QWEN2_72B,
+    "qwen2.5_14b_instruct": QWEN25_14B_INSTRUCT,
     "qwen2.5_14b": QWEN25_14B,
     "qwen2.5_7b": QWEN25_7B,
     "qwen2.5_3b": QWEN25_3B,
