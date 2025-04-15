@@ -370,7 +370,7 @@ class ModelEvaluator:
             save_dir = self.get_save_dir(evaluation)
             if evaluation.generative:
                 evaluator: InfDatasetEvaluator = evaluation.build_evaluator(
-                    model.config, device, save_dir, self.config.console_log_interval)
+                    model.config, device, save_dir, self.config.console_log_interval, self.config.include_image)
                 metrics = evaluator.run(
                     model, device,
                     autocast_precision=self.config.autocast_precision,
