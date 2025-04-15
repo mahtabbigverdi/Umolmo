@@ -726,6 +726,7 @@ LLAMA31_TULU31_8B = LlmConfig(
     block_type="llama",
     rope=True,
     rope_theta=500000.0,
+    rope_type="llama3",
     rope_factor=8.0,
     rope_high_freq_factor=4.0,
     rope_low_freq_factor=1.0,

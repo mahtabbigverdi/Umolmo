@@ -172,6 +172,11 @@ class ModuleType(StrEnum):
     final_out = "final_out"
 
 
+class RopeType(StrEnum):
+    default = "default"
+    llama3 = "llama3"
+
+
 def init_weights(
     config: LlmConfig,
     module: Union[nn.Linear, nn.Embedding],
@@ -315,6 +320,11 @@ class LlmConfig(BaseConfig):
     rope_theta: float = 10000.
     """
     RoPE theta parameter.
+    """
+
+    rope_type: RopeType = RopeType.default
+    """
+    RoPE type to use. Default is the original RoPE, llama3 is the new RoPE used in Llama3.
     """
 
     rope_factor: Optional[float] = None
@@ -904,7 +914,7 @@ class RotaryEmbedding(nn.Module):
         if self.config.max_sequence_length is not None:
             self.get_rotary_embedding(self.config.max_sequence_length, device)
     
-    def apply_llama_scaling_factor(self, inv_freq: torch.Tensor) -> torch.Tensor:
+    def apply_llama3_scaling_factor(self, inv_freq: torch.Tensor) -> torch.Tensor:
         factor = self.config.rope_factor
         low_freq_factor = self.config.rope_low_freq_factor
         high_freq_factor = self.config.rope_high_freq_factor
@@ -951,8 +961,8 @@ class RotaryEmbedding(nn.Module):
         with torch.autocast(device.type, enabled=False):
             dim = self.config.head_dim if self.config.head_dim is not None else self.config.d_model // self.config.n_heads
             inv_freq = 1.0 / (self.config.rope_theta ** (torch.arange(0, dim, 2, device=device, dtype=torch.float) / dim))
-            if self.config.block_type == BlockType.llama:
-                inv_freq = self.apply_llama_scaling_factor(inv_freq)
+            if self.config.rope_type == RopeType.llama3:
+                inv_freq = self.apply_llama3_scaling_factor(inv_freq)
             seq = torch.arange(seq_len, device=device, dtype=torch.float)
             freqs = einsum("i , j -> i j", seq, inv_freq)
             positions = torch.cat((freqs, freqs), dim=-1)
