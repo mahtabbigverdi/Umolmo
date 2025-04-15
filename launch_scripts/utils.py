@@ -87,7 +87,7 @@ def get_evaluator(name) -> EvaluatorConfig:
         return EvaluatorConfig(vqa_eval="ansl,em")
     elif name in ["gqa", "tally_qa"]:
         return EvaluatorConfig(vqa_eval="em")
-    elif name in ["science_qa", "a_okvqa_mc", "science_qa_img", "ai2_diagram", "ai2_diagram_v2", "ai2_diagram_v2_transparent"]:
+    elif name in ["science_qa", "a_okvqa_mc", "science_qa_img", "ai2_diagram", "ai2_diagram_v2", "ai2_diagram_v2_transparent", "muir_bench_mc"]:
         return EvaluatorConfig(vqa_eval="mc")
     elif name in ["ai2_diagram_v2_mix_transparent", "ai2_diagram_v2_mix_transparent_one_style"]:
         return EvaluatorConfig(vqa_eval="mc_ai2d_opaque,mc_ai2d_transparent")
@@ -125,6 +125,8 @@ def get_evaluator(name) -> EvaluatorConfig:
         return EvaluatorConfig(long_video_bench_eval=True)
     elif name == "nextqa_mc":
         return EvaluatorConfig(vqa_eval="nextqa_mc")
+    elif name == "muir_bench":
+        return EvaluatorConfig(vqa_eval="muir_bench_mc")
     elif name in ["dense_caption_eval", "user_qa", "vqa_v2_test", "intern_vid"]:
         # No metrics, but still save prediction file
         return EvaluatorConfig()

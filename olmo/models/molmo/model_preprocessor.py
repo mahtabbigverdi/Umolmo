@@ -8,7 +8,7 @@ from einops import einops
 
 from olmo import tokenizer
 from olmo.config import BaseConfig
-from olmo.data.image_preprocessor import load_image, ImagePreprocessor
+from olmo.data.image_preprocessor import load_image, ImagePreprocessor, get_image_collage
 from olmo.data.interleaved_text_preprocessor import InterleavedTextPreprocessor
 from olmo.tokenizer import get_special_token_ids
 from olmo.nn.vision_backbone import MolmoVisionBackboneConfig
@@ -68,6 +68,9 @@ class MolmoPreprocessorConfig(BaseConfig):
     max_crops: int = 6
     """Max number of crops to produce per an image"""
 
+    max_images: Optional[int] = None
+    """Max number of images per example, used for multi-image examples"""
+
     pooling_w: int = 2
     """Patch pooling w stride"""
 
@@ -97,14 +100,19 @@ class MolmoPreprocessorConfig(BaseConfig):
             return self.max_crops
 
     def get_image_padding_lens(self, vision_backbone_config: MolmoVisionBackboneConfig):
+        max_crops = self.get_max_crops()
+        preprocessor = self.build(None, vision_backbone_config, None)
+        max_image_tokens = preprocessor.max_image_tokens()
+        if self.max_images is not None:
+            max_crops = self.max_images * max_crops
+            max_image_tokens = self.max_images * max_image_tokens
         """Max numbers of image tokens can be built for one image"""
         padding_lens = dict(
-            images=self.get_max_crops()
+            images=max_crops
         )
         if vision_backbone_config.image_padding_embed:
-            padding_lens["image_masks"] = self.get_max_crops()
-        preprocessor = self.build(None, vision_backbone_config, None)
-        padding_lens["pooled_patches_idx"] = preprocessor.max_image_tokens()
+            padding_lens["image_masks"] = max_crops
+        padding_lens["pooled_patches_idx"] = max_image_tokens
         return padding_lens
 
     def build(self, tokenizer, vision_backbone_config: MolmoVisionBackboneConfig, max_seq_len):
@@ -116,6 +124,7 @@ class MolmoPreprocessorConfig(BaseConfig):
             normalize=vit.normalize,
             crop_mode=self.crop_mode,
             max_crops=self.max_crops,
+            max_images=self.max_images,
             overlap_margins=self.overlap_margins,
             resize=vit.resize_mode,
             use_col_tokens=self.use_col_tokens,
@@ -146,6 +155,7 @@ class MolmoPreprocessor(InterleavedTextPreprocessor, ImagePreprocessor):
     image_pooling_w: int = 2
     image_pooling_h: int = 2
     image_padding_mask: Union[bool, int] = False
+    max_images: Optional[int] = None
 
     def max_image_tokens(self) -> int:
         """Return the max number of pooled image tokens this could produce for any image"""
@@ -325,13 +335,19 @@ class MolmoPreprocessor(InterleavedTextPreprocessor, ImagePreprocessor):
         all_crop_masks = []
         all_crops = []
         pooled_patches_idx = []
-        for image in images:
+        for idx, image in enumerate(images):
             image_tokens, crops, img_mask, pooled_idx = self.image_to_patches_and_tokens(
                 image, self.image_pooling_h, self.image_pooling_w,  self.tokenizer.image_patch_token_id, is_training, rng)
             pooled_patches_idx.append(pooled_idx + sum(np.prod(x.shape[:2]) for x in all_crops))
             all_crops.append(crops)
+            if len(images) > 1:
+                # Add prefix to the image tokens if there are multiple images
+                prefix = f"Image {idx + 1}"
+                image_tokens = np.concatenate([self.tokenizer.encode(prefix), image_tokens], 0)
             all_image_tokens.append(image_tokens)
             all_crop_masks.append(img_mask)
+            if self.max_images is not None and idx == self.max_images - 1:
+                break
 
         out = self.tokenize_and_interleave(messages, all_image_tokens, weight=weight)
         out["images"] = np.concatenate(all_crops)
@@ -354,7 +370,10 @@ class Preprocessor:
         example = dict(example)
         if "image" in example:
             try:
-                image = load_image(example["image"])
+                if isinstance(example["image"], (list, tuple)):
+                    image = [load_image(x) for x in example["image"]]
+                else:
+                    image = load_image(example["image"])
             except Exception as e:
                 raise ValueError(f"Could not load image: {example['image']}")
             else:
@@ -375,6 +394,8 @@ class Preprocessor:
             is_training=self.is_training,
             require_image_features=self.require_image_features
         )
+        if image is not None and isinstance(image, (list, tuple)):
+            image = get_image_collage(image)
         if formatter_metadata is None:
             formatter_metadata = {}
         if self.include_image and image is not None:
