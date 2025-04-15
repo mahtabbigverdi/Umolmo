@@ -317,6 +317,27 @@ class LlmConfig(BaseConfig):
     RoPE theta parameter.
     """
 
+    rope_factor: Optional[float] = None
+    """
+    RoPE scaling factor. Use for Llama3 style RoPE.
+    """
+
+    rope_high_freq_factor: Optional[float] = None
+    """
+    RoPE high frequency scaling factor. Use for Llama3 style RoPE.
+    """
+
+    rope_low_freq_factor: Optional[float] = None
+    """
+    RoPE low frequency scaling factor. Use for Llama3 style RoPE.
+    """
+
+    rope_original_max_position_embeddings: Optional[int] = None
+    """
+    The original max position embeddings used during pretraining.
+    Used for Llama3 style RoPE.
+    """
+
     attention_type: AttentionType = AttentionType.sdpa
     """
     Attention implementation to use.
@@ -509,6 +530,11 @@ class LlmConfig(BaseConfig):
     How to compile the transformer if compilation is requested
     """
 
+    fix_pad_tokenizer: bool = False
+    """
+    Use embedding_size instead of vocab_size for padding the tokenizer
+    """
+
     init_std: Optional[float] = 0.02
     init_fn: InitFnType = InitFnType.normal
     init_cutoff_factor: Optional[float] = None
@@ -517,7 +543,11 @@ class LlmConfig(BaseConfig):
         return Llm(self, cache, device)
 
     def build_tokenizer(self):
-        return self.tokenizer.build(pad_tokenizer_to=self.vocab_size)
+        if self.fix_pad_tokenizer:
+            pad_tokenizer_to = self.embedding_size or self.vocab_size
+        else:
+            pad_tokenizer_to = self.vocab_size
+        return self.tokenizer.build(pad_tokenizer_to=pad_tokenizer_to)
 
     @property
     def effective_n_kv_heads(self) -> int:
@@ -873,6 +903,30 @@ class RotaryEmbedding(nn.Module):
     def warmup_cache(self, device):
         if self.config.max_sequence_length is not None:
             self.get_rotary_embedding(self.config.max_sequence_length, device)
+    
+    def apply_llama_scaling_factor(self, inv_freq: torch.Tensor) -> torch.Tensor:
+        factor = self.config.rope_factor
+        low_freq_factor = self.config.rope_low_freq_factor
+        high_freq_factor = self.config.rope_high_freq_factor
+        old_context_len = self.config.rope_original_max_position_embeddings
+        if any(x is None for x in [factor, low_freq_factor, high_freq_factor, old_context_len]):
+            return inv_freq
+
+        low_freq_wavelen = old_context_len / low_freq_factor
+        high_freq_wavelen = old_context_len / high_freq_factor
+
+        wavelen = 2 * math.pi / inv_freq
+
+        # wavelen < high_freq_wavelen: do nothing
+        # wavelen > low_freq_wavelen: divide by factor
+        inv_freq_llama = torch.where(wavelen > low_freq_wavelen, inv_freq / factor, inv_freq)
+        # otherwise: interpolate between the two, using a smooth factor
+        smooth_factor = (old_context_len / wavelen - low_freq_factor) / (high_freq_factor - low_freq_factor)
+        smoothed_inv_freq = (1 - smooth_factor) * inv_freq_llama / factor + smooth_factor * inv_freq_llama
+        is_medium_freq = ~(wavelen < high_freq_wavelen) * ~(wavelen > low_freq_wavelen)
+        inv_freq_llama = torch.where(is_medium_freq, smoothed_inv_freq, inv_freq_llama)
+
+        return inv_freq_llama
 
     def get_rotary_embedding(self, seq_len: int, device: torch.device) -> Tuple[torch.Tensor, torch.Tensor]:
         if (
@@ -897,6 +951,8 @@ class RotaryEmbedding(nn.Module):
         with torch.autocast(device.type, enabled=False):
             dim = self.config.head_dim if self.config.head_dim is not None else self.config.d_model // self.config.n_heads
             inv_freq = 1.0 / (self.config.rope_theta ** (torch.arange(0, dim, 2, device=device, dtype=torch.float) / dim))
+            if self.config.block_type == BlockType.llama:
+                inv_freq = self.apply_llama_scaling_factor(inv_freq)
             seq = torch.arange(seq_len, device=device, dtype=torch.float)
             freqs = einsum("i , j -> i j", seq, inv_freq)
             positions = torch.cat((freqs, freqs), dim=-1)
@@ -1098,7 +1154,7 @@ class OLMoBlock(nn.Module):
             assert config.clip_qkv > 0
 
         # Activation function.
-        self.act = Activation.build(config.activation_type)
+        self.act = Activation.build(config.activation_type, split_inputs=config.block_type == BlockType.llama)
         assert (self.act.output_multiplier * self.hidden_size) % 1 == 0
 
         # Attention output projection.

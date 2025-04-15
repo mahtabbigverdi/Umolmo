@@ -400,6 +400,7 @@ OLMOE = LlmConfig(
     tokenizer=TokenizerConfig(
         identifier='allenai/OLMoE-1B-7B-0924',
     ),
+    fix_pad_tokenizer=True,
 )
 
 
@@ -437,6 +438,7 @@ OLMO_1024_PREVIEW = LlmConfig(
         identifier="allenai/dolma2-tokenizer",
     ),
     embedding_dropout=0,
+    fix_pad_tokenizer=True,
 )
 
 
@@ -463,12 +465,8 @@ OLMO2_1124_13B = replace(
 
 
 OLMO2_1124_13B_INSTRUCT = replace(
-    OLMO_1024_PREVIEW,
+    OLMO2_1124_13B,
     init_path="${oc.env:MOLMO_DATA_DIR}/pretrained_llms/olmo2-1124-13b-instruct.pt",
-    d_model=5120,
-    n_heads=40,
-    n_layers=40,
-    mlp_hidden_size=27648,
     tokenizer=TokenizerConfig(
         identifier="allenai/OLMo-2-1124-13B-Instruct",
     ),
@@ -490,15 +488,10 @@ OLMO2_0325_32B = replace(
 
 
 OLMO2_0325_32B_INSTRUCT = replace(
-    OLMO_1024_PREVIEW,
+    OLMO2_0325_32B,
     init_path="${oc.env:MOLMO_DATA_DIR}/pretrained_llms/olmo2-0325-32b-instruct.pt",
-    d_model=5120,
-    n_heads=40,
-    n_kv_heads=8,
-    n_layers=64,
-    mlp_hidden_size=55296,
     tokenizer=TokenizerConfig(
-        identifier="allenai/OLMo-2-0325-32B",
+        identifier="allenai/OLMo-2-0325-32B-Instruct",
     ),
 )
 
@@ -643,31 +636,15 @@ QWEN25_14B = LlmConfig(
 )
 
 
-QWEN25_14B_INSTRUCT = LlmConfig(
+QWEN25_14B_INSTRUCT = replace(
+    QWEN25_14B,
     init_path="${oc.env:MOLMO_DATA_DIR}/pretrained_llms/qwen2.5-14b-instruct.pt",
-    vocab_size=152064,
-    max_sequence_length=4096,
-    residual_dropout=0,
-    embedding_dropout=0,
-    response_residual_dropout=0,
-    attention_dropout=0,
-    rope=True,
-    qkv_bias=True,
-    weight_tying=False,
-    include_bias=False,
-    embedding_size=152064,
-    d_model=5120,
-    mlp_hidden_size=13824*2,
-    n_layers=48,
-    additional_vocab_size=128,
-    n_heads=40,
-    n_kv_heads=8,
-    rope_theta=1000000.0,
-    layer_norm_eps=1e-5,
-    layer_norm_type=LayerNormType.rms,
     tokenizer=TokenizerConfig(
         identifier="Qwen/Qwen2.5-14B-Instruct",
     ),
+    layer_norm_eps=1e-6,
+    # The only difference is the layer norm eps
+    # and the tokenizer identifier
 )
 
 
@@ -734,6 +711,40 @@ OMLO_19_13B = LlmConfig(
         identifier="allenai/dolma2-tokenizer",
     ),
     embedding_dropout=0,
+    fix_pad_tokenizer=True,
+)
+
+
+LLAMA31_TULU31_8B = LlmConfig(
+    init_path="${oc.env:MOLMO_DATA_DIR}/pretrained_llms/llama3.1-tulu3.1-8b.pt",
+    d_model=4096,
+    n_heads=32,
+    n_kv_heads=8,
+    qkv_bias=False,
+    n_layers=32,
+    mlp_hidden_size=14336*2,
+    block_type="llama",
+    rope=True,
+    rope_theta=500000.0,
+    rope_factor=8.0,
+    rope_high_freq_factor=4.0,
+    rope_low_freq_factor=1.0,
+    rope_original_max_position_embeddings=8192,
+    attention_dropout=0,
+    residual_dropout=0,
+    response_residual_dropout=0,
+    layer_norm_type=LayerNormType.rms,
+    layer_norm_eps=1e-5,
+    max_sequence_length=4096,
+    include_bias=False,
+    embedding_dropout=0,
+    vocab_size=128384, # multiple of 128
+    additional_vocab_size=128,
+    weight_tying=False,
+    embedding_size=128384,
+    tokenizer=TokenizerConfig(
+        identifier="allenai/Llama-3.1-Tulu-3.1-8B",
+    ),
 )
 
 
@@ -777,5 +788,6 @@ LLMS: Dict[str, LlmConfig] = {
     "qwen2.5_3b": QWEN25_3B,
     "qwen2.5_1.5b": QWEN25_15B,
     "olmo1120_13b": OMLO_19_13B,
+    "llama3.1_tulu3.1_8b": LLAMA31_TULU31_8B,
 }
 
