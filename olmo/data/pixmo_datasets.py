@@ -5,6 +5,8 @@ import re
 import shutil
 from os.path import join, exists
 from typing import Iterable
+from collections import defaultdict
+import random
 
 import datasets
 import numpy as np
@@ -885,4 +887,79 @@ class CoSynPoint(Dataset):
             metadata=dict(
                 image_id=example["id"]
             )
+        )
+
+
+class CorrectionQa(Dataset):
+    PREFIX = "https://explore-multimodal-datasets.s3.us-west-2.amazonaws.com/correction-urls"
+    
+    @classmethod
+    def download(cls, n_procs=1):
+        raise NotImplementedError()
+    
+    def __init__(self, split, multi_image_only=False, max_images=None):
+        assert split in ["train", "validation"]
+        self.split = split
+        self.max_images = max_images
+        self.multi_image_only = multi_image_only
+        self.dataset = self.load()
+    
+    def load(self):
+        split = self.split
+        local_data_name = cached_path(
+            join(PIXMO_DATASETS, "correction-qa", f"{split}-records.json"),
+            cache_dir=os.environ.get("MOLMO_CACHE_DIR"),
+        )
+        with open(local_data_name, 'r') as f:
+            records = json.load(f)
+        
+        group_by_images = defaultdict(list)
+        for record in records:
+            if "imageUrls" in record:
+                group_by_images[tuple(record["imageUrls"])].append(record)
+            else:
+                group_by_images[tuple([record["imageUrl"]])].append(record)
+        
+        if self.multi_image_only:
+            group_by_images = {k: v for k, v in group_by_images.items() if len(k) > 1}
+        if self.max_images:
+            group_by_images = {k: v for k, v in group_by_images.items() if len(k) <= self.max_images}
+
+        out = []
+        for image_urls, records in group_by_images.items():
+            image = list(image_urls)
+            questions = []
+            answers = []
+            for record in records:
+                questions.append(record["question"])
+                answers.append(record["answer"])
+            out.append(
+                dict(
+                    image=image,
+                    questions=questions,
+                    answers=answers,
+                    prolificId=[record["prolificId"] for record in records],
+                    obejctID=[record["objectID"] for record in records],
+                )
+            )
+        return out
+    
+    def __len__(self):
+        return len(self.dataset)
+    
+    def get(self, item, rng):
+        example = self.dataset[item]
+        image = example["image"]
+        dst_prefix = join(DATA_HOME, "correction_images")
+        if len(image) > 1:
+            image = [url.replace(self.PREFIX, dst_prefix) for url in image]
+        else:
+            image = image[0].replace(self.PREFIX, dst_prefix)
+        messages = []
+        for q, a in zip(example["questions"], example["answers"]):
+            messages.append(dict(question=q, answer=a, style="correction_qa"))
+        random.shuffle(messages)
+        return dict(
+            image=image,
+            message_list=messages,
         )

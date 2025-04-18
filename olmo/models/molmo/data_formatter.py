@@ -304,7 +304,8 @@ DEMO_STYLES = [
     "long_caption",
     "short_caption",
     "video_long_caption",
-    "video_short_caption"
+    "video_short_caption",
+    "correction_qa",
 ]
 
 

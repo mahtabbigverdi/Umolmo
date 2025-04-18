@@ -49,7 +49,7 @@ def main():
     tasks = []
     for task in args.tasks:
         if task == "short-video":
-            task += [
+            tasks += [
                 "mvbench",
                 "temp_compass",
                 "perception_test",
@@ -57,7 +57,7 @@ def main():
                 "nextqa_mc:test",
             ]
         elif task == "long-video":
-            task += [
+            tasks += [
                 "video_mme",
                 "mlvu_mc",
                 "long_video_bench",

@@ -92,6 +92,7 @@ if __name__ == "__main__":
     parser.add_argument("checkpoint", help="Path to checkpoint to start from")
     parser.add_argument("--seq_len", default=2304, type=int)
     parser.add_argument("--inf_seq_len", default=1792, type=int)
+    parser.add_argument("--duration", default=30000, type=int)
     parser.add_argument("--max_inf_examples", default=2048, type=int)
     parser.add_argument("--global_batch_size", default=256, type=int)
     parser.add_argument("--device_eval_batch_size", default=4, type=int)
@@ -101,6 +102,10 @@ if __name__ == "__main__":
                         help="Include image in the evaluation outputs")
     parser.add_argument("--turn_off_inference", action="store_true",
                         help="Turn off inference during training")
+    parser.add_argument("--max_crops", default=None, type=int)
+    parser.add_argument("--image_pooling_h", default=None, type=int)
+    parser.add_argument("--image_pooling_w", default=None, type=int)
+    parser.add_argument("--max_images", default=None, type=int)
     args, other_args = parser.parse_known_args()
 
     if args.mixture.startswith("single"):
@@ -213,6 +218,9 @@ if __name__ == "__main__":
                 "cosyn_point",
             ], 0.35]
         ]
+    elif args.mixture in ["multi-image"]:
+        eval_tasks = ["muir_bench:test", "muir_bench_mc:test"]
+        tasks = [["multi-image", ["correction_qa_multi_only_train"], 1.0]]
     else:
         raise NotImplementedError(args.mixture)
 
@@ -243,7 +251,7 @@ if __name__ == "__main__":
         global_batch_size = args.global_batch_size
         inf_eval_interval = 2000
         eval_interval = 2000
-        duration = 30000
+        duration = args.duration
         checkpoint = select_checkpoint(args.checkpoint)
         if exists(join(checkpoint, "model.yaml")):
             model_cfg = MolmoConfig.load(join(checkpoint, "model.yaml"))
@@ -262,6 +270,15 @@ if __name__ == "__main__":
     model_cfg.data_formatter.system_prompt = "demo_or_style"
     model_cfg.mm_preprocessor.loss_token_weighting = "root_subsegments"
 
+    # Overriding model config
+    model_cfg.mm_preprocessor.max_crops = args.max_crops or model_cfg.mm_preprocessor.max_crops
+    model_cfg.mm_preprocessor.pooling_w = args.image_pooling_w or model_cfg.mm_preprocessor.pooling_w
+    model_cfg.mm_preprocessor.pooling_h = args.image_pooling_h or model_cfg.mm_preprocessor.pooling_h
+    model_cfg.mm_preprocessor.max_images = args.max_images or model_cfg.mm_preprocessor.max_images
+
+    if model_cfg.llm.max_sequence_length < args.seq_len:
+        model_cfg.llm.max_sequence_length = args.seq_len
+
     root_size_mixture: List[RootSizeMixture] = []
     for name, submixture, rate in tasks:
         submixture = get_training_mixture(submixture)
@@ -279,8 +296,8 @@ if __name__ == "__main__":
                 num_workers=num_workers,
                 include_image=args.include_image,
             )
-        evaluation.data.persistent_workers = True
-        evaluations.append(evaluation)
+            evaluation.data.persistent_workers = True
+            evaluations.append(evaluation)
 
     cfg = TrainConfig(
         run_name="multitask_train",

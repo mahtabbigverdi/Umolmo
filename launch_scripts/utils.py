@@ -87,7 +87,7 @@ def get_evaluator(name) -> EvaluatorConfig:
         return EvaluatorConfig(vqa_eval="ansl,em")
     elif name in ["gqa", "tally_qa"]:
         return EvaluatorConfig(vqa_eval="em")
-    elif name in ["science_qa", "a_okvqa_mc", "science_qa_img", "ai2_diagram", "ai2_diagram_v2", "ai2_diagram_v2_transparent"]:
+    elif name in ["science_qa", "a_okvqa_mc", "science_qa_img", "ai2_diagram", "ai2_diagram_v2", "ai2_diagram_v2_transparent", "muir_bench_mc"]:
         return EvaluatorConfig(vqa_eval="mc")
     elif name in ["ai2_diagram_v2_mix_transparent", "ai2_diagram_v2_mix_transparent_one_style"]:
         return EvaluatorConfig(vqa_eval="mc_ai2d_opaque,mc_ai2d_transparent")
@@ -125,6 +125,8 @@ def get_evaluator(name) -> EvaluatorConfig:
         return EvaluatorConfig(long_video_bench_eval=True)
     elif name == "nextqa_mc":
         return EvaluatorConfig(vqa_eval="nextqa_mc")
+    elif name == "muir_bench":
+        return EvaluatorConfig(vqa_eval="muir_bench_mc")
     elif name in ["dense_caption_eval", "user_qa", "vqa_v2_test", "intern_vid"]:
         # No metrics, but still save prediction file
         return EvaluatorConfig()
@@ -400,6 +402,7 @@ OLMOE = LlmConfig(
     tokenizer=TokenizerConfig(
         identifier='allenai/OLMoE-1B-7B-0924',
     ),
+    fix_pad_tokenizer=True,
 )
 
 
@@ -437,6 +440,7 @@ OLMO_1024_PREVIEW = LlmConfig(
         identifier="allenai/dolma2-tokenizer",
     ),
     embedding_dropout=0,
+    fix_pad_tokenizer=True,
 )
 
 
@@ -462,6 +466,14 @@ OLMO2_1124_13B = replace(
 )
 
 
+OLMO2_1124_13B_INSTRUCT = replace(
+    OLMO2_1124_13B,
+    init_path="${oc.env:MOLMO_DATA_DIR}/pretrained_llms/olmo2-1124-13b-instruct.pt",
+    tokenizer=TokenizerConfig(
+        identifier="allenai/OLMo-2-1124-13B-Instruct",
+    ),
+)
+
 
 OLMO2_0325_32B = replace(
     OLMO_1024_PREVIEW,
@@ -473,6 +485,15 @@ OLMO2_0325_32B = replace(
     mlp_hidden_size=55296,
     tokenizer=TokenizerConfig(
         identifier="allenai/OLMo-2-0325-32B",
+    ),
+)
+
+
+OLMO2_0325_32B_INSTRUCT = replace(
+    OLMO2_0325_32B,
+    init_path="${oc.env:MOLMO_DATA_DIR}/pretrained_llms/olmo2-0325-32b-instruct.pt",
+    tokenizer=TokenizerConfig(
+        identifier="allenai/OLMo-2-0325-32B-Instruct",
     ),
 )
 
@@ -617,6 +638,18 @@ QWEN25_14B = LlmConfig(
 )
 
 
+QWEN25_14B_INSTRUCT = replace(
+    QWEN25_14B,
+    init_path="${oc.env:MOLMO_DATA_DIR}/pretrained_llms/qwen2.5-14b-instruct.pt",
+    tokenizer=TokenizerConfig(
+        identifier="Qwen/Qwen2.5-14B-Instruct",
+    ),
+    layer_norm_eps=1e-6,
+    # The only difference is the layer norm eps
+    # and the tokenizer identifier
+)
+
+
 QWEN2_72B = LlmConfig(
     init_path="${oc.env:MOLMO_DATA_DIR}/pretrained_llms/qwen2-70b.pt",
     additional_vocab_size=128,
@@ -680,6 +713,41 @@ OMLO_19_13B = LlmConfig(
         identifier="allenai/dolma2-tokenizer",
     ),
     embedding_dropout=0,
+    fix_pad_tokenizer=True,
+)
+
+
+LLAMA31_TULU31_8B = LlmConfig(
+    init_path="${oc.env:MOLMO_DATA_DIR}/pretrained_llms/llama3.1-tulu3.1-8b.pt",
+    d_model=4096,
+    n_heads=32,
+    n_kv_heads=8,
+    qkv_bias=False,
+    n_layers=32,
+    mlp_hidden_size=14336*2,
+    block_type="llama",
+    rope=True,
+    rope_theta=500000.0,
+    rope_type="llama3",
+    rope_factor=8.0,
+    rope_high_freq_factor=4.0,
+    rope_low_freq_factor=1.0,
+    rope_original_max_position_embeddings=8192,
+    attention_dropout=0,
+    residual_dropout=0,
+    response_residual_dropout=0,
+    layer_norm_type=LayerNormType.rms,
+    layer_norm_eps=1e-5,
+    max_sequence_length=4096,
+    include_bias=False,
+    embedding_dropout=0,
+    vocab_size=128384, # multiple of 128
+    additional_vocab_size=128,
+    weight_tying=False,
+    embedding_size=128384,
+    tokenizer=TokenizerConfig(
+        identifier="allenai/Llama-3.1-Tulu-3.1-8B",
+    ),
 )
 
 
@@ -712,13 +780,17 @@ LLMS: Dict[str, LlmConfig] = {
     "olmo_1024_preview": OLMO_1024_PREVIEW,
     "olmo2_1124_7b": OLMO2_1124_7B,
     "olmo2_1124_13b": OLMO2_1124_13B,
+    "olmo2_1124_13b_instruct": OLMO2_1124_13B_INSTRUCT,
     "olmo2_0325_32b": OLMO2_0325_32B,
+    "olmo2_0325_32b_instruct": OLMO2_0325_32B_INSTRUCT,
     "qwen2_7b": QWEN2_7B,
     "qwen2_72b": QWEN2_72B,
+    "qwen2.5_14b_instruct": QWEN25_14B_INSTRUCT,
     "qwen2.5_14b": QWEN25_14B,
     "qwen2.5_7b": QWEN25_7B,
     "qwen2.5_3b": QWEN25_3B,
     "qwen2.5_1.5b": QWEN25_15B,
     "olmo1120_13b": OMLO_19_13B,
+    "llama3.1_tulu3.1_8b": LLAMA31_TULU31_8B,
 }
 

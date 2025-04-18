@@ -510,6 +510,94 @@ def convert_state_dict_qwen2(state_dict, config: LlmConfig, block_type: BlockTyp
     return out
 
 
+def convert_state_dict_tulu3(state_dict, config: LlmConfig, block_type: BlockType) -> Dict[str, Any]:
+    state_dict = unflatten_dict(state_dict, sep=".")
+    assert len(state_dict) == 2
+    lmhead = state_dict["lm_head"]
+    state_dict = state_dict["model"]
+
+    blocks = {}
+    for layer in range(config.n_layers):
+        layer_dict = state_dict["layers"][str(layer)]
+        q, k, v, o = [layer_dict["self_attn"][f"{k}_proj"].pop("weight") for k in ["q", "k", "v", "o"]]
+        if config.qkv_bias:
+            q_b, k_b, v_b = [layer_dict["self_attn"][f"{k}_proj"].pop("bias") for k in ["q", "k", "v"]]
+        else:
+            q_b, k_b, v_b = None, None, None
+
+        mlp_gate = layer_dict["mlp"]["gate_proj"].pop("weight")
+        mlp_up = layer_dict["mlp"]["up_proj"].pop("weight")
+        mlp_down = layer_dict["mlp"]["down_proj"].pop("weight")
+
+        if block_type == BlockType.llama:
+            mapped_layer_dict = {
+                "q_proj": dict(weight=q, bias=q_b),
+                "k_proj": dict(weight=k, bias=k_b),
+                "v_proj": dict(weight=v, bias=v_b),
+                "attn_out": dict(weight=o),
+                "ff_norm": {
+                    "weight": layer_dict[f"post_attention_layernorm"].pop("weight")
+                },
+                "attn_norm": {
+                    "weight": layer_dict[f"input_layernorm"].pop("weight")
+                },
+                "ff_proj1": dict(weight=mlp_gate),
+                "ff_proj2": dict(weight=mlp_up),
+                "ff_out": dict(weight=mlp_down),
+            }
+        elif block_type == BlockType.sequential:
+            mapped_layer_dict = {
+                "ff_proj": {
+                    "weight": torch.cat([mlp_up, mlp_gate], 0)
+                },
+                "ff_out": {
+                    "weight": mlp_down
+                },
+                "ff_norm": {
+                    "weight": layer_dict[f"post_attention_layernorm"].pop("weight")
+                },
+                "attn_norm": {
+                    "weight": layer_dict[f"input_layernorm"].pop("weight")
+                },
+                "att_proj": dict(
+                    weight=torch.cat((q, k, v), dim=0),
+                    bias=None if q_b is None else torch.cat((q_b, k_b, v_b), dim=0)
+                ),
+                "attn_out": dict(weight=o),
+            }
+        else:
+            raise NotImplementedError(block_type)
+        blocks[str(layer)] = mapped_layer_dict
+
+    out = flatten_dict(dict(transformer=dict(blocks=blocks)), sep=".")
+    assert list(lmhead) == ["weight"]
+    embed_tokens_weight: torch.Tensor = state_dict["embed_tokens"].pop("weight")
+    if embed_tokens_weight.shape[0] < config.embedding_size:
+        new_embed_tokens_weight = embed_tokens_weight.new_zeros(
+            (config.embedding_size, embed_tokens_weight.shape[1]),
+        )
+        new_embed_tokens_weight[:embed_tokens_weight.shape[0], :] = embed_tokens_weight
+        embed_tokens_weight = new_embed_tokens_weight
+
+    out.update({
+        "transformer.wte.embedding": embed_tokens_weight,
+        "transformer.ln_f.weight": state_dict["norm"].pop("weight"),
+    })
+    assert not config.weight_tying
+    lmhead_weight: torch.Tensor = lmhead.pop("weight")
+    if lmhead_weight.shape[0] < config.embedding_size:
+        new_lmhead_weight = lmhead_weight.new_zeros(
+            (config.embedding_size, lmhead_weight.shape[1]),
+        )
+        torch.nn.init.normal_(new_lmhead_weight, std=config.initializer_range)
+        new_lmhead_weight[:lmhead_weight.shape[0], :] = lmhead_weight
+        lmhead_weight = new_lmhead_weight
+    out["transformer.ff_out.weight"] = lmhead_weight
+    for k in flatten_dict(state_dict):
+        raise ValueError("Unused parameter:", k)
+    return out
+
+
 def get_default_load_path(cfg) -> str:
     return "/".join(cfg.init_path.split("/")[1:])
 
@@ -524,13 +612,17 @@ CONVERT_FNS = {
     "olmo_1024_preview": convert_state_dict_olmo_1024_preview,
     "olmo2_1124_7b": convert_state_dict_olmo_1024_preview,
     "olmo2_1124_13b": convert_state_dict_olmo_1024_preview,
+    "olmo2_1124_13b_instruct": convert_state_dict_olmo_1024_preview,
     "olmo2_0325_32b": convert_state_dict_olmo_1024_preview,
+    "olmo2_0325_32b_instruct": convert_state_dict_olmo_1024_preview,
     "qwen2_7b": convert_state_dict_qwen2,
+    "qwen2.5_14b_instruct": convert_state_dict_qwen2,
     "qwen2.5_14b": convert_state_dict_qwen2,
     "qwen2.5_7b": convert_state_dict_qwen2,
     "qwen2.5_3b": convert_state_dict_qwen2,
     "qwen2.5_1.5b": convert_state_dict_qwen2,
     "qwen2_72b": convert_state_dict_qwen2,
+    "llama3.1_tulu3.1_8b": convert_state_dict_tulu3,
 }
 
 
@@ -548,13 +640,17 @@ LLM_HF_SOURCES = {
     "olmo_1024_preview": "allenai/OLMo-7B-1024-preview",
     "olmo2_1124_7b": "allenai/OLMo-2-1124-7B",
     "olmo2_1124_13b": "allenai/OLMo-2-1124-13B",
+    "olmo2_1124_13b_instruct": "allenai/OLMo-2-1124-13B-Instruct",
     "olmo2_0325_32b": "allenai/OLMo-2-0325-32B",
+    "olmo2_0325_32b_instruct": "allenai/OLMo-2-0325-32B-Instruct",
     "qwen2_7b": "Qwen/Qwen2-7B",
     "qwen2_72b": "Qwen/Qwen2-72B",
+    "qwen2.5_14b_instruct": "Qwen/Qwen2.5-14B-Instruct",
     "qwen2.5_14b": "Qwen/Qwen2.5-14B",
     "qwen2.5_7b": "Qwen/Qwen2.5-7B",
     "qwen2.5_3b": "Qwen/Qwen2.5-3B",
     "qwen2.5_1.5b": "Qwen/Qwen2.5-1.5B",
+    "llama3.1_tulu3.1_8b": "allenai/Llama-3.1-Tulu-3.1-8B",
 }
 
 

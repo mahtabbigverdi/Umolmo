@@ -827,3 +827,87 @@ class ClockBench(Dataset):
             ),
             style="clocks",
         )
+
+
+def replace_images(question, options, max_images=None):
+    all_strings = [question] + options
+    image_counter = 1
+
+    total_images = sum(s.count("<image>") for s in all_strings)
+    if max_images is not None:
+        total_images = min(total_images, max_images)
+
+    replaced = []
+
+    for s in all_strings:
+        def repl(match):
+            nonlocal image_counter
+            if image_counter > total_images:
+                return match.group(0)
+            replacement = f"Image {image_counter}"
+            image_counter += 1
+            return replacement
+
+        replaced.append(re.sub(r"<image>", repl, s))
+
+    return replaced[0], replaced[1:]
+
+
+class MuirBench(HfDataset):
+    """
+    This class loads the MuirBench dataset from HuggingFace (https://huggingface.co/datasets/MUIRBENCH/MUIRBENCH).
+    """
+    PATH = "MUIRBENCH/MUIRBENCH"
+
+    @classmethod
+    def download(cls, n_procs=1):
+        datasets.load_dataset_builder(cls.PATH).download_and_prepare()
+    
+    def __init__(self, split: str, use_mc_style=False, keep_in_memory=False):
+        self.use_mc_style = use_mc_style
+        super().__init__(split, keep_in_memory=keep_in_memory)
+    
+    def qo_template(self, question, options):
+        question, options = replace_images(question, options)
+        option_text = "\n".join(
+            f"{chr(ord('A') + idx)}: {options[idx]}" for idx in range(len(options))
+        )
+        prompt = "\n".join(
+            [
+                question,
+                option_text,
+                "Please provide the correct option letter, such as A, B, C, D, directly."
+            ]
+        )
+        return question, prompt, options
+    
+    def get(self, item, rng):
+        example = self.dataset[item]
+        question, prompt, options = self.qo_template(example['question'], example['options'])
+        out = dict(
+            image=example["image_list"],
+            metadata=dict(
+                example_id=example["idx"],
+                task=example["task"],
+                image_relation=example["image_relation"],
+                image_type=example["image_type"],
+                counterpart_id=example["counterpart_idx"],
+            )
+        )
+
+        if self.use_mc_style:
+            out.update(
+                question=question,
+                options=options,
+                answer_idx=ord(example["answer"]) - ord("A"),
+                style="eval_multiple_choice",
+            )
+        else:
+            out.update(
+                question=prompt,
+                answer=example["answer"],
+                style="demo"
+            )
+            out["metadata"]["options"] = options
+        
+        return out

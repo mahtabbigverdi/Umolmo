@@ -575,3 +575,86 @@ def nextqa_mc(target: str, prediction: str, options: List[str]) -> bool:
     index2ans, all_choices = nextqa_get_multi_choice_info(options)
     parsed_pred = nextqa_parse_multi_choice_response(prediction, all_choices, index2ans)
     return target == parsed_pred
+
+
+def muir_bench_get_multi_choice_info(options: List[str]) -> Tuple[Dict[str, str], List[str]]:
+    all_choices = []
+    index2ans = {}
+    OPTIONS = ["A", "B", "C", "D", "E"]
+    assert len(options) <= 5, "MuirBench only supports 5 options"
+    for i in range(len(options)):
+        index2ans[OPTIONS[i]] = options[i].strip()
+        all_choices.append(OPTIONS[i])
+    
+    return index2ans, all_choices
+
+
+def muir_bench_parse_multi_choice_response(response: str, all_choices: List[str], index2ans: Dict[str, str]) -> str:
+    """
+    Parse the prediction from the generated response.
+    Return the predicted index e.g., A, B, C, D.
+    """
+    for char in [',', '.', '!', '?', ';', ':', "'"]:
+        response = response.strip(char)
+    response = " " + response + " " # add space to avoid partial match
+
+    index_ans = True
+    ans_with_brack = False
+    ans_with_space = False
+    candidates = []
+    for choice in all_choices:  # e.g., (A) (B) (C) (D)
+        if f'({choice})' in response:
+            candidates.append(choice)
+            ans_with_brack = True
+
+    if len(candidates) == 0:
+        for choice in all_choices: # e.g., A B C D
+            if f' {choice} ' in response:
+                candidates.append(choice)
+                ans_with_space = True
+
+    for choice in all_choices:  # e.g., A: B: C: D:
+        if f"{choice}:" in response:
+            candidates.append(choice)
+
+    # if all above doesn't get candidates, check if the content is larger than 5 tokens and try to parse the example
+    if len(candidates) == 0 and len(response.split()) > 5:
+        for index, ans in index2ans.items():
+            if ans.lower() in response.lower():
+                candidates.append(index)
+                index_ans = False # it's content ans.
+
+    if len(candidates) == 0:  # still not get answer, randomly choose one.
+        pred_index = random.choice(all_choices)
+    elif len(candidates) > 1:
+        start_indexes = []
+        if index_ans:
+            if ans_with_brack: 
+                for can in candidates:
+                    index = response.rfind(f'({can})')
+                    start_indexes.append(index) # -1 will be ignored anyway
+                # start_indexes = [generated_response.index(f'({can})') for can in candidates]
+            elif ans_with_space:
+                for can in candidates:
+                    index = response.rfind(f" {can} ")
+                    start_indexes.append(index)
+            else:
+                for can in candidates:
+                    index = response.rfind(f"{can}:")
+                    start_indexes.append(index)
+        else:
+            for can in candidates:
+                index = response.lower().rfind(index2ans[can].lower())
+                start_indexes.append(index)
+        # get the last one
+        pred_index = candidates[np.argmax(start_indexes)]
+    else: # if only one candidate, use it.
+        pred_index = candidates[0]
+
+    return pred_index
+
+
+def muir_bench_mc(target: str, prediction: str, options: List[str]) -> bool:
+    index2ans, all_choices = muir_bench_get_multi_choice_info(options)
+    parsed_pred = muir_bench_parse_multi_choice_response(prediction, all_choices, index2ans)
+    return target == parsed_pred

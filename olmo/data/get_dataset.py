@@ -1,7 +1,8 @@
 from olmo.data.academic_datasets import (
     ScienceQAImageOnly, OkVqa,
     TabWMPDirectAnswer,
-    AndroidControl, AI2D, CountBenchQa, RealWorldQa, MathVista, MMMU, ClockBench
+    AndroidControl, AI2D, CountBenchQa, RealWorldQa, MathVista, MMMU, ClockBench,
+    MuirBench
 )
 from olmo.data.academic_datasets_manual import (
     ChartQa, InfoQa, SceneTextQa, DocQa,
@@ -15,7 +16,7 @@ from olmo.data.dataset import Dataset
 from olmo.data.pixmo_datasets import (
     PixMoDocs, PixMoCount, PixMoPoints, PixMoCapQa, PixMoCap, PixMoPointExplanations,
     PixMoAskModelAnything, PixMoPointsEval, DenseCaptionEval, PixMoClocks,
-    CoSyn, CoSynPoint
+    CoSyn, CoSynPoint, CorrectionQa
 )
 import itertools
 
@@ -156,6 +157,17 @@ def get_dataset_by_name(dataset_name, split) -> Dataset:
         assert split == "test"
         return PixMoPointsEval()
 
+    # Multi-image Qa
+    if dataset_name == "correction_qa":
+        return CorrectionQa(split=split)
+    elif dataset_name == "correction_qa_multi_only":
+        return CorrectionQa(split=split, multi_image_only=True)
+    # Filter out the qa pairs that contain more than 10 images
+    elif dataset_name == "correction_qa_train":
+        return CorrectionQa(split=split, max_images=10)
+    elif dataset_name == "correction_qa_multi_only_train":
+        return CorrectionQa(split=split, multi_image_only=True, max_images=10)
+
     # Academic datasets
     if dataset_name == "android_control":
         return AndroidControl(split)
@@ -218,4 +230,8 @@ def get_dataset_by_name(dataset_name, split) -> Dataset:
         if split == "validation":
             split = "testmini"
         return MathVista(split)
+    if dataset_name == "muir_bench":
+        return MuirBench(split)
+    elif dataset_name == "muir_bench_mc":
+        return MuirBench(split, use_mc_style=True)
     raise NotImplementedError(dataset_name, split)

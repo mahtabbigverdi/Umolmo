@@ -50,7 +50,12 @@ class InterleavedTextPreprocessor:
         is_prompt = text_token_ids == self.tokenizer.image_prompt_token_id
         return text_token_ids, np.array(loss_mask, dtype=np.float32)
 
-    def tokenize_message_list(self, message_list: Union[List[str], List[List[str]]], n_mm_tokens):
+    def tokenize_message_list(
+        self,
+        message_list: Union[List[str], List[List[str]]],
+        n_mm_tokens: int,
+        num_images: int = 1,
+    ):
         """Handle multi-annotation data where we have many annotations for one multi-modal input"""
         assert len(message_list) > 0, "Given empty messages"
         # Multi-annotation data where we have many annotations for one multi-modal input
@@ -95,19 +100,19 @@ class InterleavedTextPreprocessor:
 
         text_token_ids = np.concatenate([
             np.concatenate(before_ids),
-            [self.tokenizer.image_prompt_token_id],
+            [self.tokenizer.image_prompt_token_id] * num_images,
             np.concatenate(after_ids),
             [self.tokenizer.eos_token_id],
         ])
         text_subsegments = np.concatenate([
             np.concatenate(before_subsegments),
-            [ATTEND_ALL_SUBSEGMENT_ID],
+            [ATTEND_ALL_SUBSEGMENT_ID] * num_images,
             np.concatenate(after_subsegments),
             after_subsegments[-1][-1:]  # for EOS
         ])
         text_loss_masks = np.concatenate([
             np.concatenate(before_losses),
-            [0],
+            [0] * num_images,
             np.concatenate(after_losses),
             [0]  # for EOS
         ])
@@ -145,7 +150,7 @@ class InterleavedTextPreprocessor:
             for_inference = len(message_list) % 2 == 1
         else:
             text_token_ids, text_loss_masks, text_subsegments = self.tokenize_message_list(
-                message_list, sum(len(x) for x in multi_model_tokens))
+                message_list, sum(len(x) for x in multi_model_tokens), 0 if multi_model_tokens is None else len(multi_model_tokens))
             for_inference = False
 
         mm_idx = np.argwhere(text_token_ids == self.tokenizer.image_prompt_token_id)

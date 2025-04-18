@@ -23,7 +23,7 @@ from torchmetrics import MeanMetric
 
 from .vqa import vqa_score, anls_metric, relaxed_correctness, scifi_relaxed_correctness, \
     a_okvqa_score, select_mc_option, mmmu_score, real_world_qa_score, math_vista_score, \
-    select_perception_test_option, select_ego_schema_option, nextqa_mc
+    select_perception_test_option, select_ego_schema_option, nextqa_mc, muir_bench_mc
 from .temp_compass_utils import temp_compass_score
 from .mlvu_utils import mlvu_ssc_score, mlvu_summary_score
 from ..html_utils import build_html_table, postprocess_prompt, BoxesToVisualize, \
@@ -722,6 +722,10 @@ class VqaEval(Evaluator):
                     options = metadata["options"]
                     answer = answers[0]
                     score = nextqa_mc(answer, pred, options)
+                elif metric == "muir_bench_mc":
+                    options = metadata["options"]
+                    answer = answers[0]
+                    score = muir_bench_mc(answer, pred, options)
                 elif metric in ["mc_ai2d_transparent", "mc_ai2d_opaque"]: # mc split by transparency
                     has_transparent_box = metadata["has_transparent_box"]
                     abc_label = metadata["abc_label"]

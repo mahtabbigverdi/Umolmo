@@ -9,7 +9,7 @@ from tqdm import tqdm
 from typing import List, Optional, Union, Any, Tuple, Iterable, Set
 
 import PIL
-from PIL import ImageFile, ImageOps
+from PIL import ImageFile, ImageOps, Image
 
 from olmo.data.dataset import DATA_HOME
 from olmo.io import get_bytes_range, write_file, file_exists
@@ -35,6 +35,44 @@ from transformers.image_utils import (
 from olmo.models.molmo.data_formatter import DataFormatter
 
 DEFAULT_IMAGE_PATH = "/weka/oe-training-default/mm-olmo/torch_datasets"
+
+
+def get_image_collage(frames: np.ndarray, frame_size: int = 128) -> np.ndarray:
+    """
+    Creates a collage of frames arranged in a Nx4 grid in reading order.
+    Each frame is resized to 224x224 while maintaining aspect ratio.
+
+    Args:
+        frames: numpy array of shape (num_frames, height, width, channels)
+        frame_size: size of each frame in the collage (default: 224)
+
+    Returns:
+        collage: numpy array of shape (N*224, 896, 3) where N is ceil(num_frames/4)
+    """
+    num_frames = len(frames)
+    num_rows = (num_frames + 3) // 4  # Ceiling division for number of columns
+    # Create black canvas of appropriate size
+    canvas = np.zeros((num_rows * frame_size, 4 * frame_size, 3), dtype=np.uint8)
+
+    for idx, frame in enumerate(frames):
+        row = idx // 4
+        col = idx % 4
+
+        largest_dim = max(frame.shape[0], frame.shape[1])
+        square_frame = np.zeros((largest_dim, largest_dim, 3), dtype=np.uint8)
+
+        # Center the frame in the square
+        square_frame[
+            (largest_dim - frame.shape[0]) // 2:(largest_dim - frame.shape[0]) // 2 + frame.shape[0],
+            (largest_dim - frame.shape[1]) // 2:(largest_dim - frame.shape[1]) // 2 + frame.shape[1]
+        ] = frame
+
+        resized = Image.fromarray(square_frame).resize((frame_size, frame_size), Image.Resampling.BILINEAR)
+        resized = np.array(resized)
+
+        canvas[row * frame_size:(row + 1) * frame_size, col * frame_size:(col + 1) * frame_size] = resized
+
+    return canvas
 
 
 def load_pil_image(image_path: str) -> PIL.Image.Image:
