@@ -119,6 +119,7 @@ class DataLoaderConfig(BaseConfig):
             max_seq_len = None
         elif self.max_text_seq_len:
             max_seq_len = self.max_text_seq_len + model_config.mm_preprocessor.get_max_mm_tokens(model_config.vision_backbone)
+            max_seq_len = ((max_seq_len + 8 - 1) // 8) * 8
         else:
             max_seq_len = self.sequence_length
         preprocessor = model_config.build_preprocessor(
@@ -163,6 +164,7 @@ class DataLoaderConfig(BaseConfig):
             max_seq_len = None
         elif self.max_text_seq_len:
             max_seq_len = self.max_text_seq_len + model_config.mm_preprocessor.get_max_mm_tokens(model_config.vision_backbone)
+            max_seq_len = ((max_seq_len + 8 - 1) // 8) * 8
         else:
             max_seq_len = self.sequence_length
         preprocessor = model_config.build_preprocessor(
