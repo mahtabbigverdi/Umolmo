@@ -75,10 +75,14 @@ class LossMetrics:
                 else:
                     if name not in self.eval_metrics:
                         self.eval_metrics[name] = MeanMetric("error").to(cross_entropy_loss.device)
-                    if isinstance(val, tuple):
-                        self.eval_metrics[name].update(val[0]/val[1], val[1])
-                    else:
-                        self.eval_metrics[name].update(val, 1)
+                    try:
+                        if isinstance(val, tuple):
+                            self.eval_metrics[name].update(val[0]/val[1], val[1])
+                        else:
+                            self.eval_metrics[name].update(val, 1)
+                    except Exception as e:
+                        e.add_note(f"Error processing metric {name}")
+                        raise e
 
 
 @dataclass
