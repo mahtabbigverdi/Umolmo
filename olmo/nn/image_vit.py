@@ -14,7 +14,7 @@ import torch.nn.functional as F
 from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import checkpoint_wrapper
 from transformers.activations import get_activation
 
-from olmo.config import BaseConfig, StrEnum
+from olmo.config import BaseConfig, StrEnum, D
 from olmo.nn.llm import AttentionType, ActivationType
 from olmo.torch_util import get_global_rank
 from olmo.util import resource_path
@@ -74,6 +74,12 @@ class VitConfig(BaseConfig):
 
     def __post_init__(self):
         self.image_default_input_size = tuple(self.image_default_input_size)  # type: ignore[assignment]
+
+    @classmethod
+    def update_legacy_settings(cls, config: D) -> D:
+        if "truncate_pos_ids" in config:
+            del config["truncate_pos_ids"]
+        return config
 
     @property
     def image_num_patch(self):

@@ -52,6 +52,8 @@ class VideoOlmoConfig(MolmoConfig):
             config.vision_backbone = MolmoVisionBackboneConfig.update_legacy_settings(config.vision_backbone)
         config.data_formatter = DataFormatter.update_legacy_settings(config.data_formatter)
         config.mm_preprocessor = MultiModalVideoPreprocessorConfig.update_legacy_settings(config.mm_preprocessor)
+        if config.image_as_video is not None:
+            config.image_as_video = ImageAsVideoConfig.update_legacy_settings(config.image_as_video)
         return config
 
     def build_preprocessor(

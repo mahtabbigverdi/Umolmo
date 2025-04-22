@@ -93,6 +93,7 @@ class MolmoVisionBackboneConfig(BaseConfig):
         for k in ["image_pooling_h", "image_pooling_w"]:
             if k in config:
                 assert config.pop(k) == 2
+        config.vit = VitConfig.update_legacy_settings(config.vit)
         return config
 
 

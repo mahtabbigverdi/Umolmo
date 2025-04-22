@@ -146,6 +146,8 @@ class ImageAsVideoConfig(BaseConfig):
     def update_legacy_settings(cls, config: D) -> D:
         if "build_source_ids" in config:
             del config["build_source_ids"]
+        if "aux_loss" in config:
+            del config["aux_loss"]
         return config
 
     def build(self, max_frames, vit_config):
