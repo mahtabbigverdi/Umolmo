@@ -662,7 +662,7 @@ class Llm(nn.Module):
                     state_dict = {k[len("transformer."):]: v for k, v in state_dict.items()}
                 if "wte.weight" in state_dict and self.config.additional_vocab_size:
                     state_dict["wte.embedding"] = state_dict.pop("wte.weight")
-                log.info("Sharded checkpoint loaded to CPU RAM")
+                log.info("Checkpoint loaded to CPU RAM")
             else:
                 state_dict = {}
 
