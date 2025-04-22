@@ -76,7 +76,7 @@ class HeVideoMolmoConfig(BaseModelConfig):
         if config.vision_backbone is not None:
             config.vision_backbone = MolmoVisionBackboneConfig.update_legacy_settings(config.vision_backbone)
         config.data_formatter = DataFormatter.update_legacy_settings(config.data_formatter)
-        config.mm_preprocessor = HePreprocessorConfig.update_legacy_settings(config.mm_preprocessor)
+        config.mm_preprocessor = HeVideoPreprocessorConfig.update_legacy_settings(config.mm_preprocessor)
         if config.image_as_video is not None:
             config.image_as_video = ImageAsVideoConfig.update_legacy_settings(config.image_as_video)
         return config
