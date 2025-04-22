@@ -27,8 +27,8 @@ from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import checkpoi
 from olmo.config import BaseConfig, StrEnum
 from olmo.safetensors_util import safetensors_file_to_state_dict
 from olmo.tokenizer import TokenizerConfig
-from olmo.torch_util import ensure_finite_, BufferCache, get_global_rank
-from olmo.util import resource_path
+from olmo.torch_util import ensure_finite_, BufferCache, get_global_rank, barrier, synchronize_value
+from olmo.util import resource_path, rank0_resource_path, split_into_groups
 
 from torch.distributed.fsdp import fully_shard
 
@@ -517,6 +517,8 @@ class LlmConfig(BaseConfig):
     init_path: Optional[str] = None
     """Path to initial the LLM with"""
 
+    init_incremental: Optional[int] = None
+
     new_embedding_init_range: float = 0.02
     """How to initialize embedding for new tokens"""
 
@@ -643,9 +645,14 @@ class Llm(nn.Module):
             t0 = time.perf_counter()
             log.info(f"Loading LLM parameters from {self.config.init_path}")
             is_sharded = hasattr(self.blocks[0], "unshard")
-            if not is_sharded or get_global_rank() == 0:
-                parent, name = self.config.init_path.rstrip("/").rsplit("/", 1)
+            device = self.ln_f.weight.device
+
+            parent, name = self.config.init_path.rstrip("/").rsplit("/", 1)
+            if is_sharded:
+                state_dict_path = rank0_resource_path(device, parent, name, cache_dir=os.environ.get("MOLMO_CACHE_DIR"))
+            else:
                 state_dict_path = resource_path(parent, name, cache_dir=os.environ.get("MOLMO_CACHE_DIR"))
+            if state_dict_path is not None:
                 assert state_dict_path.is_file(), f"Model file {str(state_dict_path)} not found"
                 if state_dict_path.name.endswith("safetensors"):
                     state_dict = safetensors_file_to_state_dict(state_dict_path, map_location="cpu")
@@ -655,16 +662,36 @@ class Llm(nn.Module):
                     state_dict = {k[len("transformer."):]: v for k, v in state_dict.items()}
                 if "wte.weight" in state_dict and self.config.additional_vocab_size:
                     state_dict["wte.embedding"] = state_dict.pop("wte.weight")
+                log.info("Sharded checkpoint loaded to CPU RAM")
             else:
                 state_dict = {}
 
             if is_sharded:
-                key_errors = dist_cp_sd.set_model_state_dict(
-                    model=self,
-                    model_state_dict=state_dict,
-                    options=dist_cp_sd.StateDictOptions(
-                        full_state_dict=True, broadcast_from_rank0=True, strict=False)
-                )
+                barrier()
+                options = dist_cp_sd.StateDictOptions(
+                    full_state_dict=True, broadcast_from_rank0=True, strict=False)
+                if self.config.init_incremental:
+                    # Torch's broadcast_from_rank0 will, unfortunately, try and put the entire
+                    # state dict on the rank0 GPU, to avoid this OOM-ing us we support
+                    # broadcasting the state dict in chunks
+                    if get_global_rank() == 0:
+                        chunks = split_into_groups(list(state_dict.keys()), max_group_size=self.config.init_incremental)
+                        n_groups = synchronize_value(len(chunks), device)
+                    else:
+                        n_groups = synchronize_value(0, device)
+                    for group_ix in range(n_groups):
+                        if get_global_rank() == 0:
+                            group_dict = {k: state_dict[k] for k in chunks[group_ix]}
+                        else:
+                            group_dict = {}
+                        kv_errors = dist_cp_sd.set_model_state_dict(
+                            model=self, model_state_dict=group_dict, options=options)
+                        assert len(kv_errors.unexpected_keys) == 0
+                    from torch.nn.modules.module import _IncompatibleKeys
+                    key_errors = _IncompatibleKeys(set(), set())
+                else:
+                    key_errors = dist_cp_sd.set_model_state_dict(
+                        model=self, model_state_dict=state_dict, options=options)
             else:
                 key_errors = self.load_state_dict(state_dict, strict=False)
 

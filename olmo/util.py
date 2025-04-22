@@ -6,6 +6,7 @@ import os
 import re
 import socket
 import sys
+import threading
 import uuid
 
 import torch.multiprocessing as mp
@@ -33,7 +34,7 @@ from .exceptions import (
 )
 from .io import add_cached_path_clients, PathOrStr, file_exists, dir_is_empty, list_directory
 from .torch_util import get_global_rank, get_local_rank, get_node_rank, is_distributed, \
-    barrier, init_process_group
+    barrier, init_process_group, synchronize_flag
 
 try:
     from functools import cache, wraps
@@ -383,9 +384,47 @@ def get_progress_bar() -> Progress:
     return get_download_progress()
 
 
+class ResultThread(threading.Thread):
+    def __init__(self, fn, *args, **kwargs):
+        super().__init__()
+        self.fn = fn
+        self.args = args
+        self.kwargs = kwargs
+        self._result = None
+
+    def run(self):
+        self._result = self.fn(*self.args, **self.kwargs)
+
+
+def rank0_resource_path(device, folder=None, fname=None, local_cache=None,
+                        progress=None, cache_dir=None, sleep_time=2):
+    """
+    Call `resource_path` with the given args for the rank0 process, other ranks will
+    wait until rank0 is done downloading.
+
+    Should be called on all ranks, rank0 will get a path, other ranks will get None
+
+    This can be useful if just using `barrier` might timeout because the file being
+    downloaded is huge
+    """
+    if get_global_rank() == 0:
+        thread = ResultThread(
+            fn=resource_path, fname=fname, folder=folder, local_cache=local_cache, progress=progress,
+            cache_dir=cache_dir, quiet=True)
+        thread.start()
+    else:
+        thread = None
+    while synchronize_flag(thread.is_alive() if thread else True, device):
+        time.sleep(sleep_time)
+    if thread:
+        return thread._result
+    else:
+        return None
+
+
 def resource_path(
     folder: PathOrStr, fname: str, local_cache: Optional[PathOrStr] = None,
-    progress: Optional[Progress] = None, cache_dir=None
+    progress: Optional[Progress] = None, cache_dir=None, quiet=False
 ) -> Path:
     if local_cache is not None and (local_path := Path(local_cache) / fname).is_file():
         log.info(f"Found local cache of {fname} at {local_path}")
@@ -394,7 +433,7 @@ def resource_path(
         from cached_path import cached_path
 
         return cached_path(f"{str(folder).rstrip('/')}/{fname}", progress=progress,
-                           cache_dir=cache_dir)
+                           cache_dir=cache_dir, quiet=quiet)
 
 
 def get_default_thread_count() -> int:
