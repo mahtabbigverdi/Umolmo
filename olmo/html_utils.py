@@ -139,28 +139,35 @@ def example_to_html_dict(ex, preprocessor, show_patches=False, show_crops=False)
         n_crops = ex["images"].shape[0]
         crop_h, crop_w = base_h//patch_size, base_w//patch_size
         boxes_to_show = [[] for _ in range(len(images))]
-        patches_used = {}
+        patches_used = []
         if ex.get("pooled_patches_idx") is not None:
-            for k in ex["pooled_patches_idx"].tolist():
-                patches_used[tuple(k)] = {"border-color": "blue", "z-index": 100}
+            patches_used.append((
+                {"border-color": "blue", "z-index": 100},
+                ex["pooled_patches_idx"]
+            ))
         if ex.get("low_res_tokens_idx") is not None:
-            for k in ex["low_res_tokens_idx"].tolist():
-                patches_used[tuple(k)] = {"border-color": "red", "z-index": 110, "opacity": 0.7}
+            patches_used.append((
+                {"border-color": "red", "z-index": 110, "opacity": 0.7},
+                ex["low_res_tokens_idx"]
+            ))
         if ex.get("high_res_tokens_idx") is not None:
-            for k in ex["high_res_tokens_idx"].tolist():
-                patches_used[tuple(k)] = {"border-color": "blue", "z-index": 100, "border-width": "thin"}
+            patches_used.append((
+                {"border-color": "blue", "z-index": 100},
+                ex["high_res_tokens_idx"]
+            ))
 
-        for patch_ids, style in patches_used.items():
-            patch_ids = np.array(patch_ids)
-            patch_ids = patch_ids[patch_ids >= 0]
-            if len(patch_ids) == 0:
-                continue
-            crop_ix = patch_ids.max() // (crop_h * crop_w)
-            patch_ids %= (crop_h * crop_w)
-            xs = (patch_ids % crop_h) * patch_size
-            ys = (patch_ids // crop_h) * patch_size
-            box = [xs.min(), ys.min(), xs.max()+patch_size, ys.max()+patch_size]
-            boxes_to_show[crop_ix].append(BoxesToVisualize(np.array([box]), style=style))
+        for style, patch_id_set in patches_used:
+            for patch_ids in patch_id_set:
+                patch_ids = np.array(patch_ids)
+                patch_ids = patch_ids[patch_ids >= 0]
+                if len(patch_ids) == 0:
+                    continue
+                crop_ix = patch_ids.max() // (crop_h * crop_w)
+                patch_ids %= (crop_h * crop_w)
+                xs = (patch_ids % crop_h) * patch_size
+                ys = (patch_ids // crop_h) * patch_size
+                box = [xs.min(), ys.min(), xs.max()+patch_size, ys.max()+patch_size]
+                boxes_to_show[crop_ix].append(BoxesToVisualize(np.array([box]), style=style))
 
         all_crops = []
         for crop_ix, (crop, boxes) in enumerate(zip(images, boxes_to_show)):
