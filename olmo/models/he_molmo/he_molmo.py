@@ -54,6 +54,7 @@ class TokenScorerConfig(BaseConfig):
     vector_query_scaling: Optional[str] = None
     importance_norm: bool = False
     low_to_high_interpolation_factor: int = 2
+    debug: Optional[str] = None
 
 
 @dataclasses.dataclass
