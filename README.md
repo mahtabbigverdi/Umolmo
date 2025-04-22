@@ -108,6 +108,9 @@ The `eval_captioner.py` script also supports computing the cross-entropy loss on
 
 By default, results are saved to the directory containing the target checkpoints.
 
+If the model OOMs when loading the pre-trained LLM checkpoint, try using `--model.llm.init_incremental=16`,
+should only be needed for LLM with 32B+ parameters.
+
 ## Downstream Evaluation
 Evaluation is done with the `launch_scripts/eval_downstream.py` script. 
 FSDP can be used to evaluate large models, or for high-resolution processing. 
