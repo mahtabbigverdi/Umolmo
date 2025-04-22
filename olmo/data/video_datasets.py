@@ -3,6 +3,9 @@
 import logging
 import os
 import json
+import tarfile
+from collections import Counter
+
 # import glob
 import yaml
 import pandas as pd
@@ -17,13 +20,13 @@ from olmo import tokenizer
 from torchvision.datasets.utils import list_dir
 from tqdm import tqdm
 
-from olmo.io import read_file, is_url, glob, file_exists
+from olmo.io import read_file, is_url, glob, file_exists, get_bytes_range
 from olmo.util import flatten_lists, resource_path, split_into_groups
 
 decord.logging.set_level(2)
 from decord import VideoReader, cpu
 
-from os.path import join
+from os.path import join, exists
 
 from olmo.data.dataset import DatasetBase, VIDEO_DATA_HOME, DatasetBase
 
@@ -898,80 +901,73 @@ def load_all_frames_decord_or_pyav(video_path: str) -> np.ndarray:
         return np.stack(frames)
 
 
-if __name__ == "__main__":
-    dataset = LLaVAVideo178K("train", "caption",
-                             id_source="/weka/oe-training-default/mm-olmo/video_captions/video-captions-9k.parquet",
-                             cap_source="lv")
-    print(f"Total samples: {len(dataset)}")
+class PeVideo(DatasetBase):
+    data_path = os.path.join(VIDEO_DATA_HOME, "PE-Video")
 
-    set_video_paths = set(dataset.video_paths)
-    print(f"Unique video names: {len(set_video_paths)}")
+    @classmethod
+    def build_index(cls):
+        for split in ["train", "test"]:
+            split_path = join(cls.data_path, split)
+            index_path = join(cls.data_path, f"{split_path}_index.json")
+            if exists(index_path):
+                continue
+            indices = {}
+            logging.info(f"Building index for {split}")
+            video_ids = Counter()
+            for file in tqdm(os.listdir(split_path)):
+                index = []
+                example_to_files = {}
+                with tarfile.open(join(split_path, file), 'r') as db:
+                    it = iter(db)
+                    while True:
+                        try:
+                            json_tarinfo = next(it)
+                        except StopIteration:
+                            break
+                        mp4_tarinfo = next(it)
+                        json_data = json.load(db.extractfile(json_tarinfo))
+                        video_id = json_data["video_id"]
+                        video_ids[video_id] += 1
+                        example_id = int(json_tarinfo.name.split('.')[0])
+                        assert example_id == int(mp4_tarinfo.name.split('.')[0])
+                        assert video_id == example_id
+                        index.append((
+                            example_id,
+                            json_tarinfo.offset_data, json_tarinfo.size,
+                            mp4_tarinfo.offset_data, mp4_tarinfo.size,
+                        ))
+                        db.members = []
+                indices[file] = index
+            with open(index_path, "w") as f:
+                json.dump(indices, f)
 
-    caption_length = []
-    for i in range(len(dataset)):
-        ex = dataset[i]
-        caption_length.append(len(ex["message_list"][0]['answer'].split(" ")))
+    def load(self):
+        if self.split == "test":
+            with open(join(self.data_path, f"test_index.json")) as f:
+                data = json.load(f)
+            data = flatten_lists(((file,) + val for val in vals) for file, vals in data.items())
+        else:
+            with open(join(self.data_path, f"train_index.json")) as f:
+                data = json.load(f)
+            data = flatten_lists(([file] + val for val in vals) for file, vals in data.items())
+            np.random.RandomState(1321).shuffle(data)
+            if self.split == "validation":
+                data = data[:4096]
+            else:
+                data = data[4096:]
+        return data
 
-    print("LLava annotations on annotated train set. Max and mean length of words")
-    print(np.max(caption_length))
-    print(np.mean(caption_length))
-
-    dataset = LLaVAVideo178K("train", "caption",
-                             id_source="/weka/oe-training-default/mm-olmo/video_captions/video-captions-9k.parquet",
-                             cap_source="human")
-    print(f"Total samples: {len(dataset)}")
-
-    set_video_paths = set(dataset.video_paths)
-    print(f"Unique video names: {len(set_video_paths)}")
-
-    caption_length = []
-    for i in range(len(dataset)):
-        ex = dataset[i]
-        caption_length.append(len(ex["message_list"][0]['answer'].split(" ")))
-
-    print("Human annotations on annotated train set. Max and mean length of words")
-    print(np.max(caption_length))
-    print(np.mean(caption_length))
-
-    dataset = LLaVAVideo178K("train", "caption")
-    print(f"Total samples: {len(dataset)}")
-
-    set_video_paths = set(dataset.video_paths)
-    print(f"Unique video names: {len(set_video_paths)}")
-
-    caption_length = []
-    for i in range(len(dataset)):
-        ex = dataset[i]
-        caption_length.append(len(ex["message_list"][0]['answer'].split(" ")))
-
-    print("LLava annotations on overall train set. Max and mean length of words")
-    print(np.max(caption_length))
-    print(np.mean(caption_length))
-
-    # Code to create a shuffled video names file that can be used to get train/val split
-    # # get list of video names
-    # video_id_list = []
-    # for video_path in set_video_paths:
-    #     video_id_list.append(video_path.split("LLaVA-Video-178K/")[1])
-    # print(f"Unique video names: {len(video_id_list)}")
-
-    # # save all names to a dictionary
-    # sorted_video_names = sorted(video_id_list)
-    # random.seed(42)
-    # random.shuffle(sorted_video_names)
-    # with open(os.path.join(VIDEO_DATA_HOME, "LLaVA-Video-178K", "shuffled_llava_video_names.json"), 'w') as f:
-    #     json.dump(sorted_video_names, f)
-
-    # # Code to test loading of the videos
-    # from multiprocessing import Pool
-    # from tqdm import tqdm
-
-    # def process_video(video_path):
-    #     try:
-    #         frames = load_all_frames_decord_or_pyav(video_path)
-    #     except Exception as e:
-    #         print(f"Error loading video {video_path}: {e}")
-
-    # video_path_list = list(set_video_paths)
-    # with Pool(processes=32) as pool:
-    #     result = list(tqdm(pool.imap(process_video, video_path_list), total=len(video_path_list)))
+    def get(self, item, rng):
+        file, example_id, json_off, json_sz, mp_off, mp_size = self.data[item]
+        if self.split == "test":
+            file = join(self.data_path, "test", file)
+        else:
+            file = join(self.data_path, "train", file)
+        data = json.loads(get_bytes_range(file, json_off, json_sz).decode("utf-8"))
+        video = get_bytes_range(file, mp_off, mp_size)
+        return dict(
+            text=data["model_caption"],
+            video=video,
+            style="long_caption",
+            metadata=dict(example_id=data["video_id"]),
+        )

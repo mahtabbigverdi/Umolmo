@@ -1,3 +1,4 @@
+import io
 from dataclasses import dataclass
 from os.path import basename, dirname
 from typing import List, Optional, Union, Tuple, Any
@@ -94,8 +95,11 @@ def load_decord_video(
     """
     Load a video and returns frames as RGB numpy array.
     """
-    video_path = resource_path(dirname(video_path), basename(video_path)).as_posix()
-    vr = VideoReader(video_path, num_threads=1, ctx=cpu(0))
+    if isinstance(video_path, bytes):
+        vr = VideoReader(io.BytesIO(video_path), num_threads=1, ctx=cpu(0))
+    else:
+        video_path = resource_path(dirname(video_path), basename(video_path)).as_posix()
+        vr = VideoReader(video_path, num_threads=1, ctx=cpu(0))
 
     # Get video properties
     video_fps = vr.get_avg_fps()  # Get FPS
@@ -133,7 +137,8 @@ def load_pyav_video(
     """
     Load a video and returns frames as RGB numpy array.
     """
-    video_path = resource_path(dirname(video_path), basename(video_path)).as_posix()
+    if isinstance(video_path, str):
+        video_path = resource_path(dirname(video_path), basename(video_path)).as_posix()
     meta = iio.immeta(video_path)
     video_fps = meta["fps"]
     duration = meta["duration"]

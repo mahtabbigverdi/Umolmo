@@ -10,7 +10,7 @@ from olmo.data.academic_datasets_manual import (
 )
 from olmo.data.video_datasets import (
     InternVid, Koala, LLaVAVideo178K, MVBench, TempCompass,
-    VideoMME, EgoSchema, PerceptionTest, MLVU, LongVideoBench, NeXTQA
+    VideoMME, EgoSchema, PerceptionTest, MLVU, LongVideoBench, NeXTQA, PeVideo
 )
 from olmo.data.dataset import Dataset
 from olmo.data.pixmo_datasets import (
@@ -38,6 +38,8 @@ def get_dataset_by_name(dataset_name, split) -> Dataset:
         return LLaVAVideo178K(split=split, answer_type="open_ended", flat=True)
     if dataset_name == "llava_video_178k_cap":
         return LLaVAVideo178K(split=split, answer_type="caption")
+    if dataset_name == "pe_video":
+        return PeVideo(split=split)
     if dataset_name == "llava_video_178k_cap_flat":
         return LLaVAVideo178K(split=split, answer_type="caption", flat=True)
     if dataset_name == "llava_video_human_cap":
