@@ -10,7 +10,7 @@ from olmo.data.academic_datasets_manual import (
 )
 from olmo.data.video_datasets import (
     InternVid, Koala, LLaVAVideo178K, MVBench, TempCompass,
-    VideoMME, EgoSchema, PerceptionTest, MLVU, LongVideoBench, NeXTQA, PeVideo
+    VideoMME, EgoSchema, PerceptionTest, MLVU, LongVideoBench, NeXTQA, PeVideo, PlmFGQAEval, PlmFGQATrain
 )
 from olmo.data.dataset import Dataset
 from olmo.data.pixmo_datasets import (
@@ -56,6 +56,10 @@ def get_dataset_by_name(dataset_name, split) -> Dataset:
         dataset_name = dataset_name.replace("_disable_api", "")
         task = '_'.join(dataset_name.split("_")[2:]) if len(dataset_name.split("_")) > 2 else "all"
         return TempCompass(split=split, task=task)
+    if dataset_name.startswith("plm_fgqa_eval"):
+        return PlmFGQAEval(split=split)
+    if dataset_name.startswith("plm_fgqa_train"):
+        return PlmFGQATrain(split=split)
     if dataset_name.startswith("video_mme"):
         duration = "all" if len(dataset_name.split("_")) == 2 else dataset_name.split("_")[2]
         return VideoMME(split=split, duration=duration)
@@ -68,7 +72,9 @@ def get_dataset_by_name(dataset_name, split) -> Dataset:
     if dataset_name == "mlvu_gen":
         return MLVU(split=split, task="generation")
     if dataset_name == "long_video_bench":
-        return LongVideoBench(split=split)
+        return LongVideoBench(split=split, allow_subtitle=True)
+    if dataset_name == "long_video_bench_no_subtitle":
+        return LongVideoBench(split=split, allow_subtitle=False)
     if dataset_name == "nextqa_mc":
         return NeXTQA(split=split, task="multiple-choice")
     if dataset_name in ["scifi_document_qa", "pixmo_docs_other"]:

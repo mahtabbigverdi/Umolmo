@@ -112,6 +112,8 @@ def get_evaluator(name) -> EvaluatorConfig:
         name = name.replace("_disable_api", "")
         task = '_'.join(name.split("_")[2:]) if len(name.split("_")) > 2 else "all"
         return EvaluatorConfig(temp_compass_eval=task, temp_compass_disable_api=disable_api)
+    elif name.startswith("plm_fgqa_eval"):
+        return EvaluatorConfig(plm_fgqa_eval=True)
     elif name == "mlvu_gen":
         return EvaluatorConfig(mlvu_gen_eval=True)
     elif name == "ego_schema":
@@ -121,7 +123,7 @@ def get_evaluator(name) -> EvaluatorConfig:
     elif name.startswith("video_mme"):
         duration = "all" if len(name.split("_")) == 2 else name.split("_")[2]
         return EvaluatorConfig(video_mme_eval=duration)
-    elif name == "long_video_bench":
+    elif name in ["long_video_bench", "long_video_bench_no_subtitle"]:
         return EvaluatorConfig(long_video_bench_eval=True)
     elif name == "nextqa_mc":
         return EvaluatorConfig(vqa_eval="nextqa_mc")

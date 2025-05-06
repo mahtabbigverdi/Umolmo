@@ -1100,6 +1100,55 @@ class TempCompassEval(Evaluator):
         return out
 
 
+class PlmFGQAEval(Evaluator):
+    def __init__(self, n_to_log=None):
+        self.n_to_log = n_to_log
+        self.all_unique_questions_length = 4217
+
+    def __call__(self, metadatas, predictions, tokenizer, step=None):
+        new_tokens = predictions["predictions"]
+        vocab = tokenizer
+        scores = defaultdict(list)
+        for ex_ix, pred_seq in enumerate(new_tokens):
+            metadata = metadatas[ex_ix]
+            pred = vocab.decode(pred_seq[pred_seq >= 0]).strip()
+
+            pred = pred.lower()
+            pred = pred.strip().lstrip()  # deal with " B. ped"
+
+            answer = metadata["answer"].lower().strip().lstrip()
+            answer = answer[0]  # match "B." to even "B)" or "B"
+
+            # Limitation - might match even if pred is "A ball is seen" and GT is A.
+            score = pred.startswith(answer)
+
+            scores[metadata['question_group_id']].append(score)
+
+        question_to_score_tuples = [score_tuple for score_tuple in scores.items()]
+        # while len(question_to_score_tuples) < self.all_unique_questions_length:
+        #     question_to_score_tuples.append(("", [0, 0]))
+
+        output_list = [None for _ in range(dist.get_world_size())]
+        dist.all_gather_object(output_list, question_to_score_tuples)
+
+        collected_scores = defaultdict(list)
+        for output in output_list:
+            for key, value in output:
+                collected_scores[key].extend(value)
+
+        m_b_acc = []
+        for key, item in collected_scores.items():
+            m_b_acc.append(0 if 0 in item else 1)
+
+        out = {"m_b_acc": mean_metric(m_b_acc)}
+
+        # if self.n_to_log:
+        #     out["predictions"] = gather_examples_as_html(
+        #         self.n_to_log, vocab, metadatas, predictions, m_b_acc
+        #     )
+        return out
+
+
 VIDEO_MME_CATEGORIES = [
     "Knowledge",
     "Film & Television",

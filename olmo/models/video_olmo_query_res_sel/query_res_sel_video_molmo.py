@@ -17,8 +17,7 @@ from olmo.config import D
 from olmo.models.molmo.molmo import MolmoConfig
 from olmo.models.molmo.data_formatter import DataFormatter
 
-from olmo.models.video_olmo.video_preprocessor import VideoTextPreprocessor, \
-    MultiModalVideoPreprocessorConfig, VideoPreprocessor
+from olmo.models.video_olmo.video_preprocessor import MultiModalVideoPreprocessorConfig, VideoPreprocessor
 
 from olmo import tokenizer
 from olmo.nn.llm import LlmConfig, Llm, OLMoBlock
@@ -35,11 +34,11 @@ from olmo.nn.beam_search import BeamSearch, Constraint, FinalSequenceScorer, Sam
 @dataclasses.dataclass
 class QueryBasedVideoOlmoConfig(MolmoConfig):
     """VideoOlmo model configuration"""
-    _model_name: ClassVar[str] = "video_olmo"
+    _model_name: ClassVar[str] = "query_based_video_olmo"
 
     @classmethod
     def get_default_model_name(cls):
-        return "video_olmo"
+        return "query_based_video_olmo"
 
     vision_backbone: Optional[MolmoVisionBackboneConfig] = field(default_factory=MolmoVisionBackboneConfig)
     """Vision embedding module to get image features"""
@@ -391,6 +390,7 @@ class QueryBasedVideoOlmo(ModelBase):
         if input_ids is not None:
             input_ids = input_ids * (input_ids != -1).to(input_ids.dtype)
 
+        internal = {}
         if images is not None:
             siglip_position_ids = torch.arange(siglip_text_token_ids.shape[1])
             siglip_position_ids = siglip_position_ids.repeat([siglip_text_token_ids.shape[0], 1]).to(siglip_text_token_ids.device)
@@ -468,6 +468,7 @@ class QueryBasedVideoOlmo(ModelBase):
                     high_res = flag_idx in siglip_based_high_res_instance
 
                     if high_res:
+                        # There is no verification that the specified image tokens are fit in the sequence length. Needs to be set correct manually
                         final_tensors[instance_idx][input_id_start:input_id_start + len(high_res_image_col_token_place_holder)] = high_res_image_col_token_place_holder
                         input_id_start += len(high_res_image_col_token_place_holder)
 
@@ -491,6 +492,9 @@ class QueryBasedVideoOlmo(ModelBase):
             input_ids = final_tensors
             low_res_pooled_idx = final_low_res_pooled_idx
             high_res_pooled_idx = final_high_res_pooled_idx
+
+            # internal["bmm"]= bmm.detach().clone()
+            # internal["high_res_indices"] = high_res_indices.detach().clone()
 
         if input_embeddings is not None:
             x = input_embeddings
@@ -613,7 +617,9 @@ class QueryBasedVideoOlmo(ModelBase):
                 torch.arange(logits.shape[0], device=logits.device), append_last_valid_logits]
             logits = torch.cat([logits[:, :-1], last_valid_logit[:, None]], dim=1)
 
-        return OLMoOutput(logits=logits, attn_key_values=attn_key_values, hidden_states=tuple(all_hidden_states) if output_hidden_states else None)  # type: ignore[arg-type]
+        return OLMoOutput(logits=logits, attn_key_values=attn_key_values,
+                          hidden_states=tuple(all_hidden_states) if output_hidden_states else None,
+                          internal=internal)  # type: ignore[arg-type]
 
     def generate(
         self,
@@ -782,6 +788,10 @@ class QueryBasedVideoOlmo(ModelBase):
             if attention_bias is not None:
                 state["attention_bias"] = attention_bias
 
+            # # Complete dumping of bmm and high_res_indices
+            # for key, value in output.internal.items():
+            #     state[key] = value
+
             return log_probs, state
 
         initial_preds = input_ids.new_zeros((batch_size,))  # This is arbitrary, we won't use this.
@@ -792,9 +802,11 @@ class QueryBasedVideoOlmo(ModelBase):
             state["attention_bias"] = attention_bias
         with torch.inference_mode(), torch.compiler.set_stance("force_eager"):
             token_ids, scores = beam_search.search(initial_preds, state, step)
+            # token_ids, scores, high_res_indices, bmm = beam_search.search(initial_preds, state, step)
 
         return OLMoGenerateOutput(
             token_ids=token_ids,  # type: ignore[arg-type]
             scores=scores,  # type: ignore[arg-type]
+            # internal={"bmm": bmm.detach().clone(), "high_res_indices": high_res_indices.detach().clone()},
         )
 

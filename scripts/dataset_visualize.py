@@ -99,7 +99,7 @@ def main():
 
     def is_video_task(name):
         if name in ["pe_video", "mvbench", "intern_vid", "koala", "ego_schema", "perception_test",
-                    "long_video_bench", "nextqa_mc"]:
+                    "long_video_bench", "nextqa_mc", "plm_fgq_eval", "plm_fgqa_train", "long_video_bench_no_subtitle"]:
             return True
         if any(name.startswith(x) for x in
                ["llava_video_178k", "temp_compass", "video_mme", "mlvu"]):

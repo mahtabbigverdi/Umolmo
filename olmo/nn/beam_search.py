@@ -817,7 +817,7 @@ class BeamSearch:
         start_predictions: torch.Tensor,
         start_state: StateType,
         step: StepFunctionTypeWithTimestep,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         batch_size = start_predictions.size()[0]
 
         # List of (batch_size, beam_size) tensors. One for each time step. Does not
@@ -839,6 +839,9 @@ class BeamSearch:
         # `beam_size` elements for the next iteration.
         # shape: (batch_size, num_classes)
         start_class_log_probabilities, state = step(start_predictions, start_state, 0)
+
+        # bmm = state.pop("bmm") if "bmm" in state else None
+        # high_res_indices = state.pop("high_res_indices") if "high_res_indices" in state else None
 
         num_classes = start_class_log_probabilities.size()[1]
 
@@ -1052,6 +1055,7 @@ class BeamSearch:
         )
 
         return sorted_all_predictions, sorted_final_scores
+        # return sorted_all_predictions, sorted_final_scores, high_res_indices, bmm
 
     def _update_initial_state(self, state: StateType, batch_size: int):
         """
