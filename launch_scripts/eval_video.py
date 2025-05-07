@@ -32,6 +32,8 @@ def main():
                         help="Override models default number of crops")
     parser.add_argument("--candidate_sampling_fps", type=float, nargs="+", default=None,
                         help="Override models default candidate sampling fps")
+    parser.add_argument("--frame_sample_mode", default=None, type=str,
+                        help="Override models default frame sampling mode. Useful for longer video tasks")
     parser.add_argument("--seq_len", default=1536, type=int,
                         help="Max sequence length to use")
     parser.add_argument("--device_batch_size", default=4, type=int)
@@ -44,6 +46,7 @@ def main():
                         help="Override max new tokens, otherwise use task-specific default")
     parser.add_argument("--include_image", action="store_true",
                         help="Include image in the evaluation outputs")
+    parser.add_argument("--num_workers", default=2, type=int)
     args, other_args = parser.parse_known_args()
 
     tasks = []
@@ -70,7 +73,8 @@ def main():
 
     inf_evaluators = []
     for task in tasks:
-        base_config = get_evaluation(name=task, seq_len=args.seq_len, max_examples=args.max_examples)
+        base_config = get_evaluation(name=task, seq_len=args.seq_len, max_examples=args.max_examples,
+                                     num_workers=args.num_workers)
         eval_config = DatasetEvaluatorConfig(
             label=base_config.label,
             data=replace(base_config.data, pad="to_max" if args.fsdp else None),
@@ -93,6 +97,7 @@ def main():
         max_frames_override=args.max_frames,
         max_crops_override=args.max_crops,
         candidate_sampling_fps_override=args.candidate_sampling_fps,
+        frame_sample_mode_override=args.frame_sample_mode if args.frame_sample_mode else None,
         evaluations=inf_evaluators,
         load_path=checkpoint_dir,
         console_log_interval=10,

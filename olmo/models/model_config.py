@@ -18,12 +18,14 @@ def get_model_types() -> Dict[str, Type['BaseModelConfig']]:
     from olmo.models.molmo.molmo import MolmoConfig
     from olmo.models.he_video_molmo.he_molmo import HeVideoMolmoConfig
     from olmo.models.video_olmo.video_olmo import VideoOlmoConfig
+    from olmo.models.video_olmo_query_res_sel.query_res_sel_video_molmo import QueryBasedVideoOlmoConfig
 
     return {
         MolmoConfig._model_name: MolmoConfig,
         HeMolmoConfig._model_name: HeMolmoConfig,
         VideoOlmoConfig._model_name: VideoOlmoConfig,
         HeVideoMolmoConfig._model_name: HeVideoMolmoConfig,
+        QueryBasedVideoOlmoConfig._model_name: QueryBasedVideoOlmoConfig
     }
 
 

@@ -152,6 +152,9 @@ class EvalConfig(BaseConfig):
     candidate_sampling_fps_override: Optional[Tuple[float]] = None
     """Override the candidate sampling fps used in the model"""
 
+    frame_sample_mode_override: Optional[str] = None
+    """Override the frame sample mode used in the model"""
+
     console_log_interval: int = 10
     """How often to log what step we are on to console"""
 
@@ -310,6 +313,10 @@ class ModelEvaluator:
         if self.config.candidate_sampling_fps_override:
             logging.info(f"Overriding candidate sampling fps from {model.config.mm_preprocessor.candidate_sampling_fps} to {self.config.candidate_sampling_fps_override}")
             model.config.mm_preprocessor.candidate_sampling_fps = self.config.candidate_sampling_fps_override
+
+        if self.config.frame_sample_mode_override:
+            logging.info(f"Overriding frame sample mode from {model.config.mm_preprocessor.frame_sample_mode} to {self.config.frame_sample_mode_override}")
+            model.config.mm_preprocessor.frame_sample_mode = self.config.frame_sample_mode_override
 
         # Just in case the model is doing randomization even during eval
         seed_all(cfg.seed)

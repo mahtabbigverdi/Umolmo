@@ -19,8 +19,6 @@ from olmo.models.molmo.data_formatter import DataFormatter
 decord.logging.set_level(2)
 from decord import VideoReader, cpu
 
-import concurrent.futures
-
 from olmo.models.molmo.model_preprocessor import MolmoPreprocessorConfig, \
     batch_pixels_to_patches, arange_for_pooling
 
@@ -88,9 +86,10 @@ def get_frame_times_and_chosen_fps(selected_sampling_fps, total_frames, max_fram
 def load_decord_video(
     video_path: str,
     max_frames: int = 8,
-    use_timeout: bool = False,
     frame_sample_mode: str = "fps",
     candidate_sampling_fps: Tuple[float] = (0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0),
+    clip_start_time: float= None,
+    clip_end_time: float = None,
 ) -> Tuple[np.ndarray, List[float], float]:
     """
     Load a video and returns frames as RGB numpy array.
@@ -103,29 +102,32 @@ def load_decord_video(
 
     # Get video properties
     video_fps = vr.get_avg_fps()  # Get FPS
-    total_frames = len(vr)  # Total frame count
-    selected_sampling_fps = get_sampling_fps(video_fps, max_frames, total_frames, frame_sample_mode, candidate_sampling_fps)
 
+    if clip_start_time:
+        start_offset = int(clip_start_time * video_fps)
+
+        assert clip_end_time is not None
+        meta = iio.immeta(video_path)
+        clip_end_time = min(clip_end_time, meta['duration'])
+        total_frames = min(len(vr), int(clip_end_time * video_fps)) - start_offset
+    else:
+        total_frames = len(vr)  # Total frame count
+        start_offset = 0
+
+    # select fps that fits as many frame in context
+    selected_sampling_fps = get_sampling_fps(video_fps, max_frames, total_frames, frame_sample_mode, candidate_sampling_fps)
+    # select frame indices and final selected fps in case of uniform sampling
     sampling_fps, frame_times, frame_indices = get_frame_times_and_chosen_fps(selected_sampling_fps, total_frames, max_frames, video_fps)
 
-    if use_timeout:
-        # Fetch frames in batch (faster than looping)
-        def fetch_frames():
-            """Function to get frames in a separate thread."""
-            return vr.get_batch(frame_indices).asnumpy()
+    # shift frame indices to start to index for clip start index
+    frame_indices += start_offset
 
-        # Run the function with a timeout
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            future = executor.submit(fetch_frames)
-            try:
-                # Enforce timeout
-                return future.result(timeout=1), frame_times
-            except concurrent.futures.TimeoutError:
-                print(f"Timeout! Frame extraction took longer than 1 seconds.")
-                return None, None  # Return None to indicate failure
-
-    else:
-        return vr.get_batch(frame_indices).asnumpy(), frame_times, sampling_fps
+    try:
+        sampled_frames = vr.get_batch(frame_indices).asnumpy()
+    except Exception as e:
+        print(f"Failed to load video with decord, frame_indices - ", frame_indices)
+        raise e
+    return sampled_frames, frame_times, sampling_fps
 
 
 def load_pyav_video(
@@ -163,16 +165,59 @@ def load_video_decord_or_pyav(
     max_frames: int = 24,
     frame_sample_mode: str = "fps",
     candidate_sampling_fps: Tuple[float] = (0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0),
+    clip_start_time: float = None,
+    clip_end_time: float = None,
 ) -> Tuple[np.ndarray, List[float], float]:
     """
     Load a video and returns frames as RGB numpy array.
     """
     try:
-        outputs = load_decord_video(video_path, max_frames, frame_sample_mode=frame_sample_mode, candidate_sampling_fps=candidate_sampling_fps)
+        outputs = load_decord_video(video_path, max_frames, frame_sample_mode=frame_sample_mode, candidate_sampling_fps=candidate_sampling_fps,
+                                    clip_start_time=clip_start_time, clip_end_time=clip_end_time)
     except Exception as e:
-        outputs = load_pyav_video(video_path, max_frames, frame_sample_mode=frame_sample_mode, candidate_sampling_fps=candidate_sampling_fps)
+        # outputs = load_pyav_video(video_path, max_frames, frame_sample_mode=frame_sample_mode, candidate_sampling_fps=candidate_sampling_fps)
+        raise Exception(f"Failed to load video with decord, Skipping - ", video_path)
 
     return outputs
+
+
+def get_image_collage(frames: np.ndarray, num_cols: int = 6, frame_size: int = 378) -> np.ndarray:
+    """
+    Creates a collage of frames arranged in a grid of N x num_cols in reading order.
+    Each frame is resized to frame_size x frame_size while maintaining aspect ratio.
+
+    Args:
+        frames: numpy array of shape (num_frames, height, width, channels)
+        num_cols: number of columns in the collage (default: 4)
+        frame_size: size of each frame in the collage (default: 224)
+
+    Returns:
+        collage: numpy array of shape (N*frame_size, num_cols x frame_size, 3) where N is ceil(num_frames / num_cols)
+    """
+    num_frames = len(frames)
+    num_rows = int(np.ceil(num_frames / num_cols))  # Ceiling division for number of columns
+    # Create black canvas of appropriate size
+    canvas = np.zeros((num_rows * frame_size, num_cols * frame_size, 3), dtype=np.uint8)
+
+    for idx, frame in enumerate(frames):
+        row = idx // num_cols
+        col = idx % num_cols
+
+        largest_dim = max(frame.shape[0], frame.shape[1])
+        square_frame = np.zeros((largest_dim, largest_dim, 3), dtype=np.uint8)
+
+        # Center the frame in the square
+        square_frame[
+            (largest_dim - frame.shape[0]) // 2:(largest_dim - frame.shape[0]) // 2 + frame.shape[0],
+            (largest_dim - frame.shape[1]) // 2:(largest_dim - frame.shape[1]) // 2 + frame.shape[1]
+        ] = frame
+
+        resized = Image.fromarray(square_frame).resize((frame_size, frame_size), Image.Resampling.BILINEAR)
+        resized = np.array(resized)
+
+        canvas[row * frame_size:(row + 1) * frame_size, col * frame_size:(col + 1) * frame_size] = resized
+
+    return canvas
 
 
 @dataclass
@@ -553,9 +598,16 @@ class VideoPreprocessor:
             image_to_video_metadata = None
             assert "video" in example, "Video is required for video preprocessor"
             try:
-                frames, frame_times, chosen_fps = load_video_decord_or_pyav(example["video"], self.max_frames, self.frame_sample_mode, self.candidate_sampling_fps)
+                if "metadata" in example and "clip_start_time" in example["metadata"]:
+                    clip_start_time = example["metadata"]["clip_start_time"]
+                    clip_end_time = example["metadata"]["clip_end_time"]
+                    frames, frame_times, chosen_fps = load_video_decord_or_pyav(example["video"], self.max_frames, self.frame_sample_mode,
+                                                                                self.candidate_sampling_fps, clip_start_time=clip_start_time, clip_end_time=clip_end_time)
+
+                else:
+                    frames, frame_times, chosen_fps = load_video_decord_or_pyav(example["video"], self.max_frames, self.frame_sample_mode, self.candidate_sampling_fps)
             except Exception as e:
-                e.add_note(f"Could not load video: {example['video']}")
+                e.add_note(f"Could not load video: {example}")
                 raise e
 
         if "message_list" in example:

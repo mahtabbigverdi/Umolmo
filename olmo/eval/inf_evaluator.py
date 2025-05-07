@@ -13,7 +13,7 @@ import wandb
 from tqdm import tqdm
 
 from .evaluators import (
-    HtmlTable, CountEval, PointCountEval, PointingEval, ClockEval, VqaEval,
+    HtmlTable, CountEval, PointCountEval, PlmFGQAEval, ClockEval, VqaEval,
     SavePredictions, AndroidControlEval, MathVistaEval, PointingEval,
     TempCompassEval, VideoMMEEval, MLVUGenEval, LongVideoBenchEval
 )
@@ -41,8 +41,7 @@ class InfEvaluator:
     def __call__(self, predictions, example_metadata, tokenizer, device, step=None):
         inf_metrics = {}
         for metric in self.metrics:
-            results = metric(
-                example_metadata, predictions, step=step, tokenizer=tokenizer)
+            results = metric(example_metadata, predictions, step=step, tokenizer=tokenizer)
             assert all(k not in inf_metrics for k in results)
             inf_metrics.update(results)
 
@@ -120,6 +119,7 @@ class EvaluatorConfig(BaseConfig):
     """VideoMME tasks to run evaluation on, either one of the tasks or 'all'"""
     mlvu_gen_eval: bool = False
     long_video_bench_eval: bool = False
+    plm_fgqa_eval: bool = False
 
     def build(self, default_save_dir=None) -> InfEvaluator:
         evaluators = []
@@ -150,6 +150,8 @@ class EvaluatorConfig(BaseConfig):
             evaluators.append(CountEval(self.num_wandb_examples))
         elif self.android_eval:
             evaluators.append(AndroidControlEval(self.num_wandb_examples))
+        elif self.plm_fgqa_eval:
+            evaluators.append(PlmFGQAEval(self.num_wandb_examples))
         elif self.temp_compass_eval:
             evaluators.append(TempCompassEval(self.temp_compass_eval, self.temp_compass_disable_api, self.num_wandb_examples))
         elif self.video_mme_eval:
@@ -218,6 +220,14 @@ class InfDatasetEvaluator:
                 "predictions": olmo_gen_output.token_ids[:, 0].detach().cpu().numpy(), # beam size of 1
                 "prompts": batch_inference["input_ids"].detach().cpu().numpy(),
             }
+
+            # # Dump the bmm tensor if it exists in the internal dictionary
+            # if hasattr(olmo_gen_output, 'internal') and olmo_gen_output.internal is not None and 'bmm' in olmo_gen_output.internal:
+            #     bmm_tensor = olmo_gen_output.internal['bmm']
+            #     # Save the bmm tensor to a file
+            #     bmm_file_path = f"bmm_tensor_step_{eval_step}.pt"
+            #     torch.save(bmm_tensor, bmm_file_path)
+            #     log.info(f"Saved bmm tensor to {bmm_file_path}")
 
             valid_ixs = [i for i, md in enumerate(batch_metadata) if md.get("valid", True)]
             all_metadata += [batch_metadata[i] for i in valid_ixs]

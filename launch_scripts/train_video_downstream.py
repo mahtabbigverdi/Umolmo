@@ -35,7 +35,7 @@ if __name__ == "__main__":
     parser.add_argument("mixture", help="Name of datset mixture to train on")
     parser.add_argument("checkpoint", help="Path to checkpoint to start from")
     parser.add_argument("--seq_len", default="auto", type=str)
-    parser.add_argument("--max_eval_examples", default=512, type=int)
+    parser.add_argument("--max_eval_examples", default=256, type=int)
     parser.add_argument("--max_eval_examples_inf", default=-1, type=int)
     parser.add_argument("--max_crops", default=10, type=int)
     parser.add_argument("--global_batch_size", default=32, type=int)
@@ -48,7 +48,7 @@ if __name__ == "__main__":
     parser.add_argument("--duration", default=10000, type=int)
     parser.add_argument("--log_interval", default=20, type=int)
     parser.add_argument("--eval_interval", default=1000, type=int)
-    parser.add_argument("--inf_eval_interval", default=2000, type=int)
+    parser.add_argument("--inf_eval_interval", default=-1, type=int)
     parser.add_argument("--prefetch_factor", default=8, type=int)
     parser.add_argument("--freeze_vit", action="store_true")
     parser.add_argument("--num_workers", default=2, type=int)
@@ -60,12 +60,9 @@ if __name__ == "__main__":
     parser.add_argument("--run_name", default="multitask_video", type=str)
     parser.add_argument("--use_query_res_sel", action="store_true")
     args, other_args = parser.parse_known_args()
-    
-    if args.mixture == "intern_vid":
-        eval_tasks = ['intern_vid']
-        tasks = [["aux", ["intern_vid"], 1.0]]
-    
-    elif args.mixture in ["lv_intern_vid"]:
+
+    inference_task_list = []
+    if args.mixture in ["lv_intern_vid"]:
         tasks = [["short_cap", ["intern_vid"], 0.1],
                 ["long_cap_oe_mc", ["llava_video_178k"], 0.9]]
         eval_tasks = ["mvbench"]
@@ -74,13 +71,23 @@ if __name__ == "__main__":
         tasks = [["lv_mc", ["llava_video_178k_mc"], 1.0]]
         eval_tasks = ["mvbench"]
 
-    elif args.mixture in ["lv_oe"]:
-        tasks = [["lv_oe", ["llava_video_178k_oe"], 1.0]]
+    elif args.mixture in ["lv_oe_mc"]:
+        tasks = [["lv_mc", ["llava_video_178k_mc"], 0.2],
+                 ["lv_oe", ["llava_video_178k_oe"], 0.8],]
+        eval_tasks = ["mvbench"]
+        inference_task_list = ["mvbench", "perception_test", "ego_schema", "nextqa_mc:test",
+                               "long_video_bench_no_subtitle", "video_mme", "temp_compass"]
+
+    elif args.mixture in ["fgqa"]:
+        tasks = [["fgqa", ["plm_fgqa_train"], 1.0],]
         eval_tasks = ["mvbench"]
 
-    elif args.mixture in ["lv_long_cap"]:
-        tasks = [["lv_long_cap", ["llava_video_178k_cap"], 1.0]]
+    elif args.mixture in ["fgqa_lv_mc"]:
+        tasks = [["lv_mc", ["llava_video_178k_mc"], 0.2],
+                 ["fgqa", ["plm_fgqa_train"], 0.8],]
         eval_tasks = ["mvbench"]
+        inference_task_list = ["mvbench", "perception_test", "ego_schema", "nextqa_mc:test",
+                               "long_video_bench_no_subtitle", "video_mme", "temp_compass"]
 
     elif args.mixture in ["lv"]:
         tasks = [["lv_mc", ["llava_video_178k_mc"], 0.2],
@@ -115,6 +122,9 @@ if __name__ == "__main__":
     else:
         raise NotImplementedError(args.mixture)
 
+    if len(inference_task_list) == 0:
+        inference_task_list = eval_tasks
+
     debug = args.checkpoint in ["debug"]
     if debug:
         checkpoint = None
@@ -141,7 +151,10 @@ if __name__ == "__main__":
         log_interval = args.log_interval
         save_interval = args.eval_interval
         eval_interval = args.eval_interval
-        inf_eval_interval = args.inf_eval_interval
+        if args.inf_eval_interval == -1:
+            inf_eval_interval = args.duration
+        else:
+            inf_eval_interval = args.inf_eval_interval
         duration = args.duration
         checkpoint = select_checkpoint(args.checkpoint)
         if exists(join(args.checkpoint, "model.yaml")):
@@ -220,8 +233,9 @@ if __name__ == "__main__":
         evaluation.data.prefetch_factor = args.prefetch_factor
         evaluations.append(evaluation)
 
+    for inference_task in inference_task_list:
         inf_evaluation = get_evaluation(
-            task,
+            inference_task,
             seq_len,
             max_examples=args.max_eval_examples_inf,
             num_workers=num_workers,
@@ -229,7 +243,7 @@ if __name__ == "__main__":
             device_batch_size=args.device_inf_batch_size,
         )
         inf_evaluation.data.persistent_workers = True
-        evaluation.data.prefetch_factor = args.prefetch_factor
+        inf_evaluation.data.prefetch_factor = args.prefetch_factor
         inf_evaluators.append(inf_evaluation)
 
     import os

@@ -6,7 +6,9 @@ import json
 import tarfile
 from collections import Counter
 
-# import glob
+import subprocess
+import random
+
 import yaml
 import pandas as pd
 import numpy as np
@@ -14,10 +16,11 @@ import numpy as np
 import imageio.v3 as iio
 from moviepy import VideoFileClip
 
+import ffmpeg
+
 import ast
 import decord
 from olmo import tokenizer
-from torchvision.datasets.utils import list_dir
 from tqdm import tqdm
 
 from olmo.io import read_file, is_url, glob, file_exists, get_bytes_range
@@ -28,7 +31,9 @@ from decord import VideoReader, cpu
 
 from os.path import join, exists
 
-from olmo.data.dataset import DatasetBase, VIDEO_DATA_HOME, DatasetBase
+from olmo.data.dataset import DatasetBase, VIDEO_DATA_HOME
+
+from olmo.models.video_olmo.video_preprocessor import load_decord_video
 
 
 def create_video_from_frames(frames_dir, start_frame, end_frame, fps=3):
@@ -68,7 +73,8 @@ def create_video_from_frames(frames_dir, start_frame, end_frame, fps=3):
     return output_path
 
 
-def save_bounded_video(video_path, start_time, end_time, task_type):
+def save_bounded_video(video_path, start_time, end_time, task_type="default",
+                       output_folder=None, clip_tag="bounded_decimal_2", use_video_file_clip=False):
     """
     Creates a new video file containing only the segment between start_time and end_time.
     
@@ -77,7 +83,9 @@ def save_bounded_video(video_path, start_time, end_time, task_type):
         start_time (float): Start time in seconds
         end_time (float): End time in seconds
         task_type (str): Type of task, determines handling of frames vs video
-    
+        output_folder (str): Path to the output folder, if None, output folder will be created
+        clip_tag (str): Tag for the new video file, if None, no tag will be added to the new video file
+
     Returns:
         str: Path to the new bounded video file
     """
@@ -94,7 +102,16 @@ def save_bounded_video(video_path, start_time, end_time, task_type):
     # round start_time and end_time to 2 decimal places
     start_time = round(start_time, 2)
     end_time = round(end_time, 2)
-    output_path = f"{base_path}_bounded_decimal_2_{start_time}_{end_time}{ext}"
+
+    clip_id = f"{start_time}_{end_time}{ext}"
+    if clip_tag:
+        clip_id = f"{clip_tag}_{clip_id}"
+
+    if output_folder is None:
+        output_path = f"{base_path}_{clip_id}"
+    else:
+        file_name_no_ext = os.path.splitext(os.path.basename(video_path))[0]
+        output_path = os.path.join(output_folder, f"{file_name_no_ext}_{clip_id}")
 
     if file_exists(output_path):
         return output_path
@@ -102,18 +119,261 @@ def save_bounded_video(video_path, start_time, end_time, task_type):
     metadata = iio.immeta(video_path)
     duration = metadata['duration']
 
-    # Load the video and extract the subclip
-    video = VideoFileClip(video_path)
-    clip = video.subclipped(start_time, min(end_time, duration))
-    
-    # Write the subclip to file
-    clip.write_videofile(output_path, codec='libx264')
-    
-    # Close the video to free up resources
-    video.close()
-    clip.close()
+    if use_video_file_clip:
+        video = VideoFileClip(video_path)
+        clip = video.subclipped(start_time, min(end_time, duration))
+        clip.write_videofile(output_path, codec='libx264')
+        video.close()
+        clip.close()
+    else:
+        input_file = ffmpeg.input(video_path).trim(start=start_time, end=end_time).setpts('PTS-STARTPTS')
+        output_file = ffmpeg.output(input_file, output_path)
+        ffmpeg.run(output_file)
     
     return output_path
+
+
+def reformat_webm_to_mp4_if_needed(input_path):
+    """
+    Reformats a WebM file to MP4 format.
+
+    Args:
+        input_path (str): Path to the input WebM file.
+
+    Returns:
+        str: The path to the reformatted MP4 file.
+    """
+
+    if ".webm" not in input_path:
+        return input_path
+
+    output_path = input_path.replace(".webm", ".mp4")
+    if os.path.exists(output_path):
+        return output_path
+
+    video = VideoFileClip(input_path)
+    video.write_videofile(output_path, codec="libx264", audio_codec="aac")
+    video.close()
+    return output_path
+
+
+class PlmFGQAEval(DatasetBase):
+    data_path = os.path.join(VIDEO_DATA_HOME, "PLM-FGQA")
+    ego_exo_data_path = os.path.join(VIDEO_DATA_HOME, "PLM-FGQA/egoexo4d")
+    ego_4d_data_path = os.path.join(VIDEO_DATA_HOME, "Ego4d/ego4d_data/v2/full_scale")
+    yt_dataset_path = os.path.join(VIDEO_DATA_HOME, "PLM-FGQA/plm-eval-videos/")
+
+    def __init__(self, split):
+        assert split in ["validation"]
+        super().__init__(split)
+
+    @staticmethod
+    def qa_template(option_candidates, correct_choice, question):
+        option_text = "\n".join(f"{chr(ord('A') + idx)}. {opt}" for idx, opt in enumerate(option_candidates))
+        answer = f"{chr(ord('A') + correct_choice)}"
+        question = "\n".join(
+            [
+                question,
+                option_text,
+                "Answer with the option's letter from the given choices directly.",
+            ]
+        )
+        return question, answer
+
+    def get_ego_exo_video_path(self, item, row, egoexo_segment_id_to_camera_id):
+        segment_id = row['video'].split(".mp4")[0]
+        selected_camera_id = egoexo_segment_id_to_camera_id[segment_id]
+        camera, cam_source = selected_camera_id.split("_")
+        camera_metadata = item['frame_aligned_videos'][camera]
+        return os.path.join(self.ego_exo_data_path, item['root_dir'], camera_metadata[cam_source]["relative_path"])
+
+    def load(self):
+        ego_exo_metadata_path = os.path.join(self.ego_exo_data_path, "takes.json")
+        with open(ego_exo_metadata_path) as f:
+            ego_exo_metadata = json.load(f)
+        ego_exo_uid_to_metadata = {}
+        for item in ego_exo_metadata:
+            ego_exo_uid_to_metadata[item['take_uid']] = item
+
+        egoexo_segment_to_camera_map = pd.read_csv(os.path.join(self.data_path, "fgqa_test_egoexo4d_segment2cam.csv"))
+        egoexo_segment_id_to_camera_id = {}
+        for index, row in egoexo_segment_to_camera_map.iterrows():
+            egoexo_segment_id_to_camera_id[row['segment_uid']] = row['camera_name']
+
+        data = []
+        # get the metadata column and get list of source
+        fgqa_df = pd.read_parquet(os.path.join(self.data_path, "plm_fgqa_test.parquet"))
+        for index, row in fgqa_df.iterrows():
+            metadata = row['metadata']
+            source_id = metadata['source_video_id']
+            source = metadata['source_dataset']
+            question_group_id = row['qa_uid']
+            if source == "egoexo4d":
+                video_path = self.get_ego_exo_video_path(ego_exo_uid_to_metadata[source_id], row, egoexo_segment_id_to_camera_id)
+            elif source == "ego4d":
+                video_path = os.path.join(self.ego_4d_data_path, source_id + ".mp4")
+            else:
+                if not os.path.exists(os.path.join(self.yt_dataset_path, source_id)):
+                    continue  # Some videos in the PLM eval set and no longer found on the internet
+
+                file_list = os.listdir(os.path.join(self.yt_dataset_path, source_id))
+                assert len(file_list) >= 2, f"Number of files in {source_id} is {len(file_list)}, expected >= 2. {file_list}"
+                video_path = None
+                for file_name in file_list:
+                    if ".json" not in file_name and "_bounded_" not in file_name:
+                        video_path = os.path.join(self.yt_dataset_path, source_id, file_name)
+                        break
+                assert video_path is not None, f"No video file found for {source_id}"
+
+                _, video_ext = os.path.splitext(video_path)
+                if "webm" in video_ext:
+                    video_path = reformat_webm_to_mp4_if_needed(video_path)
+
+            start_time = metadata['source_start_time']
+            end_time = metadata['source_end_time']
+            video_path = save_bounded_video(video_path, start_time, end_time, task_type="default")
+
+            option_tuple_list = [(option[0], option[1]) for option in row['options'].items()]
+            sorted_options = sorted(option_tuple_list, key=lambda x: int(x[0].lstrip("option_")))
+            option_list = [option[1] for option in sorted_options]
+
+            question, answer = self.qa_template(option_list, int(row['answer_index']), row['question'])
+            example = {
+                "question": question,
+                "answer": answer,
+                "video": video_path,
+                "metadata": dict(
+                    question_id=row["uid"],
+                    question_group_id=question_group_id,
+                    video_segment_id=row['video'],
+                    video_source_id=source_id,
+                    video_source_type=source,
+                    options=option_list,
+                )
+            }
+            data.append(example)
+        return data
+
+    def get(self, idx, rng):
+        return dict(**self.data[idx], style="video_eval_multiple_choice")
+
+
+class PlmFGQATrain(DatasetBase):
+    data_path = os.path.join(VIDEO_DATA_HOME, "PLM-FGQA")
+    coin_video_path = os.path.join(VIDEO_DATA_HOME, "coin/videos")
+    coin_video_segments_path = os.path.join(VIDEO_DATA_HOME, "coin/video_segments")
+    youcook2_path = os.path.join(VIDEO_DATA_HOME, "YouCook2/all_data")
+    youcook2_video_path = os.path.join(VIDEO_DATA_HOME, "YouCook2/all_data/raw_videos/training")
+    youcook2_video_wo_ext_to_video_path = os.path.join(VIDEO_DATA_HOME, "YouCook2/all_data/video_wo_ext_to_video_path.json")
+    crosstask_path = os.path.join(VIDEO_DATA_HOME, "crosstask")
+    ego_4d_data_path = os.path.join(VIDEO_DATA_HOME, "Ego4d/ego4d_data/v2/full_scale")
+    ht100m_data_path = os.path.join(VIDEO_DATA_HOME, "ht100m")
+    ht100m_non_h264_path = os.path.join(VIDEO_DATA_HOME, "ht100m/non_h264_ht100m_may_6_2025_57k_filtered.txt")
+
+    def __init__(self, split):
+        assert split in ["train"]
+        super().__init__(split)
+
+    @staticmethod
+    def probe_for_h264(video_path):
+        result = subprocess.run(
+            ['ffprobe', '-v', 'error', '-select_streams', 'v:0',
+             '-show_entries', 'stream=codec_name', '-of', 'default=nw=1:nk=1', video_path],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+        return result.stdout.strip() == 'h264'
+
+    def load(self):
+        data = []
+
+        youcook2_video_wo_ext_to_video = json.load(open(self.youcook2_video_wo_ext_to_video_path))
+        ht100m_non_h264 = open(self.ht100m_non_h264_path).read().splitlines()
+        ht100m_non_h264 = set([row.strip() for row in ht100m_non_h264])
+
+        fgqa_df = pd.read_parquet(os.path.join(self.data_path, "plm_fgqa_train_w_src.parquet"))
+        # fgqa_df = fgqa_df[fgqa_df['source'] == "ht100mq"]
+        # fgqa_df = fgqa_df[:1000]
+
+        segment_id_to_message_list = {}
+        for index, row in fgqa_df.iterrows():
+            metadata = row['metadata']
+            source_id = metadata['source_video_id']
+            source = metadata['source_dataset']
+            start_time = metadata['source_start_time']
+            end_time = metadata['source_end_time']
+
+            if source == "coin":
+                video_path = os.path.join(self.coin_video_segments_path, f"{source_id}_{round(start_time, 2)}_{round(end_time, 2)}.mp4")
+                if not os.path.exists(video_path):
+                    continue
+            elif source == "youcook2":
+                video_path = youcook2_video_wo_ext_to_video[source_id]
+                video_path = reformat_webm_to_mp4_if_needed(video_path)
+                video_path = save_bounded_video(video_path, start_time, end_time, task_type="default")
+            elif source == "crosstask":
+                video_path = os.path.join(self.crosstask_path, source_id, f"{source_id}.mp4")
+                if not os.path.exists(video_path):
+                    continue
+                video_path = save_bounded_video(video_path, start_time, end_time, task_type="default")
+            elif source == "ego4d":
+                video_path = os.path.join(self.ego_4d_data_path, source_id + ".mp4")
+                if not os.path.exists(video_path):
+                    continue
+                # video_path = save_bounded_video(video_path, start_time, end_time, task_type="default")
+            elif source == "ht100m":
+                video_parent_dir = os.path.join(self.ht100m_data_path, source_id)
+                if not os.path.exists(video_parent_dir):
+                    continue
+                video_path = None
+                for file_name in os.listdir(video_parent_dir):
+                    if ".mkv" in file_name or ".mp4" in file_name or ".webm" in file_name:
+                        video_path = os.path.join(video_parent_dir, file_name)
+                        break
+                if video_path is None:
+                    continue
+                # video_path = reformat_webm_to_mp4_if_needed(video_path)
+                if ".webm" in video_path:
+                    continue
+                if video_path in ht100m_non_h264:
+                    continue
+            else:
+                continue
+
+            if row['segment_id'] not in segment_id_to_message_list:
+                segment_id_to_message_list[row['segment_id']] = {
+                    "video": video_path,
+                    "metadata": dict(
+                        video_segment_id=row['segment_id'],
+                        video_source_id=source_id,
+                        video_source_dataset=source,
+                    ),
+                    "message_list": [dict(
+                            question=row['question'],
+                            answer=row['answer'],
+                            style="llava_video_da",
+                        )
+                    ]
+                }
+                if source in ["ht100m", "ego4d"]:
+                    segment_id_to_message_list[row['segment_id']]['metadata']['clip_start_time'] = start_time
+                    segment_id_to_message_list[row['segment_id']]['metadata']['clip_end_time'] = end_time
+            else:
+                segment_id_to_message_list[row['segment_id']]['message_list'].append(
+                    dict(
+                        question=row['question'],
+                        answer=row['answer'],
+                        style="llava_video_da",
+                    )
+                )
+
+        for segment_id, example in segment_id_to_message_list.items():
+            data.append(example)
+        return data
+
+    def get(self, idx, rng):
+        return dict(**self.data[idx], )
 
 
 class NeXTQA(DatasetBase):
@@ -175,8 +435,9 @@ class NeXTQA(DatasetBase):
 class LongVideoBench(DatasetBase):
     data_path = os.path.join(VIDEO_DATA_HOME, "LongVideoBench")
 
-    def __init__(self, split):
+    def __init__(self, split, allow_subtitle=True):
         assert split in ["validation"]
+        self.allow_subtitle = allow_subtitle
         super().__init__(split)
     
     def qa_template(self, qa_data):
@@ -195,8 +456,11 @@ class LongVideoBench(DatasetBase):
         json_data = json.loads(read_file(os.path.join(self.data_path, "lvb_val.json")))
         data = []
         for qa_data in json_data:
-            video_path = os.path.join(self.data_path, "videos", qa_data["video_path"])
             question, answer = self.qa_template(qa_data)
+            if not self.allow_subtitle and "subtitle" in question:
+                continue
+
+            video_path = os.path.join(self.data_path, "videos", qa_data["video_path"])
             example = {
                 "question": question,
                 "answer": answer,
@@ -775,7 +1039,22 @@ class LLaVAVideo178K(DatasetBase):
 
     def __len__(self):
         return len(self.data)
-    
+
+    def get_shuffle_subset(self, set_video_paths):
+        """
+        Code to create a shuffled video names file that can be used to get train/val split
+        """
+        video_id_list = []
+        for video_path in set_video_paths:
+            video_id_list.append(video_path.split("LLaVA-Video-178K/")[1])
+        print(f"Unique video names: {len(video_id_list)}")
+
+        # save all names to a dictionary
+        sorted_video_names = sorted(video_id_list)
+        random.seed(42)
+        random.shuffle(sorted_video_names)
+        json.dump(sorted_video_names, open(self.shuffled_video_names_path, 'w'))
+
     def get(self, idx, rng):
         return self.data[idx]
 
@@ -971,3 +1250,81 @@ class PeVideo(DatasetBase):
             style="long_caption",
             metadata=dict(example_id=data["video_id"]),
         )
+
+
+if __name__ == "__main__":
+
+    # input_path = "/weka/oe-training-default/mm-olmo/video_datasets/Ego4d/ego4d_data/v2/full_scale/bdab681e-1d1b-49f7-983a-92a563ae4dfd.mp4"
+    # output_folder = "/weka/oe-training-default/rohunt/data_viz"
+    # start = 2.0
+    # end = 6.0
+    # start_timer = time.time()
+    # save_bounded_video(input_path, start, end, output_folder=output_folder,
+    #                    clip_tag="use_video_file_clip", use_video_file_clip=True)
+    # end_timer = time.time()
+    # first_time = end_timer - start_timer
+    #
+    # start_timer = time.time()
+    # save_bounded_video(input_path, start, end, output_folder=output_folder,
+    #                    clip_tag="use_ffmpeg_set_pts", use_video_file_clip=False)
+    # end_timer = time.time()
+    # second_time = end_timer - start_timer
+    # print(f"First time: {first_time}, second time: {second_time}")
+
+    # Test decord for trimming and loading of clips
+    dataset = PlmFGQATrain("train")
+
+    # for example in dataset.data:
+    #     try:
+    #         if "clip_start_time" in example['metadata']:
+    #             load_decord_video(video_path=example['video'],
+    #                               clip_start_time=example['metadata']['clip_start_time'],
+    #                               clip_end_time=example['metadata']['clip_end_time'],
+    #                               max_frames=48)
+    #         else:
+    #             load_decord_video(video_path=example['video'], max_frames=48)
+    #     except Exception as e:
+    #         import pdb; pdb.set_trace()
+
+    print("Number of unique videos - ", len(set([ex["video"] for ex in dataset])))
+    print("Number of unique segments - ", len(dataset))
+    print("Number of unique QA - ", sum([len(ex['message_list']) for ex in dataset]))
+
+    # dataset = LLaVAVideo178K("train", "caption",
+    #                          id_source="/weka/oe-training-default/mm-olmo/video_captions/video-captions-9k.parquet",
+    #                          cap_source="lv")
+    # print(f"Total samples: {len(dataset)}")
+    #
+    # set_video_paths = set(dataset.video_paths)
+    # print(f"Unique video names: {len(set_video_paths)}")
+    #
+    # caption_length = []
+    # for i in range(len(dataset)):
+    #     ex = dataset[i]
+    #     caption_length.append(len(ex["message_list"][0]['answer'].split(" ")))
+    #
+    # print("LLava annotations on annotated train set. Max and mean length of words")
+    # print(np.max(caption_length))
+    # print(np.mean(caption_length))
+
+    # # Code to test loading of the videos
+    # from multiprocessing import Pool
+    # from tqdm import tqdm
+
+    # def process_video(video_path):
+    #     try:
+    #         frames = load_all_frames_decord_or_pyav(video_path)
+    #     except Exception as e:
+    #         print(f"Error loading video {video_path}: {e}")
+    #
+    # video_path_list = list(set([ex["video"] for ex in dataset]))
+    # with Pool(processes=2) as pool:
+    #     result = list(tqdm(pool.imap(process_video, video_path_list), total=len(video_path_list)))
+
+    # # Run ffprobe to find the videos that won't be loaded by decord
+    # for video in tqdm(list(set([ex["video"] for ex in dataset]))):
+    #     try:
+    #         if not PlmFGQATrain.probe_for_h264(video):
+    #             print(video)
+    #     except:
+    #         print(video)
