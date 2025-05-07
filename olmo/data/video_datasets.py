@@ -6,7 +6,7 @@ import json
 import tarfile
 from collections import Counter
 
-import time
+import subprocess
 import random
 
 import yaml
@@ -264,21 +264,37 @@ class PlmFGQATrain(DatasetBase):
     coin_video_segments_path = os.path.join(VIDEO_DATA_HOME, "coin/video_segments")
     youcook2_path = os.path.join(VIDEO_DATA_HOME, "YouCook2/all_data")
     youcook2_video_path = os.path.join(VIDEO_DATA_HOME, "YouCook2/all_data/raw_videos/training")
+    youcook2_video_wo_ext_to_video_path = os.path.join(VIDEO_DATA_HOME, "YouCook2/all_data/video_wo_ext_to_video_path.json")
     crosstask_path = os.path.join(VIDEO_DATA_HOME, "crosstask")
     ego_4d_data_path = os.path.join(VIDEO_DATA_HOME, "Ego4d/ego4d_data/v2/full_scale")
     ht100m_data_path = os.path.join(VIDEO_DATA_HOME, "ht100m")
+    ht100m_non_h264_path = os.path.join(VIDEO_DATA_HOME, "ht100m/non_h264_ht100m_may_6_2025_57k_filtered.txt")
 
     def __init__(self, split):
         assert split in ["train"]
         super().__init__(split)
 
+    @staticmethod
+    def probe_for_h264(video_path):
+        result = subprocess.run(
+            ['ffprobe', '-v', 'error', '-select_streams', 'v:0',
+             '-show_entries', 'stream=codec_name', '-of', 'default=nw=1:nk=1', video_path],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+        return result.stdout.strip() == 'h264'
+
     def load(self):
         data = []
 
-        youcook2_video_wo_ext_to_video_path = json.load(open(os.path.join(self.youcook2_path, "video_wo_ext_to_video_path.json")))
+        youcook2_video_wo_ext_to_video = json.load(open(self.youcook2_video_wo_ext_to_video_path))
+        ht100m_non_h264 = open(self.ht100m_non_h264_path).read().splitlines()
+        ht100m_non_h264 = set([row.strip() for row in ht100m_non_h264])
 
         fgqa_df = pd.read_parquet(os.path.join(self.data_path, "plm_fgqa_train_w_src.parquet"))
-        # fgqa_df = fgqa_df[fgqa_df['source'] == "ht100m"]
+        # fgqa_df = fgqa_df[fgqa_df['source'] == "ht100mq"]
+        # fgqa_df = fgqa_df[:1000]
 
         segment_id_to_message_list = {}
         for index, row in fgqa_df.iterrows():
@@ -293,7 +309,7 @@ class PlmFGQATrain(DatasetBase):
                 if not os.path.exists(video_path):
                     continue
             elif source == "youcook2":
-                video_path = youcook2_video_wo_ext_to_video_path[source_id]
+                video_path = youcook2_video_wo_ext_to_video[source_id]
                 video_path = reformat_webm_to_mp4_if_needed(video_path)
                 video_path = save_bounded_video(video_path, start_time, end_time, task_type="default")
             elif source == "crosstask":
@@ -319,6 +335,8 @@ class PlmFGQATrain(DatasetBase):
                     continue
                 # video_path = reformat_webm_to_mp4_if_needed(video_path)
                 if ".webm" in video_path:
+                    continue
+                if video_path in ht100m_non_h264:
                     continue
             else:
                 continue
@@ -1255,22 +1273,22 @@ if __name__ == "__main__":
 
     # Test decord for trimming and loading of clips
     dataset = PlmFGQATrain("train")
-    print(f"Total samples: {len(dataset)}")
 
-    for example in dataset.data:
-        try:
-            if "clip_start_time" in example['metadata']:
-                load_decord_video(video_path=example['video'],
-                                  clip_start_time=example['metadata']['clip_start_time'],
-                                  clip_end_time=example['metadata']['clip_end_time'],
-                                  max_frames=48)
-            else:
-                load_decord_video(video_path=example['video'], max_frames=48)
-        except Exception as e:
-            import pdb; pdb.set_trace()
+    # for example in dataset.data:
+    #     try:
+    #         if "clip_start_time" in example['metadata']:
+    #             load_decord_video(video_path=example['video'],
+    #                               clip_start_time=example['metadata']['clip_start_time'],
+    #                               clip_end_time=example['metadata']['clip_end_time'],
+    #                               max_frames=48)
+    #         else:
+    #             load_decord_video(video_path=example['video'], max_frames=48)
+    #     except Exception as e:
+    #         import pdb; pdb.set_trace()
 
-    # video_source_id_set = set([ex["metadata"]["video_source_id"] for ex in dataset])
-    # print(sum([len(ex['message_list']) for ex in dataset]))
+    print("Number of unique videos - ", len(set([ex["video"] for ex in dataset])))
+    print("Number of unique segments - ", len(dataset))
+    print("Number of unique QA - ", sum([len(ex['message_list']) for ex in dataset]))
 
     # dataset = LLaVAVideo178K("train", "caption",
     #                          id_source="/weka/oe-training-default/mm-olmo/video_captions/video-captions-9k.parquet",
@@ -1298,7 +1316,15 @@ if __name__ == "__main__":
     #         frames = load_all_frames_decord_or_pyav(video_path)
     #     except Exception as e:
     #         print(f"Error loading video {video_path}: {e}")
-
-    # video_path_list = list(set_video_paths)
-    # with Pool(processes=32) as pool:
+    #
+    # video_path_list = list(set([ex["video"] for ex in dataset]))
+    # with Pool(processes=2) as pool:
     #     result = list(tqdm(pool.imap(process_video, video_path_list), total=len(video_path_list)))
+
+    # # Run ffprobe to find the videos that won't be loaded by decord
+    # for video in tqdm(list(set([ex["video"] for ex in dataset]))):
+    #     try:
+    #         if not PlmFGQATrain.probe_for_h264(video):
+    #             print(video)
+    #     except:
+    #         print(video)
