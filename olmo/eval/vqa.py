@@ -495,7 +495,7 @@ def nextqa_get_multi_choice_info(options: List[str]) -> Tuple[Dict[str, str], Li
     all_choices = []
     index2ans = {}
     OPTIONS = ["A", "B", "C", "D", "E"]
-    for i in range(4):
+    for i in range(len(OPTIONS)):
         index2ans[OPTIONS[i]] = options[i].strip()
         all_choices.append(OPTIONS[i])
     
