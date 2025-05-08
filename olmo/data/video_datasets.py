@@ -292,8 +292,8 @@ class PlmFGQATrain(DatasetBase):
         ht100m_non_h264 = open(self.ht100m_non_h264_path).read().splitlines()
         ht100m_non_h264 = set([row.strip() for row in ht100m_non_h264])
 
-        fgqa_df = pd.read_parquet(os.path.join(self.data_path, "plm_fgqa_train_w_src.parquet"))
-        # fgqa_df = fgqa_df[fgqa_df['source'] == "ht100mq"]
+        fgqa_df = pd.read_parquet(os.path.join(self.data_path, "plm_fgqa_train_w_src_with_src_id_duration.parquet"))
+        # fgqa_df = fgqa_df[fgqa_df['source'] == "ht100m"]
         # fgqa_df = fgqa_df[:1000]
 
         segment_id_to_message_list = {}
@@ -337,6 +337,8 @@ class PlmFGQATrain(DatasetBase):
                 if ".webm" in video_path:
                     continue
                 if video_path in ht100m_non_h264:
+                    continue
+                if start_time >= row['duration']:
                     continue
             else:
                 continue
@@ -1289,6 +1291,8 @@ if __name__ == "__main__":
     print("Number of unique videos - ", len(set([ex["video"] for ex in dataset])))
     print("Number of unique segments - ", len(dataset))
     print("Number of unique QA - ", sum([len(ex['message_list']) for ex in dataset]))
+
+    import pdb; pdb.set_trace()
 
     # dataset = LLaVAVideo178K("train", "caption",
     #                          id_source="/weka/oe-training-default/mm-olmo/video_captions/video-captions-9k.parquet",
