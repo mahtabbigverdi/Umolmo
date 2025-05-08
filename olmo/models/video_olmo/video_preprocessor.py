@@ -135,6 +135,8 @@ def load_pyav_video(
     max_frames: int = 8,
     frame_sample_mode: str = "fps",
     candidate_sampling_fps: Tuple[float] = (0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0),
+    clip_start_time: float= None,
+    clip_end_time: float = None,
 ) -> Tuple[np.ndarray, List[float], float]:
     """
     Load a video and returns frames as RGB numpy array.
@@ -145,17 +147,30 @@ def load_pyav_video(
     video_fps = meta["fps"]
     duration = meta["duration"]
     total_frames = int(np.floor(video_fps * duration))
+    start_offset = 0
+
+    if clip_start_time:
+        start_offset = int(clip_start_time * video_fps)
+
+        assert clip_end_time is not None
+        meta = iio.immeta(video_path)
+        clip_end_time = min(clip_end_time, meta['duration'])
+        total_frames = min(total_frames, int(clip_end_time * video_fps)) - start_offset
 
     selected_sampling_fps = get_sampling_fps(video_fps, max_frames, total_frames, frame_sample_mode, candidate_sampling_fps)
 
     sampling_fps, frame_times, frame_indices = get_frame_times_and_chosen_fps(selected_sampling_fps, total_frames, max_frames, video_fps)
 
+    # shift frame indices to start to index for clip start index
+    frame_indices += start_offset
+
     frame_idx, frames = 0, []
+    frame_indices = set(frame_indices)
     for frame in iio.imiter(video_path, plugin="pyav"):
         if frame_idx in frame_indices:
             frames.append(frame)
         frame_idx += 1
-        if len(frames) == max_frames:
+        if len(frames) == len(frame_indices):
             break
     return np.stack(frames), frame_times, sampling_fps
 
@@ -174,9 +189,10 @@ def load_video_decord_or_pyav(
     try:
         outputs = load_decord_video(video_path, max_frames, frame_sample_mode=frame_sample_mode, candidate_sampling_fps=candidate_sampling_fps,
                                     clip_start_time=clip_start_time, clip_end_time=clip_end_time)
-    except Exception as e:
-        # outputs = load_pyav_video(video_path, max_frames, frame_sample_mode=frame_sample_mode, candidate_sampling_fps=candidate_sampling_fps)
-        raise Exception(f"Failed to load video with decord, Skipping - ", video_path)
+    except:
+        # Don't rely on this. Ideally, post process all the clips / videos to be h264 compatible and use decord all the time.
+        outputs = load_pyav_video(video_path, max_frames, frame_sample_mode=frame_sample_mode, candidate_sampling_fps=candidate_sampling_fps,
+                                    clip_start_time=clip_start_time, clip_end_time=clip_end_time)
 
     return outputs
 
