@@ -33,7 +33,7 @@ from os.path import join, exists
 
 from olmo.data.dataset import DatasetBase, VIDEO_DATA_HOME
 
-from olmo.models.video_olmo.video_preprocessor import load_decord_video
+from olmo.models.video_olmo.video_preprocessor import load_video_decord_or_pyav
 
 
 def create_video_from_frames(frames_dir, start_frame, end_frame, fps=3):
@@ -301,8 +301,11 @@ class PlmFGQATrain(DatasetBase):
             metadata = row['metadata']
             source_id = metadata['source_video_id']
             source = metadata['source_dataset']
+
             start_time = metadata['source_start_time']
             end_time = metadata['source_end_time']
+            if start_time < 0 or (end_time - start_time) < 0.05:
+                continue
 
             if source == "coin":
                 video_path = os.path.join(self.coin_video_segments_path, f"{source_id}_{round(start_time, 2)}_{round(end_time, 2)}.mp4")
@@ -1292,8 +1295,6 @@ if __name__ == "__main__":
     print("Number of unique segments - ", len(dataset))
     print("Number of unique QA - ", sum([len(ex['message_list']) for ex in dataset]))
 
-    import pdb; pdb.set_trace()
-
     # dataset = LLaVAVideo178K("train", "caption",
     #                          id_source="/weka/oe-training-default/mm-olmo/video_captions/video-captions-9k.parquet",
     #                          cap_source="lv")
@@ -1314,16 +1315,24 @@ if __name__ == "__main__":
     # # Code to test loading of the videos
     # from multiprocessing import Pool
     # from tqdm import tqdm
-
-    # def process_video(video_path):
-    #     try:
-    #         frames = load_all_frames_decord_or_pyav(video_path)
-    #     except Exception as e:
-    #         print(f"Error loading video {video_path}: {e}")
     #
-    # video_path_list = list(set([ex["video"] for ex in dataset]))
-    # with Pool(processes=2) as pool:
-    #     result = list(tqdm(pool.imap(process_video, video_path_list), total=len(video_path_list)))
+    # def process_video(example):
+    #     try:
+    #         if "metadata" in example and "clip_start_time" in example["metadata"]:
+    #             clip_start_time = example["metadata"]["clip_start_time"]
+    #             clip_end_time = example["metadata"]["clip_end_time"]
+    #             frames, frame_times, chosen_fps = load_video_decord_or_pyav(example["video"], max_frames=48, clip_start_time=clip_start_time, clip_end_time=clip_end_time)
+    #
+    #         else:
+    #             frames, frame_times, chosen_fps = load_video_decord_or_pyav(example["video"], max_frames=48)
+    #         if len(frames) == 0:
+    #             raise ValueError("len(frames)==0")
+    #     except Exception as e:
+    #         print(f"Error loading video {example['video']}: {e}")
+    #
+    # ex_list = dataset.data
+    # with Pool(processes=48) as pool:
+    #     result = list(tqdm(pool.imap(process_video, ex_list), total=len(ex_list)))
 
     # # Run ffprobe to find the videos that won't be loaded by decord
     # for video in tqdm(list(set([ex["video"] for ex in dataset]))):
