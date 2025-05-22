@@ -947,7 +947,7 @@ class CorrectionQa(Dataset):
     def __len__(self):
         return len(self.dataset)
     
-    def get(self, item, rng):
+    def get(self, item, rng: np.random.RandomState):
         example = self.dataset[item]
         image = example["image"]
         dst_prefix = join(DATA_HOME, "correction_images")
@@ -958,7 +958,7 @@ class CorrectionQa(Dataset):
         messages = []
         for q, a in zip(example["questions"], example["answers"]):
             messages.append(dict(question=q, answer=a, style="correction_qa"))
-        random.shuffle(messages)
+        rng.shuffle(messages)
         return dict(
             image=image,
             message_list=messages,
