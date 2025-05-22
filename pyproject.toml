@@ -39,7 +39,7 @@ dependencies = [
     "imageio",
     "imageio[pyav]",
     "decord",
-    "pyav",
+    "av",
     "moviepy"
 ]
 
@@ -58,8 +58,8 @@ dev = [
 ]
 train = [
     "wandb",
-    "beaker-py>=1.34.1",
-    "beaker-gantry",
+    "beaker-py==1.36.2",
+    "beaker-gantry==1.17.0",
     "click",
     "torchmetrics",
     "smashed[remote]>=0.21.1",
