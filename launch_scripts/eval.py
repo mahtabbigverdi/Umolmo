@@ -40,7 +40,7 @@ def main():
 
     checkpoint_dir = select_checkpoint(args.checkpoint)
     if args.fsdp:
-        if args.seq_len is not None:
+        if args.seq_len is None:
             raise ValueError("Sequence length is required if using FSDP")
 
     if args.loss:
