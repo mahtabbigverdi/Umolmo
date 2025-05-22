@@ -510,6 +510,64 @@ def convert_state_dict_qwen2(state_dict, config: LlmConfig, block_type: BlockTyp
     return out
 
 
+def convert_state_dict_qwen3(state_dict, config: LlmConfig, block_type: BlockType) -> Dict[str, Any]:
+    state_dict = unflatten_dict(state_dict, sep=".")
+    assert len(state_dict) == 2
+    lmhead = state_dict["lm_head"]
+    state_dict = state_dict["model"]
+
+    blocks = {}
+    for layer in range(config.n_layers):
+        layer_dict = state_dict["layers"][str(layer)]
+        q, k, v, o = [layer_dict["self_attn"][f"{k}_proj"].pop("weight") for k in ["q", "k", "v", "o"]]
+        assert not config.qkv_bias
+
+        mlp_gate = layer_dict["mlp"]["gate_proj"].pop("weight")
+        mlp_up = layer_dict["mlp"]["up_proj"].pop("weight")
+        mlp_down = layer_dict["mlp"]["down_proj"].pop("weight")
+
+        assert block_type == BlockType.sequential
+
+        mapped_layer_dict = {
+            "ff_proj": {
+                "weight": torch.cat([mlp_up, mlp_gate], 0)
+            },
+            "ff_out": {
+                "weight": mlp_down
+            },
+            "ff_norm": {
+                "weight": layer_dict[f"post_attention_layernorm"].pop("weight")
+            },
+            "attn_norm": {
+                "weight": layer_dict[f"input_layernorm"].pop("weight")
+            },
+            "att_proj": dict(weight=torch.cat((q, k, v), dim=0)),
+            "attn_out": dict(weight=o),
+            "q_norm": {
+                "weight": layer_dict["self_attn"]["q_norm"].pop("weight"),
+            },
+            "k_norm": {
+                "weight": layer_dict["self_attn"]["k_norm"].pop("weight"),
+            },
+        }
+
+        blocks[str(layer)] = mapped_layer_dict
+
+    out = flatten_dict(dict(transformer=dict(blocks=blocks)), sep=".")
+    assert list(lmhead) == ["weight"]
+    out.update({
+        "transformer.wte.embedding": state_dict["embed_tokens"].pop("weight"),
+        "transformer.ln_f.weight": state_dict["norm"].pop("weight"),
+    })
+    if not config.weight_tying:
+        out["transformer.ff_out.weight"] = lmhead.pop("weight")
+    else:
+        assert torch.allclose(lmhead.pop("weight"), out["transformer.wte.embedding"])
+    for k in flatten_dict(state_dict):
+        raise ValueError("Unused parameter:", k)
+    return out
+
+
 def convert_state_dict_tulu3(state_dict, config: LlmConfig, block_type: BlockType) -> Dict[str, Any]:
     state_dict = unflatten_dict(state_dict, sep=".")
     assert len(state_dict) == 2
@@ -623,6 +681,8 @@ CONVERT_FNS = {
     "qwen2.5_1.5b": convert_state_dict_qwen2,
     "qwen2_72b": convert_state_dict_qwen2,
     "llama3.1_tulu3.1_8b": convert_state_dict_tulu3,
+    "qwen3_8b_base": convert_state_dict_qwen3,
+    "qwen3_8b": convert_state_dict_qwen3,
 }
 
 
@@ -651,6 +711,8 @@ LLM_HF_SOURCES = {
     "qwen2.5_3b": "Qwen/Qwen2.5-3B",
     "qwen2.5_1.5b": "Qwen/Qwen2.5-1.5B",
     "llama3.1_tulu3.1_8b": "allenai/Llama-3.1-Tulu-3.1-8B",
+    "qwen3_8b_base": "Qwen/Qwen3-8B-Base",
+    "qwen3_8b": "Qwen/Qwen3-8B",
 }
 
 

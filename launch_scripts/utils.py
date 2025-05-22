@@ -9,7 +9,7 @@ from olmo.models.video_olmo.video_olmo import VideoOlmoConfig, MultiModalVideoPr
 from olmo.eval.inf_evaluator import InfDatasetEvaluatorConfig, EvaluatorConfig
 from olmo.eval.loss_evaluator import LossDatasetEvaluatorConfig
 from olmo.nn.image_vit import VitConfig
-from olmo.nn.llm import LlmConfig, AttentionType, LayerNormType
+from olmo.nn.llm import LlmConfig, AttentionType, LayerNormType, AttentionLayerNormType
 from olmo.models.molmo.molmo import MolmoConfig
 from olmo.tokenizer import TokenizerConfig
 from olmo.nn.vision_backbone import MolmoVisionBackboneConfig
@@ -753,6 +753,45 @@ LLAMA31_TULU31_8B = LlmConfig(
 )
 
 
+QWEN3_8B_BASE = LlmConfig(
+    init_path="${oc.env:MOLMO_DATA_DIR}/pretrained_llms/qwen3-8b-base.pt",
+    vocab_size=151936,
+    max_sequence_length=4096,
+    residual_dropout=0,
+    embedding_dropout=0,
+    response_residual_dropout=0,
+    attention_dropout=0,
+    attention_layer_norm=True,
+    attention_layer_norm_type=AttentionLayerNormType.qwen3,
+    rope=True,
+    qkv_bias=False,
+    weight_tying=False,
+    include_bias=False,
+    embedding_size=151936,
+    d_model=4096,
+    mlp_hidden_size=12288*2,
+    n_layers=36,
+    additional_vocab_size=128,
+    n_heads=32,
+    n_kv_heads=8,
+    rope_theta=1000000.0,
+    layer_norm_eps=1e-6,
+    layer_norm_type=LayerNormType.rms,
+    tokenizer=TokenizerConfig(
+        identifier="Qwen/Qwen3-8B-Base",
+    ),
+)
+
+
+QWEN3_8B = replace(
+    QWEN3_8B_BASE,
+    init_path="${oc.env:MOLMO_DATA_DIR}/pretrained_llms/qwen3-8b.pt",
+    tokenizer=TokenizerConfig(
+        identifier="Qwen/Qwen3-8B",
+    ),
+)
+
+
 DEFAULT_LOAD_PATHS = {
     "openai": "${oc.env:MOLMO_DATA_DIR}/pretrained_image_encoders/vit-l-14-336.pt",
     "siglip": "${oc.env:MOLMO_DATA_DIR}/pretrained_image_encoders/siglip-so400m-14-384.pt",
@@ -794,5 +833,7 @@ LLMS: Dict[str, LlmConfig] = {
     "qwen2.5_1.5b": QWEN25_15B,
     "olmo1120_13b": OMLO_19_13B,
     "llama3.1_tulu3.1_8b": LLAMA31_TULU31_8B,
+    "qwen3_8b_base": QWEN3_8B_BASE,
+    "qwen3_8b": QWEN3_8B,
 }
 

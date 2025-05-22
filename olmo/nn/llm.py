@@ -54,6 +54,18 @@ class LayerNormType(StrEnum):
     """
 
 
+class AttentionLayerNormType(StrEnum):
+    olmo = "olmo"
+    """
+    Use the Attention LayerNorm (QK-norm) from OLMo.
+    """
+
+    qwen3 = "qwen3"
+    """
+    Use the Attention LayerNorm (QK-norm) from Qwen3.
+    """
+
+
 class ActivationType(StrEnum):
     quick_gelu = "quick_gelu"
     gelu = "gelu"
@@ -367,6 +379,11 @@ class LlmConfig(BaseConfig):
     """
     Apply layer norm to the keys and queries within the attention mechanism.
     This can help stabilize training.
+    """
+
+    attention_layer_norm_type: AttentionLayerNormType = AttentionLayerNormType.olmo
+    """
+    The type of attention layer norm to use.
     """
 
     residual_dropout: float = 0.1
@@ -1179,12 +1196,18 @@ class OLMoBlock(nn.Module):
         self.q_norm: Optional[LayerNormBase] = None
         if config.attention_layer_norm:
             assert config.effective_n_kv_heads is not None
+            k_norm_size = (
+                config.d_model // config.n_heads
+                if config.attention_layer_norm_type == AttentionLayerNormType.qwen3 else
+                (config.d_model // config.n_heads) * config.effective_n_kv_heads
+            )
             self.k_norm = LayerNormBase.build(
                 config,
-                size=(config.d_model // config.n_heads) * config.effective_n_kv_heads,
+                size=k_norm_size,
                 elementwise_affine=config.attention_layer_norm_with_affine,
             )
-            self.q_norm = LayerNormBase.build(config, elementwise_affine=config.attention_layer_norm_with_affine)
+            q_norm_size = config.d_model // config.n_heads if config.attention_layer_norm_type == AttentionLayerNormType.qwen3 else None
+            self.q_norm = LayerNormBase.build(config, size=q_norm_size, elementwise_affine=config.attention_layer_norm_with_affine)
 
         # Make sure QKV clip coefficient is positive, otherwise it's not well-defined.
         if config.clip_qkv is not None:
@@ -1327,15 +1350,20 @@ class OLMoBlock(nn.Module):
         dtype = k.dtype
 
         # Optionally apply layer norm to keys and queries.
-        if self.q_norm is not None and self.k_norm is not None:
+        if self.q_norm is not None and self.k_norm is not None and self.config.attention_layer_norm_type != AttentionLayerNormType.qwen3:
             q = self.q_norm(q).to(dtype=dtype)
             k = self.k_norm(k).to(dtype=dtype)
 
         # Move head forward to be next to the batch dim.
         # shape: (B, nh, T, hs)
-        q = q.view(B, T, self.config.n_heads, C // self.config.n_heads).transpose(1, 2)
+        q = q.view(B, T, self.config.n_heads, C // self.config.n_heads)
         # shape: (B, n_kv_h, T, hs)
-        k = k.view(B, T, self.config.effective_n_kv_heads, C // self.config.n_heads).transpose(1, 2)
+        k = k.view(B, T, self.config.effective_n_kv_heads, C // self.config.n_heads)
+        if self.q_norm is not None and self.k_norm is not None and self.config.attention_layer_norm_type == AttentionLayerNormType.qwen3:
+            q = self.q_norm(q).to(dtype=dtype)
+            k = self.k_norm(k).to(dtype=dtype)
+        q = q.transpose(1, 2)
+        k = k.transpose(1, 2)
         # shape: (B, n_kv_h, T, hs)
         v = v.view(B, T, self.config.effective_n_kv_heads, C // self.config.n_heads).transpose(1, 2)
 
