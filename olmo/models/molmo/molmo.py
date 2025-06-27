@@ -135,11 +135,14 @@ class Molmo(ModelBase):
                 tokenizer.IM_COL_TOKEN,
                 tokenizer.IM_START_TOKEN,
                 tokenizer.IM_END_TOKEN,
+                tokenizer.IMAGE_GEN_START,
+                tokenizer.IMAGE_GEN_END,
             ]], dtype=torch.long, device=get_default_device())
+        self._image_gen_start_token_id = self.special_ids[tokenizer.IMAGE_GEN_START]   
+        self._image_gen_end_token_id = self.special_ids[tokenizer.IMAGE_GEN_END]   
         self._image_end_token_id = self.special_ids[tokenizer.IM_END_TOKEN]
         self._image_start_token_id = self.special_ids[tokenizer.IM_START_TOKEN]
         self._image_patch_id = self.special_ids[tokenizer.IMAGE_PATCH_TOKEN]
-
     def reset_parameters(self):
         """Re-initialize the weights from scratch"""
         self.transformer.reset_parameters()

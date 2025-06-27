@@ -506,7 +506,7 @@ class LlmConfig(BaseConfig):
     vocab_size: int = 50257
     """Vocabulary size of the model."""
 
-    additional_vocab_size: Optional[int] = 128
+    additional_vocab_size: Optional[int] = 2
     """Number of additional tokens to have the input embeddings for"""
 
     weight_tying: bool = True
@@ -626,7 +626,7 @@ class Llm(nn.Module):
         if not config.weight_tying:
             self.ff_out = nn.Linear(
                 config.d_model,
-                config.embedding_size or config.vocab_size,
+                (config.embedding_size or config.vocab_size) + config.additional_vocab_size,
                 bias=config.include_bias,
                 device=device,
             )

@@ -80,7 +80,6 @@ def run_trainer(cfg: TrainConfig) -> None:
             is_resuming = True
         else:
             log.info("Not resuming since no latest checkpoint found")
-
     if start_from is None and cfg.load_path:
         start_from = cfg.load_path
         reset_train, reset_opt = cfg.reset_trainer_state, cfg.reset_optimizer_state
@@ -137,7 +136,6 @@ def run_trainer(cfg: TrainConfig) -> None:
         if freeze_wte:
             log.info(f"Freezing LLM: wte")
             olmo_model.transformer.wte.embedding.requires_grad = False
-
     # Do some other model setup
     if cfg.activation_checkpointing:
         olmo_model.apply_activation_checkpointing()

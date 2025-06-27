@@ -116,8 +116,11 @@ if __name__ == "__main__":
         eval_tasks = ["android_control_ll"]
         tasks = [["eval", ["android_control"], 1.0]]
     elif args.mixture in ["small1", "debug"]:
-        eval_tasks = ["chart_qa", "doc_qa"]
-        tasks = [["aux", ["chart_qa", "doc_qa"], 1.0]]
+        eval_tasks = ["chart_qa"]
+        tasks = [["aux", ["chart_qa"], 1.0]]
+    elif args.mixture in ["smallmahtab"]:
+        eval_tasks = ["chart_qa"]
+        tasks = [["aux", ["chart_qa"], 1.0]]
     elif args.mixture in ["pointing"]:
         eval_tasks = ["pointing_eval:test"]
         tasks = [["pointing", [
@@ -244,6 +247,7 @@ if __name__ == "__main__":
         max_inf_examples = 16
         duration = 1000
         eval_subset_batches = 4
+    
     else:
         eval_examples = 2048
         max_inf_examples = args.max_inf_examples
@@ -275,7 +279,6 @@ if __name__ == "__main__":
     model_cfg.mm_preprocessor.pooling_w = args.image_pooling_w or model_cfg.mm_preprocessor.pooling_w
     model_cfg.mm_preprocessor.pooling_h = args.image_pooling_h or model_cfg.mm_preprocessor.pooling_h
     model_cfg.mm_preprocessor.max_images = args.max_images or model_cfg.mm_preprocessor.max_images
-
     if model_cfg.llm.max_sequence_length < args.seq_len:
         model_cfg.llm.max_sequence_length = args.seq_len
 
