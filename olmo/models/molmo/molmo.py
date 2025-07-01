@@ -36,6 +36,14 @@ from torch.distributed.fsdp import fully_shard
 log = logging.getLogger(__name__)
 
 
+EMBEDDING_DICT = {
+    "SigLip2" : 700,
+    "DinoV2": 500
+}
+
+
+
+
 @dataclasses.dataclass
 class MolmoConfig(BaseModelConfig):
     """Molmo model configuration"""
@@ -57,6 +65,15 @@ class MolmoConfig(BaseModelConfig):
 
     bi_directional_attn: Optional[str] = None
     """Allow bidirectional attention for some tokens"""
+
+    image_encoder : Optional[str] = "SigLip2"
+    """Where does the gt feature embeddings for image gen come from"""
+
+    vision_head_type: Optional[str] = 'Linear'
+    """LINEAR OR MLP"""
+
+    
+
 
     @classmethod
     def update_legacy_settings(cls, config: D) -> D:
@@ -129,20 +146,48 @@ class Molmo(ModelBase):
         if self.config.vision_backbone is not None:
             self.vision_backbone = self.config.vision_backbone.build(self.config.llm, device)
         self.special_ids = tokenizer.get_special_token_ids(self.config.build_tokenizer())
+        # import pdb;pdb.set_trace()
+        
+        #change
+        # self.hidden_size = self.transformer.ff_out.in_features
+        # self.input_embedding_size = self.transformer.wte.embedding.shape[1]
+        
+        # ## vision encoder head is for transfrorming the image features to the input embedding size comatibale with the llm
+        # self.vision_encoder_head = torch.nn.Linear(EMBEDDING_DICT[self.config.image_encoder], self.input_embedding_size)
+        # ## initialize the vision encoder head
+        # self.vision_encoder_head.weight.data.normal_(mean=0.0, std=self.input_embedding_size ** -0.5)
+        
+        
+        # ## Vision decoder head is for transforming the llm hidden size to the image feature size
+        # if self.config.vision_head_type == "Linear":
+        #     self.vision_decoder_head = torch.nn.Linear(self.hidden_size, EMBEDDING_DICT[self.config.image_encoder])
+        #     ## initialize the vision decoder head
+        #     self.vision_decoder_head.weight.data.normal_(mean=0.0, std=self.hidden_size ** -0.5)
+            
+        # elif self.config.vision_head_type == "MLP":
+        #     self.vision_decoder_head = torch.nn.Sequential(
+        #         torch.nn.Linear(self.hidden_size, self.hidden_size),
+        #         torch.nn.GELU(),
+        #         torch.nn.Linear(self.hidden_size, EMBEDDING_DICT[self.config.image_encoder]),
+        #     )
+        # else:
+        #     raise NotImplementedError("This method is not implemented yet.")
+        #     ## TODO
+
+
         if self.config.bi_directional_attn:
             self.__cache["image_tokens"] = torch.as_tensor([self.special_ids[x] for x in [
                 tokenizer.IMAGE_PATCH_TOKEN,
                 tokenizer.IM_COL_TOKEN,
                 tokenizer.IM_START_TOKEN,
                 tokenizer.IM_END_TOKEN,
-                tokenizer.IMAGE_GEN_START,
-                tokenizer.IMAGE_GEN_END,
             ]], dtype=torch.long, device=get_default_device())
-        self._image_gen_start_token_id = self.special_ids[tokenizer.IMAGE_GEN_START]   
-        self._image_gen_end_token_id = self.special_ids[tokenizer.IMAGE_GEN_END]   
+           
         self._image_end_token_id = self.special_ids[tokenizer.IM_END_TOKEN]
         self._image_start_token_id = self.special_ids[tokenizer.IM_START_TOKEN]
         self._image_patch_id = self.special_ids[tokenizer.IMAGE_PATCH_TOKEN]
+
+
     def reset_parameters(self):
         """Re-initialize the weights from scratch"""
         self.transformer.reset_parameters()
@@ -341,6 +386,8 @@ class Molmo(ModelBase):
         :param last_logits_only: If `True`, only compute the logits for the last token of each sequence.
             This can speed up decoding when you only care about the next token.
         """
+
+        # import pdb;pdb.set_trace()
         output_hidden_states = output_hidden_states if output_hidden_states is not None else False
 
         if past_key_values:

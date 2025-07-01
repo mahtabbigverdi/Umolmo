@@ -506,7 +506,7 @@ class LlmConfig(BaseConfig):
     vocab_size: int = 50257
     """Vocabulary size of the model."""
 
-    additional_vocab_size: Optional[int] = 2
+    additional_vocab_size: Optional[int] = 128
     """Number of additional tokens to have the input embeddings for"""
 
     weight_tying: bool = True

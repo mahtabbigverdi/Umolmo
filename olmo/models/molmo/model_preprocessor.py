@@ -335,6 +335,7 @@ class MolmoPreprocessor(InterleavedTextPreprocessor, ImagePreprocessor):
         all_crop_masks = []
         all_crops = []
         pooled_patches_idx = []
+        
         for idx, image in enumerate(images):
             image_tokens, crops, img_mask, pooled_idx = self.image_to_patches_and_tokens(
                 image, self.image_pooling_h, self.image_pooling_w,  self.tokenizer.image_patch_token_id, is_training, rng)
@@ -380,7 +381,7 @@ class Preprocessor:
                 example["image"] = image
         else:
             image = None
-
+        
         messages, formatter_metadata = self.formater(example, self.is_training, self.for_inference, rng)
         if isinstance(messages[0], list):
             # If there are multiple conversations for this example, shuffle their order
@@ -394,6 +395,7 @@ class Preprocessor:
             is_training=self.is_training,
             require_image_features=self.require_image_features
         )
+
         if image is not None and isinstance(image, (list, tuple)):
             image = get_image_collage(image)
         if formatter_metadata is None:

@@ -30,6 +30,7 @@ export EXP_NAME="molmo-7b-qwen2-siglip2-finetune"
 # Check NVIDIA status
 nvidia-smi
 rm -rf /gscratch/krishna/mahtab/Umolmo/checkpoints/${EXP_NAME}
+rm -rf /gscratch/krishna/mahtab/Umolmo/debug_run
 
 # Run training
 HF_ACCESS_TOKEN=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 \
@@ -40,8 +41,8 @@ torchrun \
   launch_scripts/train_multitask_model.py \
   debug \
   debug \
-  --wandb.name="${EXP_NAME}" \
-  --wandb.entity=allenai-team1 \
-  --wandb.project=mmseek \
-  --save_folder=/gscratch/krishna/mahtab/Umolmo/checkpoints/${EXP_NAME} \
-  --save_overwrite 
+  # --wandb.name=${EXP_NAME} \
+  # --wandb.entity=allenai-team1 \
+  # --wandb.project=mmseek \
+  # --save_folder=/gscratch/krishna/mahtab/Umolmo/checkpoints/${EXP_NAME} \
+  # --save_overwrite 

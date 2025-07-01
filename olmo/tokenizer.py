@@ -28,8 +28,8 @@ IMAGE_PROMPT = "<|image|>"
 IMAGE_GEN_START = f"<im_gen_start>"
 IMAGE_GEN_END = f"<im_gen_end>"
 EXTRA_TOKENS = (IM_START_TOKEN, IM_END_TOKEN, IMAGE_PATCH_TOKEN,
-                IM_COL_TOKEN, IMAGE_PROMPT, IMAGE_LOW_RES_TOKEN, IMAGE_GEN_START, IMAGE_GEN_END)
-
+                IM_COL_TOKEN, IMAGE_PROMPT, IMAGE_LOW_RES_TOKEN)
+GEN_TOKENS = [IMAGE_GEN_START, IMAGE_GEN_END]
 
 class HfTokenizerWrapper:
     """Tokenizer wrapper
@@ -53,8 +53,7 @@ class HfTokenizerWrapper:
         self.image_patch_token_id = special_tokens[IMAGE_PATCH_TOKEN]
         self.image_low_res_token_id = special_tokens[IMAGE_LOW_RES_TOKEN]
         self.image_prompt_token_id = special_tokens[IMAGE_PROMPT]
-        self.image_gen_end_token_id = special_tokens[IMAGE_GEN_START]
-        self.image_gen_start_token_id = special_tokens[IMAGE_GEN_END]
+
     def encode(self, x: str):
         return self.tokenizer.encode(x, add_special_tokens=False)
 
@@ -107,42 +106,32 @@ def build_tokenizer(
                 logging.warning(f"Failed to download tokenizer, re-trying. Exception: {e}")
                 time.sleep(1)
     barrier()
-    
     extra_tokens = list(EXTRA_TOKENS)
     if pad_tokenizer_to is not None:
         tokenizer = AutoTokenizer.from_pretrained(tokenizer_type, token=environ.get("HF_ACCESS_TOKEN"), cache_dir=cache_dir)
         assert len(tokenizer) <= pad_tokenizer_to
         n_extra_tokens = pad_tokenizer_to - len(tokenizer)
+        n_extra_tokens -= len(GEN_TOKENS)
         # This handles a case where the LLM embedding matrix is larger than the vocab size
         # We need the extra tokens in `EXTRA_TOKENS` to be assigned id's higher than the embedding
         # matrix size, not the vocab size, since we will concat the embedding and matrix with
         # the special token embedding matrix, so we pad the vocab with additional special tokens
-        ## change  
-    #     if n_extra_tokens > 0:
-    #         logging.info(f"Padding tokenizer with {n_extra_tokens} tokens")
-    #         extra_tokens = [f"|<EXTRA_TOKENS_{i}>|" for i in range(n_extra_tokens)] + extra_tokens
-
-    # bos_token_id = None
-     
-    # tokenizer = AutoTokenizer.from_pretrained(
-    #         tokenizer_type, additional_special_tokens=extra_tokens,
-    #         token=environ.get("HF_ACCESS_TOKEN"),
-    #         cache_dir=cache_dir,
-    #     )
         if n_extra_tokens > 0:
             logging.info(f"Padding tokenizer with {n_extra_tokens} tokens")
-            extra_tokens_pad = [f"|<EXTRA_TOKENS_{i}>|" for i in range(n_extra_tokens)]
+            extra_tokens = [f"|<EXTRA_TOKENS_{i}>|" for i in range(n_extra_tokens)] + extra_tokens
 
     bos_token_id = None
-     
+
     tokenizer = AutoTokenizer.from_pretrained(
-        tokenizer_type,
+        tokenizer_type, 
+        # additional_special_tokens=extra_tokens,
         token=environ.get("HF_ACCESS_TOKEN"),
         cache_dir=cache_dir,
     )
-    num_added_tokens = tokenizer.add_tokens(extra_tokens)
-    tokenizer.add_special_tokens({"additional_special_tokens": extra_tokens_pad})
-    extra_tokens = extra_tokens + extra_tokens_pad 
+    num_added_tokens = tokenizer.add_tokens(GEN_TOKENS)
+    additional_special_tokens = {"additional_special_tokens": extra_tokens}
+    tokenizer.add_special_tokens(additional_special_tokens)
+
 
 
 
@@ -150,11 +139,11 @@ def build_tokenizer(
         # These tokenizers do not have a BOS, and instead use EOS as a generic seperator token.
         # In this case we will use EOS as BOS
         bos_token_id = tokenizer.eos_token_id
-    #change
-    # if pad_tokenizer_to is not None:
-    #     for ix, tok in enumerate(EXTRA_TOKENS):
-    #         ids = tokenizer.encode(tok, add_special_tokens=False)
-    #         assert ids == [pad_tokenizer_to + ix]
+
+    if pad_tokenizer_to is not None:
+        for ix, tok in enumerate(EXTRA_TOKENS):
+            ids = tokenizer.encode(tok, add_special_tokens=False)
+            assert ids == [pad_tokenizer_to + ix]
 
     tok = HfTokenizerWrapper(tokenizer, bos_token_id=bos_token_id, adds_space=False)
     memory_cache[cache_key] = tok
@@ -184,3 +173,7 @@ class TokenizerConfig(BaseConfig):
             tokenizer_dir=self.tokenizer_dir,
             pad_tokenizer_to=pad_tokenizer_to
         )
+
+
+
+
