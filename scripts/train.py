@@ -108,6 +108,10 @@ def run_trainer(cfg: TrainConfig) -> None:
         log.info(f"Freezing connector")
         for param in olmo_model.get_connector_parameters():
             param.requires_grad = False
+    if not cfg.ft_gen:
+        log.info(f"Freezing generation heads")
+        for param in olmo_model.get_gen_heads_parameters():
+            param.requires_grad = False
     if not cfg.ft_vit:
         log.info(f"Freezing vision backbone")
         for param in olmo_model.get_vit_parameters():

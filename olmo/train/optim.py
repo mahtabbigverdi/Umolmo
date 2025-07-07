@@ -57,7 +57,8 @@ class OptimizerConfig(BaseConfig):
     """
     Default optimizer settings, used if the settings below are None
     """
-
+    
+    gen_learning_rate: Optional[float] = 1.0e-4
     connector_learning_rate: Optional[float] = 1.0e-4
     vit_learning_rate: Optional[float] = 1.0e-4
     llm_learning_rate: Optional[float] = 1.0e-4
@@ -65,20 +66,21 @@ class OptimizerConfig(BaseConfig):
     Separate learning_rate values for the connector, vision backbone, and llm transformer.
     """
 
+    gen_weight_decay: Optional[float] = 0.01
     connector_weight_decay: Optional[float] = 0.01
     vit_weight_decay: Optional[float] = 0.01
     llm_weight_decay: Optional[float] = 0.01
     """
     Separate weight decay values for the connector, vision backbone, and llm transformer.
     """
-
+    gen_betas: Tuple[float, float] = (0.9, 0.95)
     connector_betas: Tuple[float, float] = (0.9, 0.95)
     vit_betas: Tuple[float, float] = (0.9, 0.95)
     llm_betas: Tuple[float, float] = (0.9, 0.95)
     """
     Separate betas values for the connector, vision backbone, and llm transformer.
     """
-
+    gen_eps: Optional[float] = 1.0e-6
     connector_eps: Optional[float] = 1.0e-6
     vit_eps: Optional[float] = 1.0e-6
     llm_eps: Optional[float] = 1.0e-6
@@ -97,13 +99,22 @@ class OptimizerConfig(BaseConfig):
         self.betas = tuple(self.betas)  # type: ignore[assignment]
         self.connector_betas = tuple(self.connector_betas)  # type: ignore[assignment]
         self.vit_betas = tuple(self.vit_betas)  # type: ignore[assignment]
-        self.llm_betas = tuple(self.llm_betas)  # type: ignore[assignment]
+        self.llm_betas = tuple(self.llm_betas)
+        self.gen_betas = tuple(self.gen_betas)  # type: ignore[assignment]
 
     def get_param_groups(self, max_grad_norm, max_grad_norm_ratio, model: nn.Module) -> List[Dict[str, Any]]:
         """
-        Separate parameters into connector/vit/llm weight decay and non weight decay groups.
+        Separate parameters into connector/vit/llm/genheads weight decay and non weight decay groups.
         """
         group_configs = [
+            {
+                "group_name": "generation_heads",
+                "params": [p for p in model.get_gen_heads_parameters() if p.requires_grad],
+                "lr": self.gen_learning_rate,
+                "weight_decay": self.gen_weight_decay,
+                "betas": self.gen_betas,
+                "eps": self.gen_eps,
+            },
             {
                 "group_name": "llm",
                 "params": [p for p in model.get_llm_parameters() if p.requires_grad],
@@ -135,7 +146,7 @@ class OptimizerConfig(BaseConfig):
         params_found = set()
         for group_cfg in group_configs:
             if any(x in params_found for x in group_cfg["params"]):
-                raise RuntimeError("A parameter appeared in multiple groups!")
+                raise RuntimeError("A parameter appeared in multiple groups!") 
             params_found.update(group_cfg["params"])
         for model_param, name in param_names.items():
             if model_param not in params_found:
@@ -425,6 +436,7 @@ class MultimodalScheduler(Scheduler):
     connector_scheduler: Scheduler
     vit_scheduler: Scheduler
     llm_scheduelr: Scheduler
+    gen_scheduler: Scheduler
 
     def get_lr(self, initial_lr: float, step: int, max_steps: int, group_name: str) -> float:
         if group_name.startswith("connector"):
@@ -433,6 +445,8 @@ class MultimodalScheduler(Scheduler):
             return self.vit_scheduler.get_lr(initial_lr, step, max_steps)
         elif group_name.startswith("llm"):
             return self.llm_scheduelr.get_lr(initial_lr, step, max_steps)
+        elif group_name.startswith("gen"):
+            return self.gen_scheduler.get_lr(initial_lr, step, max_steps)
         else:
             raise ValueError(f"Unknown group name: {group_name}")
 
@@ -448,6 +462,8 @@ class SchedulerConfig(BaseConfig):
     connector_t_warmup: Union[int, float] = 200
     vit_t_warmup: Union[int, float] = 200
     llm_t_warmup: Union[int, float] = 200
+    gen_t_warmup: Union[int, float] = 200
+
     """
     Per-parameter group warmups
     """
@@ -501,6 +517,16 @@ class SchedulerConfig(BaseConfig):
             t_max=None if self.t_max is None else int(self.t_max),
             warmup_min_lr=self.warmup_min_lr,
         )
+        gen_sched = CosWithWarmup(
+            grad_clip_warmup_steps=None
+            if self.grad_clip_warmup_steps is None
+            else int(self.grad_clip_warmup_steps),
+            grad_clip_warmup_factor=self.grad_clip_warmup_factor,
+            warmup_steps=int(self.gen_t_warmup),
+            alpha_f=self.alpha_f,
+            t_max=None if self.t_max is None else int(self.t_max),
+            warmup_min_lr=self.warmup_min_lr,
+        )
 
         return MultimodalScheduler(
             grad_clip_warmup_steps=None
@@ -511,6 +537,7 @@ class SchedulerConfig(BaseConfig):
             connector_scheduler=connector_sched,
             vit_scheduler=vit_sched,
             llm_scheduelr=llm_sched,
+            gen_scheduler=gen_sched,
         )
 
 

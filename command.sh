@@ -36,6 +36,7 @@ rm -rf /gscratch/krishna/mahtab/Umolmo/debug_run
 HF_ACCESS_TOKEN=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 \
 WANDB_API_KEY=42e8013627067866a191055811b0107b24891809 \
 torchrun \
+  --master_port=23501 \
   --nnodes=1 \
   --nproc-per-node=1 \
   launch_scripts/train_multitask_model.py \

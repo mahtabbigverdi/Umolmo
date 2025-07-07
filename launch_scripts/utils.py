@@ -32,6 +32,7 @@ DEBUG_MODEL = MolmoConfig(
             identifier="Qwen/Qwen2-7B",
         )
     ),
+    
     vision_backbone=MolmoVisionBackboneConfig(
         vit=VitConfig(image_num_layers=1)
     ),

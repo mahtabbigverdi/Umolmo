@@ -146,35 +146,33 @@ class Molmo(ModelBase):
         if self.config.vision_backbone is not None:
             self.vision_backbone = self.config.vision_backbone.build(self.config.llm, device)
         self.special_ids = tokenizer.get_special_token_ids(self.config.build_tokenizer())
-        # import pdb;pdb.set_trace()
         
         #change
-        # self.hidden_size = self.transformer.ff_out.in_features
-        # self.input_embedding_size = self.transformer.wte.embedding.shape[1]
+        self.hidden_size = self.transformer.ff_out.in_features
+        self.input_embedding_size = self.transformer.wte.embedding.shape[1]
         
-        # ## vision encoder head is for transfrorming the image features to the input embedding size comatibale with the llm
-        # self.vision_encoder_head = torch.nn.Linear(EMBEDDING_DICT[self.config.image_encoder], self.input_embedding_size)
-        # ## initialize the vision encoder head
-        # self.vision_encoder_head.weight.data.normal_(mean=0.0, std=self.input_embedding_size ** -0.5)
+        ## vision encoder head is for transfrorming the image features to the input embedding size comatibale with the llm
+        self.vision_encoder_head = torch.nn.Linear(EMBEDDING_DICT[self.config.image_encoder], self.input_embedding_size, bias=False)
+        ## initialize the vision encoder head
+        self.vision_encoder_head.weight.data.normal_(mean=0.0, std=self.input_embedding_size ** -0.5)
         
         
-        # ## Vision decoder head is for transforming the llm hidden size to the image feature size
-        # if self.config.vision_head_type == "Linear":
-        #     self.vision_decoder_head = torch.nn.Linear(self.hidden_size, EMBEDDING_DICT[self.config.image_encoder])
-        #     ## initialize the vision decoder head
-        #     self.vision_decoder_head.weight.data.normal_(mean=0.0, std=self.hidden_size ** -0.5)
+        ## Vision decoder head is for transforming the llm hidden size to the image feature size
+        if self.config.vision_head_type == "Linear":
+            self.vision_decoder_head = torch.nn.Linear(self.hidden_size, EMBEDDING_DICT[self.config.image_encoder], bias=False)
+            ## initialize the vision decoder head
+            self.vision_decoder_head.weight.data.normal_(mean=0.0, std=self.hidden_size ** -0.5)
             
-        # elif self.config.vision_head_type == "MLP":
-        #     self.vision_decoder_head = torch.nn.Sequential(
-        #         torch.nn.Linear(self.hidden_size, self.hidden_size),
-        #         torch.nn.GELU(),
-        #         torch.nn.Linear(self.hidden_size, EMBEDDING_DICT[self.config.image_encoder]),
-        #     )
-        # else:
-        #     raise NotImplementedError("This method is not implemented yet.")
-        #     ## TODO
-
-
+        elif self.config.vision_head_type == "MLP":
+            self.vision_decoder_head = torch.nn.Sequential(
+                torch.nn.Linear(self.hidden_size, self.hidden_size, bias=False),
+                torch.nn.GELU(),
+                torch.nn.Linear(self.hidden_size, EMBEDDING_DICT[self.config.image_encoder], bias=False),
+            )
+        else:
+            raise NotImplementedError("This method is not implemented yet.")
+            ## TODO
+      
         if self.config.bi_directional_attn:
             self.__cache["image_tokens"] = torch.as_tensor([self.special_ids[x] for x in [
                 tokenizer.IMAGE_PATCH_TOKEN,
@@ -295,6 +293,16 @@ class Molmo(ModelBase):
             )
         else:
             return self.llm.parameters()
+
+    def get_gen_heads_parameters(self) -> Iterator[torch.Tensor]:
+        ## output is the parameters of the vision decoder head and the vision encoder head
+        return (
+        param for head in [self.vision_encoder_head, self.vision_decoder_head]
+        for param in head.parameters()
+        )
+       
+            
+        
 
     def get_non_weight_decay_params(self) -> Iterator[torch.Tensor]:
         exclude_list = {
@@ -564,6 +572,7 @@ class Molmo(ModelBase):
 
         For an explanation of the other arguments, see :class:`BeamSearch`.
         """
+        import pdb; pdb.set_trace()
         input_ids: torch.LongTensor = batch["input_ids"]
         attention_mask: Optional[torch.Tensor] = batch.get("attention_mask")
         images: Optional[torch.Tensor] = batch.get("images")

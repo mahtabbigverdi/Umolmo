@@ -260,6 +260,10 @@ class TrainConfig(BaseConfig):
     """
     Tune the LLM parameters
     """
+    ft_gen: bool = True
+    """
+    Tune the generation heads parameters
+    """
 
     ft_vit: bool = True
     """

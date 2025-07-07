@@ -686,6 +686,7 @@ class Trainer:
                 "connector": self.cfg.optimizer.connector_learning_rate,
                 "vit": self.cfg.optimizer.vit_learning_rate,
                 "llm": self.cfg.optimizer.llm_learning_rate,
+                "generation_heads": self.cfg.optimizer.gen_learning_rate,
             }
             for group in self.optim.param_groups:
                 group["lr"] = self.scheduler.get_lr(
