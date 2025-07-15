@@ -102,7 +102,7 @@ def run_trainer(cfg: TrainConfig) -> None:
     model_cfg = cfg.model
     with torch.device("meta"):
         olmo_model = model_cfg.build_model()
-
+    
     # Freeze parameters depending on what we are tuning
     if not cfg.ft_connector:
         log.info(f"Freezing connector")

@@ -126,6 +126,7 @@ class InterleavedTextPreprocessor:
         self,
         message_list: Union[List[str], List[List[str]]],
         multi_model_tokens: List[np.ndarray],
+        image_outputs: List[np.ndarray],
         multi_model_pos_ids: Optional[List[np.ndarray]]=None,
         weight: Optional[float]=None
     ) -> Dict[str, np.ndarray]:
@@ -142,6 +143,7 @@ class InterleavedTextPreprocessor:
         tokens before the MM tokens will be allowed, but attending between tokens after the MM
         tokens will not.
         """
+        
         if isinstance(message_list[0], list) and len(message_list) == 1:
             message_list = message_list[0]
         if isinstance(message_list[0], str):
@@ -167,6 +169,7 @@ class InterleavedTextPreprocessor:
         mm_position_ids = []
         on = 0
         on_pos = 0
+        
         for i, token_ix in enumerate(mm_idx):
             mm_tokens.append(text_token_ids[on:token_ix])
             mm_loss_masks.append(text_loss_masks[on:token_ix])
@@ -202,16 +205,24 @@ class InterleavedTextPreprocessor:
         elif mm_position_ids:
             mm_position_ids.append(np.arange(on_pos, on_pos+len(mm_tokens[-1])))
         else:
-            mm_position_ids = [np.arange(0, sum(len(x) for x in mm_tokens))]
+            if len(image_outputs) != 0:
+                ## we assume that image_outputs are always at the end in mm_tokens[-1]
+                NUM_IMAGE_OUT_TOKENS = image_outputs[0].shape[0]
+                mm_position_ids = [np.arange(0, sum(len(x) for x in mm_tokens) + NUM_IMAGE_OUT_TOKENS * len(image_outputs))]
+            else:
+                mm_position_ids = [np.arange(0, sum(len(x) for x in mm_tokens))]
 
         mm_tokens = np.concatenate(mm_tokens)
         mm_loss_masks = np.concatenate(mm_loss_masks)
+
+
+
         mm_position_ids = np.concatenate(mm_position_ids)
         if mm_subsegments is not None:
             mm_subsegments = np.concatenate(mm_subsegments)
 
         target_tokens = mm_tokens
-
+        
         if (len(message_list) % 2 == 0) or mm_subsegments is not None:
             target_tokens = mm_tokens[1:]
             input_tokens = mm_tokens[:-1]
@@ -243,6 +254,36 @@ class InterleavedTextPreprocessor:
             target_tokens = np.pad(mm_tokens[1:], [0, 1], constant_values=0)
         if weight is not None:
             mm_loss_masks *= weight
+        
+        ## test change later when new tokens come in
+        if len(image_outputs) != 0:
+            
+            NUM_IMAGE_OUT_TOKENS = image_outputs[0].shape[0]
+            assert len(np.argwhere(target_tokens == self.tokenizer.image_gen_start_token_id)) == len(image_outputs)
+            
+            ## change target_tokens and mm_loss_masks to include image generation tokens
+            new_mm_loss_masks = []
+            new_target_tokens = []
+            IGNORE_INDEX = -100
+            for idx in range(len(target_tokens)):
+                new_mm_loss_masks.append(mm_loss_masks[idx])
+                new_target_tokens.append(target_tokens[idx])
+                if target_tokens[idx] == self.tokenizer.image_gen_start_token_id:
+                    new_mm_loss_masks.extend([-2] * NUM_IMAGE_OUT_TOKENS) 
+                    new_target_tokens.extend([IGNORE_INDEX] * NUM_IMAGE_OUT_TOKENS) 
+
+            target_tokens = np.array(new_target_tokens, dtype=np.int32)
+            mm_loss_masks = np.array(new_mm_loss_masks, dtype=np.int32)
+
+            new_input_tokens = []
+            for idx in range(len(input_tokens)):
+                new_input_tokens.append(input_tokens[idx])
+                if input_tokens[idx] == self.tokenizer.image_gen_start_token_id:
+                    new_input_tokens.extend([self.tokenizer.image_output_token_id] * NUM_IMAGE_OUT_TOKENS) 
+
+            input_tokens = np.array(new_input_tokens, dtype=np.int32)
+            
+
 
         out = {
             "input_tokens": input_tokens,
@@ -262,6 +303,7 @@ class InterleavedTextPreprocessor:
             self.tokenizer.image_col_token_id,
             self.tokenizer.image_patch_token_id,
             self.tokenizer.image_low_res_token_id,
+            self.tokenizer.image_output_token_id,
         ])[None, :]
         if np.any(target_tokens[mm_loss_masks != 0][:, None] == special_tokens):
             raise RuntimeError("A special token had a loss")

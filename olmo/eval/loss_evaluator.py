@@ -31,6 +31,7 @@ class LossMetrics:
         self.eval_metrics: Dict[str, MeanMetric] = dict(
             CrossEntropyLoss=MeanMetric("error").to(device),
             ZLoss=MeanMetric("error").to(device),
+            ImageGenLoss=MeanMetric("error").to(device),
             Accuracy=MeanMetric("error").to(device),
         )
 
@@ -55,14 +56,18 @@ class LossMetrics:
         batch: Dict[str, torch.Tensor],
         model_out,
         cross_entropy_loss: torch.Tensor,
-        zloss: torch.Tensor
+        zloss: torch.Tensor,
+        genloss: torch.Tensor
     ) -> None:
         loss_masks = batch["loss_masks"] * (batch["loss_masks"] > 0)
         total_weight = loss_masks.sum()
+        gen_loss_masks =  (batch["loss_masks"] == -2).to(loss_masks.dtype)
+        gen_total_weight = gen_loss_masks.sum()
         labels = batch["labels"]
         pred = torch.argmax(model_out.logits, dim=-1)
         accuracy = ((pred.flatten() == labels.flatten()).float() * loss_masks.flatten()).sum().item()
         self.eval_metrics["CrossEntropyLoss"].update(cross_entropy_loss/total_weight, total_weight)
+        self.eval_metrics["ImageGenLoss"].update(genloss/gen_total_weight, gen_total_weight)
         if zloss is not None:
             self.eval_metrics["ZLoss"].update(zloss/total_weight, total_weight)
         self.eval_metrics["Accuracy"].update(accuracy/total_weight, total_weight)
@@ -119,7 +124,7 @@ class LossDatasetEvaluator:
         with torch.inference_mode():
             for eval_step, batch in enumerate(tqdm(eval_batches, total=num_eval_batches, disable=not pbar)):
                 batch = move_to_device(batch, device)
-                response_mask = (batch["loss_masks"] > 0)
+                response_mask = (batch["loss_masks"] > 0) + (batch["loss_masks"] == -2)  # -2 is for image generation
                 with torch.autocast("cuda", enabled=True, dtype=autocast_precision):
                     inputs = {k: v for k, v in batch.items() if k not in ["labels", "loss_masks", "metadata"]}
                     model_out = model(**inputs, response_mask=response_mask)
@@ -134,6 +139,7 @@ class LossDatasetEvaluator:
                     logits_for_loss, labels, ignore_index=-100, reduction="none",
                     compute_z_loss=self.z_loss is not None, z_loss_scale=self.z_loss,
                 )
+
                 ce_loss = (ce_loss * loss_masks.view(-1)).sum()
                 if z_loss is not None:
                     z_loss = (z_loss * loss_masks.view(-1)).sum()

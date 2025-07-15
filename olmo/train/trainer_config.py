@@ -276,7 +276,7 @@ class TrainConfig(BaseConfig):
     """
 
     # Do we fine-tune the input/output embeddings
-    ft_embedding: str = "lm_head"
+    ft_embedding: str = "all"
     """
     Tune the embedding layers
     """
@@ -546,6 +546,11 @@ class TrainConfig(BaseConfig):
     runtime_data: Optional[RuntimeData] = None
     """
     Data about the current run, filled in automatically 
+    """
+
+    image_generation_loss_type: Optional[str] = "cosine"
+    """
+    Increment this when starting a new epoch.
     """
 
     @property

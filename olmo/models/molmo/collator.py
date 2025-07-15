@@ -23,7 +23,7 @@ numpy_to_torch_dtype_dict = {
 
 
 def _collate(tensors, max_sequence_length=None, dtype=None, pad=None, pad_value=-1, allow_truncate=True):
-    tensor = [x for x in tensors if x is not None][0]
+    tensor = [x for x in tensors if x is not None and x.shape[0]!=0][0]
     max_tensor_len = max((0 if x is None else x.shape[0]) for x in tensors)
     if pad == "to_max":
         max_len = max_sequence_length
@@ -41,7 +41,7 @@ def _collate(tensors, max_sequence_length=None, dtype=None, pad=None, pad_value=
     arr = np.full([len(tensors), max_len] + list(tensor.shape[1:]), pad_value,
                   dtype=dtype or tensor.dtype)
     for ix, tensor in enumerate(tensors):
-        if tensor is not None:
+        if tensor is not None and tensor.shape[0] != 0:
             arr[ix, :len(tensor)] = tensor[:max_len]
     return torch.from_numpy(arr)
 
@@ -78,6 +78,7 @@ class MMCollator:
         keys = batch[0].keys()
 
         # Sanity checks
+        
         for ex in batch:
             if self.pad:
                 if np.any(self._special_tokens == ex["input_tokens"][self.max_sequence_length:][:, None]):
@@ -95,13 +96,22 @@ class MMCollator:
                             ex["subsegment_ids"] = np.ones_like(ex["input_tokens"])
                 else:
                     continue
-
+            
             dtype = np.float32 if key == "loss_masks" else np.int64
             out[key] = _collate(
                 [ex.get(key) for ex in batch], self.max_sequence_length, dtype, pad=self.pad)
-
+        
         for key, max_len in self.image_padding_lens.items():
             out[key] = _collate([ex.get(key) for ex in batch], max_len, pad=self.pad, allow_truncate=False,)
+        
+
+        
+        ## check if there exists at least one image output in the batch
+        if any(ex.get('image_outputs').shape[0]!=0 for ex in batch):
+            MAX_NUMBER_OUTPUT_IMAGE_TOKENS = 200
+            out['image_outputs'] = _collate([ex.get('image_outputs') for ex in batch], MAX_NUMBER_OUTPUT_IMAGE_TOKENS, pad=self.pad, allow_truncate=False,)
+        else:
+            out['image_outputs'] = torch.zeros((len(batch), 0), dtype=torch.float32)
         out["input_ids"] = out.pop("input_tokens")
         if "target_tokens" in out:
             out["labels"] = out.pop("target_tokens")

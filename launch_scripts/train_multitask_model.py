@@ -281,13 +281,13 @@ if __name__ == "__main__":
     model_cfg.mm_preprocessor.max_images = args.max_images or model_cfg.mm_preprocessor.max_images
     if model_cfg.llm.max_sequence_length < args.seq_len:
         model_cfg.llm.max_sequence_length = args.seq_len
-
+    
     root_size_mixture: List[RootSizeMixture] = []
     for name, submixture, rate in tasks:
         submixture = get_training_mixture(submixture)
         root_size_mixture.append(RootSizeMixture(rate, submixture))
 
-    num_workers = 2
+    num_workers = 0
     evaluations = []
     if not args.turn_off_inference:
         for task in eval_tasks:

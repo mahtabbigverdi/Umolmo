@@ -27,8 +27,9 @@ IM_COL_TOKEN = f"<im_col>"
 IMAGE_PROMPT = "<|image|>"
 IMAGE_GEN_START = f"<im_gen_start>"
 IMAGE_GEN_END = f"<im_gen_end>"
+IMAGE_OUTPUT_TOKEN = f'<im_output_token>'
 EXTRA_TOKENS = (IM_START_TOKEN, IM_END_TOKEN, IMAGE_PATCH_TOKEN,
-                IM_COL_TOKEN, IMAGE_PROMPT, IMAGE_LOW_RES_TOKEN)
+                IM_COL_TOKEN, IMAGE_PROMPT, IMAGE_LOW_RES_TOKEN, IMAGE_OUTPUT_TOKEN)
 GEN_TOKENS = [IMAGE_GEN_START, IMAGE_GEN_END]
 
 class HfTokenizerWrapper:
@@ -53,7 +54,9 @@ class HfTokenizerWrapper:
         self.image_patch_token_id = special_tokens[IMAGE_PATCH_TOKEN]
         self.image_low_res_token_id = special_tokens[IMAGE_LOW_RES_TOKEN]
         self.image_prompt_token_id = special_tokens[IMAGE_PROMPT]
-
+        self.image_output_token_id = special_tokens[IMAGE_OUTPUT_TOKEN]
+        self.image_gen_start_token_id = self.tokenizer.encode(IMAGE_GEN_START)[0]
+        self.image_gen_end_token_id = self.tokenizer.encode(IMAGE_GEN_END)[0]
     def encode(self, x: str):
         return self.tokenizer.encode(x, add_special_tokens=False)
 

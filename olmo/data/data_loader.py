@@ -159,7 +159,7 @@ class DataLoaderConfig(BaseConfig):
     ) -> DataLoader:
         if device is None:
             device = "cpu"
-
+        
         if self.pad is None:
             max_seq_len = None
         elif self.max_text_seq_len:

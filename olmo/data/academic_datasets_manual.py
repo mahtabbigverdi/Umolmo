@@ -432,22 +432,26 @@ class ChartQa(DatasetBase):
             parts = ["human", "augmented"]
         else:
             parts = [self.parts]
+        
         for part in parts:
             src = f"{CHARTQA_SOURCE}/{split}/{split}_{part}.json"
             logging.info(f"Loading chartqa data from {src}")
             with open(cached_path(src, cache_dir=environ.get("MOLMO_CACHE_DIR"))) as f:
                 data = json.load(f)
             for ex_id, ex in enumerate(data):
+               
                 ex = dict(
                     image=join(CHARTQA_SOURCE, split, "png", ex.pop("imgname")),
                     question=ex["query"],
                     answers=ex["label"],
+                    image_outputs = ex['image_output_paths'],
                     metadata=dict(
                         is_human=part == "human",
                         example_id=ex_id
                     )
                 )
                 examples.append(ex)
+        
         return examples
 
     def get(self, item, rng):

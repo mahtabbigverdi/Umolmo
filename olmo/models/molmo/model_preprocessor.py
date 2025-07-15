@@ -315,6 +315,7 @@ class MolmoPreprocessor(InterleavedTextPreprocessor, ImagePreprocessor):
         self,
         images,
         messages: Union[List[str], List[List[str]]],
+        image_outputs,
         weight=None,
         is_training=False,
         rng=None,
@@ -349,12 +350,13 @@ class MolmoPreprocessor(InterleavedTextPreprocessor, ImagePreprocessor):
             all_crop_masks.append(img_mask)
             if self.max_images is not None and idx == self.max_images - 1:
                 break
-
-        out = self.tokenize_and_interleave(messages, all_image_tokens, weight=weight)
+        
+        out = self.tokenize_and_interleave(messages, all_image_tokens, image_outputs, weight=weight)
         out["images"] = np.concatenate(all_crops)
         out["pooled_patches_idx"] = np.concatenate(pooled_patches_idx)
         if self.image_padding_mask:
             out["image_masks"] = np.concatenate(all_crop_masks)
+        out['image_outputs'] = np.concatenate(image_outputs) if len(image_outputs) > 0 else np.empty((0,0))
         return out
 
 
@@ -368,6 +370,7 @@ class Preprocessor:
     require_image_features: bool = False
 
     def __call__(self, example, rng=np.random):
+        
         example = dict(example)
         if "image" in example:
             try:
@@ -382,6 +385,11 @@ class Preprocessor:
         else:
             image = None
         
+        if "image_outputs" in example and len(example["image_outputs"]) > 0:
+            image_outputs = [np.load(example["image_outputs"][i]) for i in range(len(example["image_outputs"]))]
+        else:
+            image_outputs = []
+
         messages, formatter_metadata = self.formater(example, self.is_training, self.for_inference, rng)
         if isinstance(messages[0], list):
             # If there are multiple conversations for this example, shuffle their order
@@ -390,11 +398,14 @@ class Preprocessor:
         batch = self.mm_preprocessor(
             image,
             messages,
+            image_outputs,
             weight=example.get("weight"),
             rng=rng,
             is_training=self.is_training,
             require_image_features=self.require_image_features
         )
+
+        
 
         if image is not None and isinstance(image, (list, tuple)):
             image = get_image_collage(image)

@@ -26,6 +26,10 @@ class OLMoOutput(NamedTuple):
     A tensor of shape `(batch_size, seq_len, vocab_size)` representing the log probabilities
     for the next token *before* normalization via (log) softmax.
     """
+    image_output_features: Optional[torch.FloatTensor]
+    """
+    These are features after passing last hidden states to the visual decoder head
+    """
 
     attn_key_values: Optional[List[Tuple[torch.Tensor, torch.Tensor]]]
     """
@@ -46,6 +50,7 @@ class OLMoOutput(NamedTuple):
     """
     Internal data the might be used for visualizations
     """
+    
 
 
 class OLMoGenerateOutput(NamedTuple):

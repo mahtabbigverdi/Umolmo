@@ -567,18 +567,30 @@ class Trainer:
         if instance_mask is not None:
             labels.masked_fill_(~instance_mask.unsqueeze(-1), value=-100)
         return labels[..., 1:].contiguous()
-
+    
+    def mse_loss(self, pred: torch.Tensor, targets: torch.Tensor, reduction: str = "mean") -> torch.Tensor:
+        """
+        Computes the Mean Squared Error (MSE) loss between pred and targets.
+        """
+        loss = F.mse_loss(pred, targets, reduction=reduction)
+        return loss
+    
+    
     def model_forward(
         self, batch: Dict[str, Any], compute_z_loss: bool = False
     ) -> Tuple:
         # shape: (batch_size, seq_len, vocab_size)
+        
         loss_masks = batch["loss_masks"]
         labels = batch["labels"]
-        response_mask = (loss_masks > 0)
+        ## originally it was 'response_mask = (loss_masks > 0)' for image output tokens that we dont want to compute ce loss we use -2
+        response_mask = (loss_masks > 0) + (loss_masks == -2)
+        
         with torch.autocast("cuda", dtype=self.cfg.autocast_precision):
             model_out = self.fsdp_model(
                 **{k: v for k, v in batch.items() if k not in ["labels", "loss_masks"]},
                 response_mask=response_mask)
+        
         logits = model_out.logits
         loss_masks = loss_masks * (loss_masks > 0)
         labels = labels.long()
@@ -589,35 +601,70 @@ class Trainer:
             logits_for_loss, labels, ignore_index=-100, reduction="none",
             compute_z_loss=compute_z_loss, z_loss_scale=self.cfg.softmax_auxiliary_loss_scale,
         )
+        
+        
         ce_loss = (ce_loss*loss_masks.view(ce_loss.shape)).sum()
         z_loss = (z_loss*loss_masks.view(z_loss.shape)).sum()
-        return ce_loss, z_loss, model_out
+        
+        if batch['image_outputs'].shape[1] > 0:
+            image_output_features = model_out.image_output_features 
+            image_gen_loss_masks = batch["loss_masks"] == -2
+            # image_gen_loss_masks = (batch["loss_masks"] == -2).to(loss_masks.dtype)
+            # image_gen_labels = batch.get("image_gen_labels")
+            
+            ## dummy value
+            image_output_features = image_output_features[image_gen_loss_masks]
+            image_gen_labels = torch.cat([batch['image_outputs'][i, :image_gen_loss_masks[i].sum()] for i in range(len(batch['image_outputs']))], dim=0)
+            assert image_output_features.shape == image_gen_labels.shape
+            if self.cfg.image_generation_loss_type == "mse":
+                image_gen_loss = self.mse_loss(image_output_features, image_gen_labels, reduction="none")
+                ## get average over elemens of each embedding, so we have one mse loss per token not per element
+                image_gen_loss = image_gen_loss.mean(-1)
+            
+            elif self.cfg.image_generation_loss_type == "cosine":
+                image_gen_loss = torch.nn.functional.cosine_similarity(image_gen_labels, image_output_features, dim =-1)
+                image_gen_loss = 1 - image_gen_loss
+            
+            else:
+                raise ValueError(f"Unsupported image generation loss type: {self.cfg.image_generation_loss_type}")
+            image_gen_loss = image_gen_loss.sum()
+        else:
+            image_gen_loss = None
+
+        return ce_loss, z_loss, image_gen_loss, model_out
 
     def train_batch(self, batch: Dict[str, Any], compute_metrics) -> Tuple[torch.Tensor, Optional[Dict]]:
         # Split into micro-batches.
         micro_batches = self.split_batch(batch)
+        ## the value for output image genration tokens in loss_masks is -2, so it is not calculated in the cross entropy loss
         loss_masks = batch["loss_masks"] * (batch["loss_masks"] > 0)
+        image_gen_loss_masks = (batch["loss_masks"] == -2).to(loss_masks.dtype)
         if self.cfg.batch_divisor == BatchDivisor.global_batch:
-            batch_size_in_tokens = loss_masks.sum()
+            batch_size_in_tokens = loss_masks.sum() 
             dist.all_reduce(batch_size_in_tokens)
             batch_size_in_tokens.div_(get_world_size())
+
+            batch_size_in_gen_tokens = image_gen_loss_masks.sum() 
+            dist.all_reduce(batch_size_in_gen_tokens)
+            batch_size_in_gen_tokens.div_(get_world_size())
         elif self.cfg.batch_divisor == BatchDivisor.device_batch:
             batch_size_in_tokens = loss_masks.sum()
+            batch_size_in_gen_tokens = image_gen_loss_masks.sum() 
         else:
             raise ValueError()
         del batch  # in case this helps reduce memory
-
         total_loss = torch.tensor(0.0, device=self.device)
         for micro_batch in micro_batches:
-            ce_loss, z_loss, model_out = self.model_forward(
+            ce_loss, z_loss, image_gen_loss, model_out = self.model_forward(
                 micro_batch, compute_z_loss=self.cfg.softmax_auxiliary_loss)
             if compute_metrics:
-                self._train_metrics.update(micro_batch, model_out, ce_loss, z_loss)
+                self._train_metrics.update(micro_batch, model_out, ce_loss, z_loss, image_gen_loss)
 
             # In case this helps with memory utilization.
             del micro_batch
-
+            
             # accuracy = accuracy.sum()
+            assert ce_loss == ce_loss.sum()
             ce_loss = ce_loss.sum() / batch_size_in_tokens
 
             # Get loss to optimize for.
@@ -626,6 +673,16 @@ class Trainer:
                 loss = ce_loss + z_loss
             else:
                 loss = ce_loss
+
+
+            ## image generation loss
+            if batch_size_in_gen_tokens != 0:
+                image_gen_loss = image_gen_loss.sum() / batch_size_in_gen_tokens
+                loss += image_gen_loss
+
+
+
+
             if model_out.metrics is not None:
                 if "AuxLoss" in model_out.metrics:
                     loss += model_out.metrics["AuxLoss"] / len(micro_batches)
@@ -962,6 +1019,7 @@ class Trainer:
             for epoch in range(self.epoch or 0, self.max_epochs):
                 for batch in self.train_loader:
                     # Bookkeeping.
+                    
                     batch_size, seq_len = batch["input_ids"].shape
                     global_batch_size = batch_size * get_world_size()  # assumes batch size equal across ranks
                     self.global_step += 1
@@ -969,11 +1027,11 @@ class Trainer:
 
                     # Note might be an aproximation if batches can have different sequence lens
                     self.global_train_tokens_seen += global_batch_size * seq_len
-
+                    
                     speed_monitor.batch_start(
                         self.global_train_tokens_seen,
                         batch_size * seq_len,  # num tokens in batch for this device
-                        (batch["loss_masks"] > 0).sum(),
+                        ((batch["loss_masks"] > 0) + (batch["loss_masks"] == -2) ).sum(),
                         # We start monitoring speed after the first batch since the first
                         # batch might be an outlier due to compiling and other initialization overhead.
                         record=not first_batch,

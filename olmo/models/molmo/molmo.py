@@ -184,7 +184,7 @@ class Molmo(ModelBase):
         self._image_end_token_id = self.special_ids[tokenizer.IM_END_TOKEN]
         self._image_start_token_id = self.special_ids[tokenizer.IM_START_TOKEN]
         self._image_patch_id = self.special_ids[tokenizer.IMAGE_PATCH_TOKEN]
-
+        self._image_output_token_id = self.special_ids[tokenizer.IMAGE_OUTPUT_TOKEN]
 
     def reset_parameters(self):
         """Re-initialize the weights from scratch"""
@@ -350,6 +350,7 @@ class Molmo(ModelBase):
         attention_bias: Optional[torch.Tensor] = None,
         response_mask: Optional[torch.Tensor] = None,
         images: Optional[torch.Tensor] = None,
+        image_outputs: Optional[torch.Tensor] = None,
         image_masks: Optional[torch.Tensor] = None,
         pooled_patches_idx: Optional[torch.Tensor] = None,
         subsegment_ids: Optional[torch.Tensor] = None,
@@ -395,7 +396,7 @@ class Molmo(ModelBase):
             This can speed up decoding when you only care about the next token.
         """
 
-        # import pdb;pdb.set_trace()
+        
         output_hidden_states = output_hidden_states if output_hidden_states is not None else False
 
         if past_key_values:
@@ -431,6 +432,7 @@ class Molmo(ModelBase):
 
         # Get embeddings of input.
         # shape: (batch_size, seq_len, d_model)
+        
         if input_ids is not None:
             input_ids = input_ids * (input_ids != -1).to(input_ids.dtype)
         x = self.transformer.wte(input_ids) if input_embeddings is None else input_embeddings  # type: ignore
@@ -440,8 +442,24 @@ class Molmo(ModelBase):
             image_features = self.vision_backbone(images, image_masks, pooled_patches_idx)
             is_image_patch = input_ids.view(-1) == self._image_patch_id
             assert is_image_patch.sum() == len(image_features)
+            
+            ## mquestion: why += imagefeatures, what was there before?
             x.view(-1, x.shape[-1])[is_image_patch] += image_features
 
+        ## if there is at least one example with image_outputs
+        
+        if image_outputs.shape[1] > 0:
+            ## image_outputs is padded but we only need embeddings for the valid image outputs, so we select embeddings from the start
+            ## input_ids[i]== self._image_output_token_id).sum() means how many image output tokens are there in the input_ids[i]
+            image_output_features = torch.cat([image_outputs[i, :(input_ids[i]== self._image_output_token_id).sum()] for i in range(len(image_outputs))], dim=0)
+            is_output_image_patch = input_ids.view(-1) == self._image_output_token_id
+            assert is_output_image_patch.sum() == len(image_output_features)
+            ## pass the visual embeddings through the vision encoder head to make them compatible with the llm input embeddings
+            ## I dont want to use autocast here because the image features are already in float32
+            with torch.cuda.amp.autocast(enabled=False):
+                image_output_features = self.vision_encoder_head(image_output_features)           
+            x.view(-1, x.shape[-1])[is_output_image_patch] = image_output_features
+        
         if not self.config.llm.rope:
             # Get positional embeddings.
             # shape: (1, seq_len)
@@ -528,6 +546,12 @@ class Molmo(ModelBase):
         if output_hidden_states:
             # add final hidden state post-final-layernorm, following HuggingFace's convention
             all_hidden_states.append(x)
+        
+        # todo maybe add if has_output_image
+        
+        image_output_features = self.vision_decoder_head(x) 
+        
+
 
         # Get logits.
         # shape: (batch_size, seq_len or 1, vocab_size)
@@ -543,7 +567,7 @@ class Molmo(ModelBase):
                 torch.arange(logits.shape[0], device=logits.device), append_last_valid_logits]
             logits = torch.cat([logits[:, :-1], last_valid_logit[:, None]], dim=1)
 
-        return OLMoOutput(logits=logits, attn_key_values=attn_key_values, hidden_states=tuple(all_hidden_states) if output_hidden_states else None)  # type: ignore[arg-type]
+        return OLMoOutput(logits=logits, image_output_features=image_output_features, attn_key_values=attn_key_values, hidden_states=tuple(all_hidden_states) if output_hidden_states else None)  # type: ignore[arg-type]
 
     def generate(
         self,
@@ -572,7 +596,7 @@ class Molmo(ModelBase):
 
         For an explanation of the other arguments, see :class:`BeamSearch`.
         """
-        import pdb; pdb.set_trace()
+        
         input_ids: torch.LongTensor = batch["input_ids"]
         attention_mask: Optional[torch.Tensor] = batch.get("attention_mask")
         images: Optional[torch.Tensor] = batch.get("images")

@@ -66,6 +66,7 @@ class ChartQa(HfDataset):
                 lambda x: x == to_keep,
                 input_columns=["human_or_machine"]
             )
+        
 
     def get(self, item, rng):
         ex = self.dataset[item]
