@@ -205,7 +205,7 @@ class InterleavedTextPreprocessor:
         elif mm_position_ids:
             mm_position_ids.append(np.arange(on_pos, on_pos+len(mm_tokens[-1])))
         else:
-            if len(image_outputs) != 0:
+            if len(image_outputs) != 0 and not for_inference:
                 ## we assume that image_outputs are always at the end in mm_tokens[-1]
                 NUM_IMAGE_OUT_TOKENS = image_outputs[0].shape[0]
                 mm_position_ids = [np.arange(0, sum(len(x) for x in mm_tokens) + NUM_IMAGE_OUT_TOKENS * len(image_outputs))]
@@ -256,11 +256,10 @@ class InterleavedTextPreprocessor:
             mm_loss_masks *= weight
         
         ## test change later when new tokens come in
-        if len(image_outputs) != 0:
-            
+        if len(image_outputs) != 0 and not for_inference:
             NUM_IMAGE_OUT_TOKENS = image_outputs[0].shape[0]
             assert len(np.argwhere(target_tokens == self.tokenizer.image_gen_start_token_id)) == len(image_outputs)
-            
+                
             ## change target_tokens and mm_loss_masks to include image generation tokens
             new_mm_loss_masks = []
             new_target_tokens = []

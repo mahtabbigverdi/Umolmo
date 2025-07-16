@@ -858,6 +858,7 @@ class Trainer:
         self.fsdp_model.eval()
         all_metrics = {}
         t0 = None
+        # import pdb; pdb.set_trace()
         for evaluator in self.inference_evaluators:
             t0 = time.perf_counter()
             log.info(f"Running evaluation for '{evaluator.label}'...")

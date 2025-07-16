@@ -72,6 +72,9 @@ class MolmoConfig(BaseModelConfig):
     vision_head_type: Optional[str] = 'Linear'
     """LINEAR OR MLP"""
 
+    per_image_output_tokens: Optional[int] = 64
+    """How many image output tokens to use per image"""
+
     
 
 
@@ -180,7 +183,8 @@ class Molmo(ModelBase):
                 tokenizer.IM_START_TOKEN,
                 tokenizer.IM_END_TOKEN,
             ]], dtype=torch.long, device=get_default_device())
-           
+        self.image_gen_start_token_id = self.config.build_tokenizer().image_gen_start_token_id 
+        self.image_gen_end_token_id = self.config.build_tokenizer().image_gen_end_token_id 
         self._image_end_token_id = self.special_ids[tokenizer.IM_END_TOKEN]
         self._image_start_token_id = self.special_ids[tokenizer.IM_START_TOKEN]
         self._image_patch_id = self.special_ids[tokenizer.IMAGE_PATCH_TOKEN]
@@ -344,7 +348,7 @@ class Molmo(ModelBase):
 
     def forward(
         self,
-        input_ids: torch.LongTensor,
+        input_ids: Optional[torch.LongTensor] = None,
         input_embeddings: Optional[torch.FloatTensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         attention_bias: Optional[torch.Tensor] = None,
@@ -357,6 +361,7 @@ class Molmo(ModelBase):
         position_ids: Optional[torch.Tensor] = None,
         past_key_values: Optional[Sequence[Tuple[torch.Tensor, torch.Tensor]]] = None,
         use_cache: bool = False,
+        is_training: bool = True,
         last_logits_only: bool = False,
         output_hidden_states: Optional[bool] = None,
         append_last_valid_logits: Optional[torch.Tensor] = None
@@ -447,8 +452,7 @@ class Molmo(ModelBase):
             x.view(-1, x.shape[-1])[is_image_patch] += image_features
 
         ## if there is at least one example with image_outputs
-        
-        if image_outputs.shape[1] > 0:
+        if is_training and self._image_output_token_id in input_ids :
             ## image_outputs is padded but we only need embeddings for the valid image outputs, so we select embeddings from the start
             ## input_ids[i]== self._image_output_token_id).sum() means how many image output tokens are there in the input_ids[i]
             image_output_features = torch.cat([image_outputs[i, :(input_ids[i]== self._image_output_token_id).sum()] for i in range(len(image_outputs))], dim=0)
@@ -572,57 +576,39 @@ class Molmo(ModelBase):
     def generate(
         self,
         batch,
-        attention_bias: Optional[torch.Tensor] = None,
         max_steps: int = 10,
-        beam_size: int = 1,
-        per_node_beam_size: Optional[int] = None,
-        sampler: Optional[Sampler] = None,
-        min_steps: Optional[int] = None,
-        final_sequence_scorer: Optional[FinalSequenceScorer] = None,
-        constraints: Optional[List[Constraint]] = None,
-        is_distributed: bool=False
-    ) -> OLMoGenerateOutput:
+        is_distributed: bool=False,) -> OLMoGenerateOutput:
         """
-        Generate token IDs using beam search.
+        Generate token IDs using greedy decoding.
 
-        Note that by default ``beam_size`` is set to 1, which is greedy decoding.
+        Args:
+            batch: Dict with 'input_ids', optional 'attention_mask', and multimodal fields.
+            max_steps: Number of decoding steps.
 
-        :param input_ids: A tensor of shape `(batch_size, seq_len)`.
-        :param attention_mask: A optional tensor of shape `(batch_size, seq_len)`, the same
-            as for the forward method.
-        :param attention_bias: A tensor of shape
-            `(batch_size, 1, seq_len + tokens_to_generate, seq_len + tokens_to_generate)`,
-            the same as for the forward method except only one shape is excepted here.
-
-        For an explanation of the other arguments, see :class:`BeamSearch`.
+        Returns:
+            OLMoGenerateOutput with token_ids and scores.
         """
-        
         input_ids: torch.LongTensor = batch["input_ids"]
         attention_mask: Optional[torch.Tensor] = batch.get("attention_mask")
         images: Optional[torch.Tensor] = batch.get("images")
         image_masks: Optional[torch.Tensor] = batch.get("image_masks")
         pooled_patches_idx: Optional[torch.Tensor] = batch.get("pooled_patches_idx")
-
-        llm_cfg = self.config.llm
-
-        beam_search = BeamSearch(
-            llm_cfg.build_tokenizer().eos_token_id,
-            max_steps=max_steps,
-            beam_size=beam_size,
-            per_node_beam_size=per_node_beam_size,
-            sampler=sampler,
-            min_steps=min_steps,
-            final_sequence_scorer=final_sequence_scorer,
-            constraints=constraints,
-            distributed_model=is_distributed
-        )
-
-        # Validate inputs.
+        
+        ## TODO: make max_steps configurable
+        max_steps = 200
+        
+        
+        
         batch_size, seq_len = input_ids.shape
-        mask_len = seq_len + max_steps if llm_cfg.use_position_ids else seq_len
-        position_ids: Optional[torch.Tensor] = None
-        append_last_valid_logits: Optional[torch.Tensor] = None
-        if llm_cfg.use_position_ids and attention_mask is None:
+        device = input_ids.device
+        llm_cfg = self.config.llm
+        end_token_id = llm_cfg.build_tokenizer().eos_token_id
+        # Init positional and attention configs
+        tokens_generated = 0
+        generation_states = torch.tensor([False]* batch_size, dtype=torch.bool)
+        last_generation_start_idx = torch.zeros(batch_size, dtype=torch.long)
+
+        if llm_cfg.use_position_ids and  attention_mask is None:
             attention_mask = input_ids != -1
             position_ids = torch.clamp(
                 torch.cumsum(attention_mask.to(torch.int32), dim=-1) - 1,
@@ -633,75 +619,53 @@ class Molmo(ModelBase):
                 [attention_mask, attention_mask.new_ones((batch_size, max_steps))],
                 dim=1,
             )
-        if attention_mask is not None:
-            assert attention_mask.shape == (batch_size, mask_len)
-        if attention_bias is not None:
-            assert len(attention_bias.shape) == 4
-            assert attention_bias.shape[:2] == (batch_size, 1)
-            assert (
-                seq_len + beam_search.max_steps
-                <= attention_bias.shape[2]
-                == attention_bias.shape[3]
-                <= llm_cfg.max_sequence_length
-            )
+        else:
+            position_ids = None
+            append_last_valid_logits = None
 
-        tokens_generated = 0
+        
 
-        def flatten_past_key_values(
-            past_key_values: List[Tuple[torch.Tensor, torch.Tensor]],
-        ) -> Dict[str, torch.Tensor]:
-            out = {}
-            for i, (key, value) in enumerate(past_key_values):
-                out[f"past_key_{i}"] = key
-                out[f"past_value_{i}"] = value
-            return out
 
-        def unflatten_past_key_values(
-            past_key_values: Dict[str, torch.Tensor],
-        ) -> List[Tuple[torch.Tensor, torch.Tensor]]:
-            out = []
-            for i in range(self.config.llm.n_layers):
-                past_key = past_key_values[f"past_key_{i}"]
-                past_value = past_key_values[f"past_value_{i}"]
-                out.append((past_key, past_value))
-            return out
+        generated = input_ids
+        past_key_values = None
+        hidden_states = None
 
-        def step(
-            last_predictions: torch.Tensor, state: dict[str, torch.Tensor]
-        ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
-            nonlocal tokens_generated
-            nonlocal position_ids
-            nonlocal images
-            nonlocal pooled_patches_idx
-            nonlocal append_last_valid_logits
-
-            attention_mask = state.get("attention_mask")
-            attention_bias = state.get("attention_bias")
-
+        for step in range(max_steps):
             if tokens_generated > 0:
-                past_key_values = unflatten_past_key_values(state)
-                input_ids = last_predictions.unsqueeze(1)
-                if not llm_cfg.use_position_ids and attention_mask is not None:
-                    group_size = input_ids.shape[0]
-                    attention_mask = torch.cat((attention_mask, attention_mask.new_ones((group_size, 1))), dim=-1)
+                input_token = generated[:, -1].unsqueeze(1)
+                # if there is at least one example with image_outputs
+                if generation_states.sum() > 0:
+                    input_embeddings = []
+                    for i in range(batch_size):
+                        if generation_states[i]:
+                            # for the images we need to generate the image features from the image embeddings
+                            input_embeddings.append(
+                                self.vision_encoder_head(
+                                    image_output_features[i].unsqueeze(0)
+                                )
+                            )
+                        else:
+                            input_embeddings.append(
+                                self.transformer.wte(input_token[i])
+                            )
+                    
+                    input_embeddings = torch.stack(input_embeddings, dim=0)
+                    input_token = None
+
+
+                if not llm_cfg.use_position_ids:
+                    attention_mask = torch.cat(
+                        (attention_mask, attention_mask.new_ones((batch_size, 1))), dim=1
+                    )
                 _images = None
                 _pooled_patches_idx = None
+                _append_last_valid_logits = None
                 if llm_cfg.use_position_ids:
                     position_ids = position_ids[:, -1:] + 1
-                    _, *last_dims = position_ids.size()
-                    _position_ids = (
-                        position_ids.unsqueeze(1)
-                        .expand(batch_size, beam_size, *last_dims)
-                        .reshape(batch_size * beam_size, *last_dims)
-                    )
-                else:
-                    _position_ids = None
-                
-                _append_last_valid_logits = None
-
+                _position_ids = position_ids
             else:
-                past_key_values = None
-                input_ids = state["input_ids"]
+                input_token = input_ids
+                input_embeddings = None
                 _images = images
                 _pooled_patches_idx = pooled_patches_idx
                 _position_ids = position_ids
@@ -709,44 +673,240 @@ class Molmo(ModelBase):
 
             tokens_generated += 1
 
-            # Run forward pass of model to get logits, then normalize to get log probs.
-            # We allow the pre-fill stage to compile, but generation is not compiled
-            # since it would require recompiling for each step as the KV cache grows
             output = self(
-                input_ids,
+                input_ids = input_token,
+                input_embeddings=input_embeddings,
                 attention_mask=attention_mask,
-                attention_bias=attention_bias,
+                attention_bias=None,
                 images=_images,
                 image_masks=image_masks,
                 pooled_patches_idx=_pooled_patches_idx,
                 position_ids=_position_ids,
                 past_key_values=past_key_values,
                 use_cache=True,
+                is_training=False,
                 last_logits_only=True,
                 append_last_valid_logits=_append_last_valid_logits
             )
-            log_probs = F.log_softmax(output.logits[:, -1, :], dim=-1)
 
-            # Create new state.
-            state = flatten_past_key_values(output.attn_key_values)
-            if attention_mask is not None:
-                state["attention_mask"] = attention_mask
-            if attention_bias is not None:
-                state["attention_bias"] = attention_bias
+            logits = output.logits[:, -1, :]
+            image_output_features = output.image_output_features[:, -1, :]
+            next_token = torch.argmax(logits, dim=-1, keepdim=True)
+            
 
-            return log_probs, state
+            for i in range(batch_size):
+                ## if the previous token was the image generation start token, we need to check if we are generating an image
+                if generation_states[i]:
+                    if generated[i].shape[0] - last_generation_start_idx[i] == self.config.per_image_output_tokens:
+                        next_token[i,0] = torch.tensor(self.image_gen_end_token_id, device=next_token.device, dtype=next_token.dtype)
+                        generation_states[i] = False
+                    else:
+                        next_token[i,0] = torch.tensor(self._image_output_token_id, device=next_token.device, dtype=next_token.dtype)
+                
+                elif generated[i][-1].item() == self.image_gen_start_token_id:
+                    generation_states[i] = True
+                    next_token[i,0] = torch.tensor(self._image_output_token_id, device=next_token.device, dtype=next_token.dtype)
+                    last_generation_start_idx[i] = generated[i].shape[0]
 
-        initial_preds = input_ids.new_zeros((batch_size,))  # This is arbitrary, we won't use this.
-        state: dict[str, torch.Tensor] = {"input_ids": input_ids}
-        if attention_mask is not None:
-            state["attention_mask"] = attention_mask
-        if attention_bias is not None:
-            state["attention_bias"] = attention_bias
-        with torch.inference_mode(), torch.compiler.set_stance("force_eager"):
-            token_ids, scores = beam_search.search(initial_preds, state, step)
+            
+            generated = torch.cat((generated, next_token), dim=1)    
+            past_key_values = output.attn_key_values
+            if hidden_states is  None:
+                hidden_states = image_output_features.unsqueeze(1)  # shape: (batch_size, 1, d_model)
+            else:
+                hidden_states = torch.cat((hidden_states, image_output_features.unsqueeze(1)), dim=1)  # shape: (batch_size, seq_len + max_steps, d_model)
+            
 
+            if end_token_id is not None and (next_token == end_token_id).all():
+                break
+
+        # You can implement logprobs or scores here if needed
+        scores = None
         return OLMoGenerateOutput(
-            token_ids=token_ids,  # type: ignore[arg-type]
-            scores=scores,  # type: ignore[arg-type]
+            token_ids=generated,  # shape: (batch_size, seq_len + max_steps)
+            scores=scores,
+            image_output_features = hidden_states,  # shape: (batch_size, max_steps, d_model)
         )
+
+        
+    
+    # def generate(
+    #     self,
+    #     batch,
+    #     attention_bias: Optional[torch.Tensor] = None,
+    #     max_steps: int = 10,
+    #     beam_size: int = 1,
+    #     per_node_beam_size: Optional[int] = None,
+    #     sampler: Optional[Sampler] = None,
+    #     min_steps: Optional[int] = None,
+    #     final_sequence_scorer: Optional[FinalSequenceScorer] = None,
+    #     constraints: Optional[List[Constraint]] = None,
+    #     is_distributed: bool=False
+    # ) -> OLMoGenerateOutput:
+    #     """
+    #     Generate token IDs using beam search.
+
+    #     Note that by default ``beam_size`` is set to 1, which is greedy decoding.
+
+    #     :param input_ids: A tensor of shape `(batch_size, seq_len)`.
+    #     :param attention_mask: A optional tensor of shape `(batch_size, seq_len)`, the same
+    #         as for the forward method.
+    #     :param attention_bias: A tensor of shape
+    #         `(batch_size, 1, seq_len + tokens_to_generate, seq_len + tokens_to_generate)`,
+    #         the same as for the forward method except only one shape is excepted here.
+
+    #     For an explanation of the other arguments, see :class:`BeamSearch`.
+    #     """
+        
+    #     input_ids: torch.LongTensor = batch["input_ids"]
+    #     attention_mask: Optional[torch.Tensor] = batch.get("attention_mask")
+    #     images: Optional[torch.Tensor] = batch.get("images")
+    #     image_masks: Optional[torch.Tensor] = batch.get("image_masks")
+    #     pooled_patches_idx: Optional[torch.Tensor] = batch.get("pooled_patches_idx")
+
+    #     llm_cfg = self.config.llm
+
+    #     beam_search = BeamSearch(
+    #         llm_cfg.build_tokenizer().eos_token_id,
+    #         max_steps=max_steps,
+    #         beam_size=beam_size,
+    #         per_node_beam_size=per_node_beam_size,
+    #         sampler=sampler,
+    #         min_steps=min_steps,
+    #         final_sequence_scorer=final_sequence_scorer,
+    #         constraints=constraints,
+    #         distributed_model=is_distributed
+    #     )
+
+    #     # Validate inputs.
+    #     batch_size, seq_len = input_ids.shape
+    #     mask_len = seq_len + max_steps if llm_cfg.use_position_ids else seq_len
+    #     position_ids: Optional[torch.Tensor] = None
+    #     append_last_valid_logits: Optional[torch.Tensor] = None
+    #     if llm_cfg.use_position_ids and attention_mask is None:
+    #         attention_mask = input_ids != -1
+    #         position_ids = torch.clamp(
+    #             torch.cumsum(attention_mask.to(torch.int32), dim=-1) - 1,
+    #             min=0
+    #         )
+    #         append_last_valid_logits = attention_mask.long().sum(dim=-1) - 1
+    #         attention_mask = torch.cat(
+    #             [attention_mask, attention_mask.new_ones((batch_size, max_steps))],
+    #             dim=1,
+    #         )
+    #     if attention_mask is not None:
+    #         assert attention_mask.shape == (batch_size, mask_len)
+    #     if attention_bias is not None:
+    #         assert len(attention_bias.shape) == 4
+    #         assert attention_bias.shape[:2] == (batch_size, 1)
+    #         assert (
+    #             seq_len + beam_search.max_steps
+    #             <= attention_bias.shape[2]
+    #             == attention_bias.shape[3]
+    #             <= llm_cfg.max_sequence_length
+    #         )
+
+    #     tokens_generated = 0
+
+    #     def flatten_past_key_values(
+    #         past_key_values: List[Tuple[torch.Tensor, torch.Tensor]],
+    #     ) -> Dict[str, torch.Tensor]:
+    #         out = {}
+    #         for i, (key, value) in enumerate(past_key_values):
+    #             out[f"past_key_{i}"] = key
+    #             out[f"past_value_{i}"] = value
+    #         return out
+
+    #     def unflatten_past_key_values(
+    #         past_key_values: Dict[str, torch.Tensor],
+    #     ) -> List[Tuple[torch.Tensor, torch.Tensor]]:
+    #         out = []
+    #         for i in range(self.config.llm.n_layers):
+    #             past_key = past_key_values[f"past_key_{i}"]
+    #             past_value = past_key_values[f"past_value_{i}"]
+    #             out.append((past_key, past_value))
+    #         return out
+
+    #     def step(
+    #         last_predictions: torch.Tensor, state: dict[str, torch.Tensor]
+    #     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+    #         nonlocal tokens_generated
+    #         nonlocal position_ids
+    #         nonlocal images
+    #         nonlocal pooled_patches_idx
+    #         nonlocal append_last_valid_logits
+    #         attention_mask = state.get("attention_mask")
+    #         attention_bias = state.get("attention_bias")
+            
+    #         if tokens_generated > 0:
+    #             past_key_values = unflatten_past_key_values(state)
+    #             input_ids = last_predictions.unsqueeze(1)
+    #             if not llm_cfg.use_position_ids and attention_mask is not None:
+    #                 group_size = input_ids.shape[0]
+    #                 attention_mask = torch.cat((attention_mask, attention_mask.new_ones((group_size, 1))), dim=-1)
+    #             _images = None
+    #             _pooled_patches_idx = None
+    #             if llm_cfg.use_position_ids:
+    #                 position_ids = position_ids[:, -1:] + 1
+    #                 _, *last_dims = position_ids.size()
+    #                 _position_ids = (
+    #                     position_ids.unsqueeze(1)
+    #                     .expand(batch_size, beam_size, *last_dims)
+    #                     .reshape(batch_size * beam_size, *last_dims)
+    #                 )
+    #             else:
+    #                 _position_ids = None
+                
+    #             _append_last_valid_logits = None
+
+    #         else:
+    #             past_key_values = None
+    #             input_ids = state["input_ids"]
+    #             _images = images
+    #             _pooled_patches_idx = pooled_patches_idx
+    #             _position_ids = position_ids
+    #             _append_last_valid_logits = append_last_valid_logits
+
+    #         tokens_generated += 1
+
+    #         # Run forward pass of model to get logits, then normalize to get log probs.
+    #         # We allow the pre-fill stage to compile, but generation is not compiled
+    #         # since it would require recompiling for each step as the KV cache grows
+    #         output = self(
+    #             input_ids,
+    #             attention_mask=attention_mask,
+    #             attention_bias=attention_bias,
+    #             images=_images,
+    #             image_masks=image_masks,
+    #             pooled_patches_idx=_pooled_patches_idx,
+    #             position_ids=_position_ids,
+    #             past_key_values=past_key_values,
+    #             use_cache=True,
+    #             is_training = False,
+    #             last_logits_only=True,
+    #             append_last_valid_logits=_append_last_valid_logits
+    #         )
+    #         log_probs = F.log_softmax(output.logits[:, -1, :], dim=-1)
+
+    #         # Create new state.
+    #         state = flatten_past_key_values(output.attn_key_values)
+    #         if attention_mask is not None:
+    #             state["attention_mask"] = attention_mask
+    #         if attention_bias is not None:
+    #             state["attention_bias"] = attention_bias
+
+    #         return log_probs, state
+
+    #     initial_preds = input_ids.new_zeros((batch_size,))  # This is arbitrary, we won't use this.
+    #     state: dict[str, torch.Tensor] = {"input_ids": input_ids}
+    #     if attention_mask is not None:
+    #         state["attention_mask"] = attention_mask
+    #     if attention_bias is not None:
+    #         state["attention_bias"] = attention_bias
+    #     with torch.inference_mode(), torch.compiler.set_stance("force_eager"):
+    #         token_ids, scores = beam_search.search(initial_preds, state, step)
+    #     return OLMoGenerateOutput(
+    #         token_ids=token_ids,  # type: ignore[arg-type]
+    #         scores=scores,  # type: ignore[arg-type]
+    #     )
 

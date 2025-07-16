@@ -67,7 +67,9 @@ class LossMetrics:
         pred = torch.argmax(model_out.logits, dim=-1)
         accuracy = ((pred.flatten() == labels.flatten()).float() * loss_masks.flatten()).sum().item()
         self.eval_metrics["CrossEntropyLoss"].update(cross_entropy_loss/total_weight, total_weight)
-        self.eval_metrics["ImageGenLoss"].update(genloss/gen_total_weight, gen_total_weight)
+        if gen_total_weight > 0:
+            self.eval_metrics["ImageGenLoss"].update(genloss/gen_total_weight, gen_total_weight)
+        
         if zloss is not None:
             self.eval_metrics["ZLoss"].update(zloss/total_weight, total_weight)
         self.eval_metrics["Accuracy"].update(accuracy/total_weight, total_weight)

@@ -389,7 +389,8 @@ class Preprocessor:
             image_outputs = [np.load(example["image_outputs"][i]) for i in range(len(example["image_outputs"]))]
         else:
             image_outputs = []
-
+        # if self.is_training == False:
+        #     import pdb; pdb.set_trace()
         messages, formatter_metadata = self.formater(example, self.is_training, self.for_inference, rng)
         if isinstance(messages[0], list):
             # If there are multiple conversations for this example, shuffle their order

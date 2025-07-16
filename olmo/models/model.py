@@ -70,6 +70,8 @@ class OLMoGenerateOutput(NamedTuple):
     Internal data the might be used for visualizations
     """
 
+    image_output_features: Optional[torch.FloatTensor] = None
+
 
 class ModelBase(torch.nn.Module):
 
@@ -126,15 +128,26 @@ class ModelBase(torch.nn.Module):
     def generate(
         self,
         batch,
-        attention_bias: Optional[torch.Tensor] = None,
         max_steps: int = 10,
-        beam_size: int = 1,
-        per_node_beam_size: Optional[int] = None,
-        sampler: Optional[Sampler] = None,
-        min_steps: Optional[int] = None,
-        final_sequence_scorer: Optional[FinalSequenceScorer] = None,
-        constraints: Optional[List[Constraint]] = None,
         is_distributed: bool=False,
-        return_prefill_output: bool = False,
     ) -> OLMoGenerateOutput:
         raise NotImplementedError()
+    
+    
+    
+    
+    # def generate(
+    #     self,
+    #     batch,
+    #     attention_bias: Optional[torch.Tensor] = None,
+    #     max_steps: int = 10,
+    #     beam_size: int = 1,
+    #     per_node_beam_size: Optional[int] = None,
+    #     sampler: Optional[Sampler] = None,
+    #     min_steps: Optional[int] = None,
+    #     final_sequence_scorer: Optional[FinalSequenceScorer] = None,
+    #     constraints: Optional[List[Constraint]] = None,
+    #     is_distributed: bool=False,
+    #     return_prefill_output: bool = False,
+    # ) -> OLMoGenerateOutput:
+    #     raise NotImplementedError()
