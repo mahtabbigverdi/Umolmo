@@ -8,6 +8,11 @@ from olmo.data.academic_datasets_manual import (
     ChartQa, InfoQa, SceneTextQa, DocQa,
     TextVqa, AOkVqa, Vqa2, PlotQa, TallyQa, FigureQa, DvQa,
 )
+
+from olmo.data.mmseek_datasets import ( 
+    Depth
+)
+
 from olmo.data.video_datasets import (
     InternVid, Koala, LLaVAVideo178K, MVBench, TempCompass,
     VideoMME, EgoSchema, PerceptionTest, MLVU, LongVideoBench, NeXTQA, PeVideo, PlmFGQAEval, PlmFGQATrain
@@ -231,6 +236,8 @@ def get_dataset_by_name(dataset_name, split) -> Dataset:
         return AI2D(split=split, boxes="both")
     if dataset_name == "clock_bench":
         return ClockBench(split=split)
+    if dataset_name == "depth":
+        return Depth(split=split)
     if dataset_name == "dense_caption_eval":
         assert split == "test"
         return DenseCaptionEval()

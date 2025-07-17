@@ -43,10 +43,8 @@ def get_interpolated_patch_features(image_path, target_num_patches, save_path=No
 
     patch_features = extract_patch_features(image)
     interpolated_features = interpolate_features(patch_features, target_num_patches)
-    print(interpolated_features.shape)  # Should be [target_num_patches, D]
     if save_path:
         np.save(save_path, interpolated_features.cpu().numpy())
     return interpolated_features  # shape: [target_num_patches, D]
 
 
-get_interpolated_patch_features("val/png/289.png", 64, save_path = "output.npy")

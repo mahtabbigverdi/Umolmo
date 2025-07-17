@@ -47,6 +47,12 @@ def load_model_state_unsharded(dir: PathOrStr, model: nn.Module):
     if get_global_rank() == 0:
         state_dict = torch.load(resource_path(dir, MODEL_FILENAME),
                                 map_location="cpu", weights_only=True)
+        if hasattr(model, "vision_encoder_head") and "vision_encoder_head" not in state_dict:
+            # This is a workaround for the case where the model was saved without a vision encoder head
+            state_dict["vision_encoder_head.weight"] = torch.zeros((model.vision_encoder_head.weight.shape[0],model.vision_encoder_head.weight.shape[1]), dtype = torch.float32)
+        if hasattr(model, "vision_decoder_head") and "vision_decoder_head" not in state_dict:
+            # This is a workaround for the case where the model was saved without a vision decoder head
+            state_dict["vision_decoder_head.weight"] = torch.zeros((model.vision_decoder_head.weight.shape[0],model.vision_decoder_head.weight.shape[1]), dtype = torch.float32)
     else:
         state_dict = {}
     dist_cp_sd.set_model_state_dict(

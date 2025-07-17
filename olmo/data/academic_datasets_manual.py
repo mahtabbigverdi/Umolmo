@@ -16,7 +16,6 @@ from cached_path import cached_path
 from olmo.data.dataset import DATA_HOME, DatasetBase, Dataset
 from olmo.io import read_file, write_json, file_exists
 
-
 if DATA_HOME is not None:
     DOWNLOADS = join(DATA_HOME, "downloads")
     CHARTQA_SOURCE = join(DATA_HOME, "chartqa")

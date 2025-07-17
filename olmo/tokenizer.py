@@ -143,6 +143,9 @@ def build_tokenizer(
         # In this case we will use EOS as BOS
         bos_token_id = tokenizer.eos_token_id
 
+
+    ## these EXTRA_TOKENS define above in the first few lines are are added to the tokenizer and will exceed pad_tokenizer_to and 
+    ## we get their features from wte.new_embedding 
     if pad_tokenizer_to is not None:
         for ix, tok in enumerate(EXTRA_TOKENS):
             ids = tokenizer.encode(tok, add_special_tokens=False)
@@ -176,7 +179,6 @@ class TokenizerConfig(BaseConfig):
             tokenizer_dir=self.tokenizer_dir,
             pad_tokenizer_to=pad_tokenizer_to
         )
-
 
 
 

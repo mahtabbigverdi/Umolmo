@@ -306,6 +306,7 @@ DEMO_STYLES = [
     "video_long_caption",
     "video_short_caption",
     "correction_qa",
+    # "depth",
 ]
 
 
@@ -485,6 +486,7 @@ class DataFormatter(BaseConfig):
 
         Uses the `style` field to understand what the task/output style is
         """
+        
         style = example.get("style")
         output = None
         metadata = None
@@ -594,7 +596,6 @@ class DataFormatter(BaseConfig):
                 messages = [prompt]
         else:
             raise ValueError(f"Example type {type(message)} not understood")
-
         # Add the system prompt
         if self.system_prompt and self.system_prompt != "none":
             style = None

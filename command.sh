@@ -35,15 +35,28 @@ rm -rf /gscratch/krishna/mahtab/Umolmo/debug_run
 # Run training
 HF_ACCESS_TOKEN=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 \
 WANDB_API_KEY=42e8013627067866a191055811b0107b24891809 \
+# torchrun \
+#   --master_port=23501 \
+#   --nnodes=1 \
+#   --nproc-per-node=1 \
+#   launch_scripts/train_multitask_model.py \
+#   debug \
+#   debug \
+#   # --wandb.name=${EXP_NAME} \
+#   # --wandb.entity=allenai-team1 \
+#   # --wandb.project=mmseek \
+#   # --save_folder=/gscratch/krishna/mahtab/Umolmo/checkpoints/${EXP_NAME} \
+#   # --save_overwrite 
+
+
 torchrun \
-  --master_port=23501 \
   --nnodes=1 \
-  --nproc-per-node=1 \
+  --nproc-per-node=4 \
   launch_scripts/train_multitask_model.py \
-  debug \
-  debug \
-  # --wandb.name=${EXP_NAME} \
-  # --wandb.entity=allenai-team1 \
-  # --wandb.project=mmseek \
-  # --save_folder=/gscratch/krishna/mahtab/Umolmo/checkpoints/${EXP_NAME} \
-  # --save_overwrite 
+  smallmahtab \
+  /mmfs1/gscratch/krishna/mahtab/Umolmo/pretrained/step22347-unsharded \
+  --wandb.name="${EXP_NAME}" \
+  --wandb.entity=allenai-team1 \
+  --wandb.project=mmseek \
+  --save_folder=/mmfs1/gscratch/krishna/mahtab/Umolmo/checkpoints/${EXP_NAME} \
+  --save_overwrite 

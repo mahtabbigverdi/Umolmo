@@ -37,7 +37,7 @@ log = logging.getLogger(__name__)
 
 
 EMBEDDING_DICT = {
-    "SigLip2" : 700,
+    "SigLip2" : 1024,
     "DinoV2": 500
 }
 
@@ -401,7 +401,6 @@ class Molmo(ModelBase):
             This can speed up decoding when you only care about the next token.
         """
 
-        
         output_hidden_states = output_hidden_states if output_hidden_states is not None else False
 
         if past_key_values:
@@ -437,7 +436,6 @@ class Molmo(ModelBase):
 
         # Get embeddings of input.
         # shape: (batch_size, seq_len, d_model)
-        
         if input_ids is not None:
             input_ids = input_ids * (input_ids != -1).to(input_ids.dtype)
         x = self.transformer.wte(input_ids) if input_embeddings is None else input_embeddings  # type: ignore

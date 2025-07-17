@@ -116,11 +116,11 @@ if __name__ == "__main__":
         eval_tasks = ["android_control_ll"]
         tasks = [["eval", ["android_control"], 1.0]]
     elif args.mixture in ["small1", "debug"]:
-        eval_tasks = ["chart_qa"]
-        tasks = [["aux", ["chart_qa"], 1.0]]
+        eval_tasks = ["depth"]
+        tasks = [["aux", ["depth"], 1.0]]
     elif args.mixture in ["smallmahtab"]:
-        eval_tasks = ["chart_qa"]
-        tasks = [["aux", ["chart_qa"], 1.0]]
+        eval_tasks = ["depth"]
+        tasks = [["aux", ["depth"], 1.0]]
     elif args.mixture in ["pointing"]:
         eval_tasks = ["pointing_eval:test"]
         tasks = [["pointing", [
