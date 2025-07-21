@@ -213,7 +213,7 @@ data:
 restore_dataloader: true
 fast_forward_batches: null
 evaluators: []
-eval_interval: 2000
+eval_interval: 300
 inf_evaluators:
 - label: depth
   data:
@@ -237,8 +237,8 @@ inf_evaluators:
   evaluator:
     n_to_log: 0
     num_wandb_examples: 32
-    save_predictions: null
-    save_tokens: false
+    save_predictions: _default
+    save_tokens: true
     vqa_eval: ''
     pointing_eval: false
     count_eval: false
@@ -256,10 +256,10 @@ inf_evaluators:
   max_new_tokens: 12
   device_batch_size: 4
   subset_num_batches: null
-  max_examples: 2048
-  console_log_interval: 20
+  max_examples: 16
+  console_log_interval: 5
   include_image: false
-inf_eval_interval: 2000
+inf_eval_interval: 300
 eval_on_last_step: true
 eval_on_load: false
 save_folder: /mmfs1/gscratch/krishna/mahtab/Umolmo/checkpoints/molmo-7b-qwen2-siglip2-finetune
@@ -270,7 +270,7 @@ checkpointer_config:
   work_dir: null
   throttle_uploads: false
 canceled_check_interval: 50
-save_interval: 2000
+save_interval: 80
 save_num_checkpoints_to_keep: 1
 save_final_unsharded_checkpoint: false
 save_interval_ephemeral: null
@@ -280,8 +280,8 @@ reset_optimizer_state: false
 reset_trainer_state: false
 initial_model_checkpoint: /mmfs1/gscratch/krishna/mahtab/Umolmo/pretrained/step22347-unsharded
 allow_resume: true
-max_duration: 30000
-global_train_batch_size: 256
+max_duration: 600
+global_train_batch_size: 32
 device_train_microbatch_size: 4
 max_grad_norm: 1.0
 multi_component_grad_norm: true
@@ -297,13 +297,13 @@ wandb:
   - watching
   log_artifacts: false
   rank_zero_only: true
-  log_interval: 20
+  log_interval: 5
   allow_resume: false
 beaker_log_interval: 50
 speed_monitor:
   window_size: 20
   gpu_flops_available: null
-console_log_interval: 20
+console_log_interval: 5
 gen1_gc_interval: 1
 compile:
   mode: default
@@ -324,7 +324,7 @@ time_limit: null
 extra_steps_after_cancel: 10
 python_profiling: false
 torch_profiling: false
-stop_at: 30000
+stop_at: 600
 stop_after: null
 fused_loss: false
 compile_loss: true
@@ -334,11 +334,11 @@ runtime_data:
     --save_folder=/mmfs1/gscratch/krishna/mahtab/Umolmo/checkpoints/molmo-7b-qwen2-siglip2-finetune
     --save_overwrite
   hostname: g3086
-  date: 07/16/2025, 18:59
+  date: 07/21/2025, 15:54
   world_size: 4
   resuming_from: null
   beaker_experiment_id: null
   beaker_experiment_url: null
-  wandb_id: u51zs12f
-  wandb_url: https://wandb.ai/allenai-team1/mmseek/runs/u51zs12f
+  wandb_id: np31u88u
+  wandb_url: https://wandb.ai/allenai-team1/mmseek/runs/np31u88u
 image_generation_loss_type: cosine

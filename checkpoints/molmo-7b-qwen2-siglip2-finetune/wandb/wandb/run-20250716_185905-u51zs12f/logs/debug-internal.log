@@ -1,7 +1,0 @@
-{"time":"2025-07-16T18:59:06.105389129-07:00","level":"INFO","msg":"stream: starting","core version":"0.20.1","symlink path":"/mmfs1/gscratch/krishna/mahtab/Umolmo/checkpoints/molmo-7b-qwen2-siglip2-finetune/wandb/wandb/run-20250716_185905-u51zs12f/logs/debug-core.log"}
-{"time":"2025-07-16T18:59:06.342585429-07:00","level":"INFO","msg":"stream: created new stream","id":"u51zs12f"}
-{"time":"2025-07-16T18:59:06.342657416-07:00","level":"INFO","msg":"stream: started","id":"u51zs12f"}
-{"time":"2025-07-16T18:59:06.342789374-07:00","level":"INFO","msg":"sender: started","stream_id":"u51zs12f"}
-{"time":"2025-07-16T18:59:06.342777789-07:00","level":"INFO","msg":"writer: Do: started","stream_id":"u51zs12f"}
-{"time":"2025-07-16T18:59:06.342838603-07:00","level":"INFO","msg":"handler: started","stream_id":"u51zs12f"}
-{"time":"2025-07-16T18:59:06.613363066-07:00","level":"INFO","msg":"Starting system monitor"}

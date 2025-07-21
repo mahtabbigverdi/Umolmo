@@ -93,8 +93,8 @@ if __name__ == "__main__":
     parser.add_argument("--seq_len", default=2304, type=int)
     parser.add_argument("--inf_seq_len", default=1792, type=int)
     parser.add_argument("--duration", default=30000, type=int)
-    parser.add_argument("--max_inf_examples", default=2048, type=int)
-    parser.add_argument("--global_batch_size", default=256, type=int)
+    parser.add_argument("--max_inf_examples", default=16, type=int)
+    parser.add_argument("--global_batch_size", default=32, type=int)
     parser.add_argument("--device_eval_batch_size", default=4, type=int)
     parser.add_argument("--device_inf_batch_size", default=4, type=int)
     parser.add_argument("--device_train_batch_size", default=4, type=int)
@@ -240,22 +240,25 @@ if __name__ == "__main__":
             model_cfg.pad_tokenizer = True
         global_batch_size = 8
         model_init = None
-        inf_eval_interval = 20
-        eval_interval = 20
-        log_interval = 5
+        inf_eval_interval = 1000
+        eval_interval = 1000
+        log_interval = 10
         eval_examples = 16
         max_inf_examples = 16
-        duration = 1000
+        duration = '2ep'
         eval_subset_batches = 4
     
     else:
-        eval_examples = 2048
-        max_inf_examples = args.max_inf_examples
-        log_interval = 20
+        eval_examples = 16
+        max_inf_examples = 16
+        ## was 2048 before for both max_inf_examples and eval_examples
+        # max_inf_examples = args.max_inf_examples
+
+        log_interval = 5
         global_batch_size = args.global_batch_size
-        inf_eval_interval = 2000
-        eval_interval = 2000
-        duration = args.duration
+        inf_eval_interval = 300
+        eval_interval = 300
+        duration =  600
         checkpoint = select_checkpoint(args.checkpoint)
         if exists(join(checkpoint, "model.yaml")):
             model_cfg = MolmoConfig.load(join(checkpoint, "model.yaml"))
@@ -301,7 +304,6 @@ if __name__ == "__main__":
             )
             evaluation.data.persistent_workers = True
             evaluations.append(evaluation)
-
     cfg = TrainConfig(
         run_name="multitask_train",
         save_folder="debug_run" if debug else omegaconf.MISSING,
@@ -368,7 +370,7 @@ if __name__ == "__main__":
         ),
         load_path=None,
         initial_model_checkpoint=checkpoint,
-        save_interval=2000,
+        save_interval=80,
         save_num_checkpoints_to_keep=1,
         global_train_batch_size=global_batch_size,
         device_train_microbatch_size=args.device_train_batch_size,

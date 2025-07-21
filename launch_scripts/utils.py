@@ -211,7 +211,7 @@ def get_evaluation(name, seq_len, max_examples, for_inference=True,
         evaluator.num_wandb_examples = 64
         evaluator.num_wandb_examples = 32
         evaluator.n_to_log = 0
-        evaluator.save_predictions = None
+        # evaluator.save_predictions = None
 
         max_new_tokens = get_default_max_tokens(name)
 

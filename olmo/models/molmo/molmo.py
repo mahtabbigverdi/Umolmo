@@ -458,7 +458,7 @@ class Molmo(ModelBase):
             assert is_output_image_patch.sum() == len(image_output_features)
             ## pass the visual embeddings through the vision encoder head to make them compatible with the llm input embeddings
             ## I dont want to use autocast here because the image features are already in float32
-            with torch.cuda.amp.autocast(enabled=False):
+            with torch.amp.autocast("cuda", enabled=False):
                 image_output_features = self.vision_encoder_head(image_output_features)           
             x.view(-1, x.shape[-1])[is_output_image_patch] = image_output_features
         
@@ -510,7 +510,7 @@ class Molmo(ModelBase):
             casual_mask = casual_mask | can_attend_bk[:, None, :, :]
 
         attention_mask = attention_mask & casual_mask
-
+        
         # Convert mask to a float mask, and possibly combine with `attention_bias`
         if attention_bias is not None:
             attention_bias = torch.where(attention_mask, attention_bias, torch.finfo(x.dtype).min)
@@ -605,6 +605,7 @@ class Molmo(ModelBase):
         tokens_generated = 0
         generation_states = torch.tensor([False]* batch_size, dtype=torch.bool)
         last_generation_start_idx = torch.zeros(batch_size, dtype=torch.long)
+        generation_done = torch.zeros(batch_size, dtype=torch.bool, device = input_ids.device)
 
         if llm_cfg.use_position_ids and  attention_mask is None:
             attention_mask = input_ids != -1
@@ -670,7 +671,6 @@ class Molmo(ModelBase):
                 _append_last_valid_logits = append_last_valid_logits
 
             tokens_generated += 1
-
             output = self(
                 input_ids = input_token,
                 input_embeddings=input_embeddings,
@@ -695,6 +695,7 @@ class Molmo(ModelBase):
             for i in range(batch_size):
                 ## if the previous token was the image generation start token, we need to check if we are generating an image
                 if generation_states[i]:
+                    ### if the generated tokens number reached the per_image_output_tokens, we need to end the image generations
                     if generated[i].shape[0] - last_generation_start_idx[i] == self.config.per_image_output_tokens:
                         next_token[i,0] = torch.tensor(self.image_gen_end_token_id, device=next_token.device, dtype=next_token.dtype)
                         generation_states[i] = False
@@ -707,6 +708,8 @@ class Molmo(ModelBase):
                     last_generation_start_idx[i] = generated[i].shape[0]
 
             
+            next_token[generation_done] = end_token_id
+            generation_done |= next_token.squeeze(1) == end_token_id
             generated = torch.cat((generated, next_token), dim=1)    
             past_key_values = output.attn_key_values
             if hidden_states is  None:
@@ -723,7 +726,7 @@ class Molmo(ModelBase):
         return OLMoGenerateOutput(
             token_ids=generated,  # shape: (batch_size, seq_len + max_steps)
             scores=scores,
-            image_output_features = hidden_states,  # shape: (batch_size, max_steps, d_model)
+            image_output_features = hidden_states.to(torch.float32),  # shape: (batch_size, max_steps, d_model)
         )
 
         

@@ -358,7 +358,7 @@ class TrainConfig(BaseConfig):
     How many sharded checkpoints to keep.
     """
 
-    save_final_unsharded_checkpoint: bool = False
+    save_final_unsharded_checkpoint: bool = True
     """Save an unsharded checkpoint at the end of training"""
 
     save_interval_ephemeral: Optional[int] = None

@@ -853,12 +853,11 @@ class Trainer:
         else:
             return False
 
-    def inference_eval(self) -> Dict[str, Union[float, WBValue]]:
+    def inference_eval(self, step) -> Dict[str, Union[float, WBValue]]:
         self.optim.zero_grad(set_to_none=True)
         self.fsdp_model.eval()
         all_metrics = {}
         t0 = None
-        # import pdb; pdb.set_trace()
         for evaluator in self.inference_evaluators:
             t0 = time.perf_counter()
             log.info(f"Running evaluation for '{evaluator.label}'...")
@@ -867,7 +866,8 @@ class Trainer:
                 device=self.device,
                 autocast_precision=self.cfg.autocast_precision,
                 is_distributed=True,
-                pbar=False
+                pbar=False,
+                step=step
             )
             self.log_metrics_to_console(f"{evaluator.label}", dataset_metrics)
             all_metrics.update({f"{evaluator.label}/{k}": v for k, v in dataset_metrics.items()})
@@ -1015,7 +1015,6 @@ class Trainer:
         cancel_initiated: bool = False
         stop_at: Optional[int] = self.cfg.stop_at
         save_checkpoints: bool = True
-
         with torch_profiler as p:
             for epoch in range(self.epoch or 0, self.max_epochs):
                 for batch in self.train_loader:
@@ -1069,7 +1068,7 @@ class Trainer:
                         else:
                             log.info(f"[step={self.global_step}/{self.max_steps}]")
 
-                    # Log metrics to W&B.
+                    # Log metrics to W&B.                    
                     if (
                         wandb.run is not None
                         and self.cfg.wandb is not None
@@ -1101,6 +1100,7 @@ class Trainer:
 
                         # Remove any ephemeral checkpoints.
                         self.remove_checkpoints(self.ephemeral_checkpoints, 0)
+                        
 
                         # Reset speed monitor so that we don't count the time taken to save checkpoints.
                         speed_monitor.reset()
@@ -1115,6 +1115,8 @@ class Trainer:
                         log.info("Saving ephemeral checkpoint...")
                         checkpoint_path, _ = self.save_checkpoint(CheckpointType.sharded_ephemeral)
                         log.info(f"Checkpoint saved to {checkpoint_path}")
+                        
+                        
 
                         # Reset speed monitor so that we don't count the time taken to save checkpoints.
                         speed_monitor.reset()
@@ -1143,7 +1145,7 @@ class Trainer:
                         (self.global_step % self.cfg.inf_eval_interval == 0 or
                          (self.cfg.eval_on_last_step and last_step))
                     ):
-                        eval_metrics = self.inference_eval()
+                        eval_metrics = self.inference_eval(self.global_step)
 
                         # Log metrics to W&B.
                         if wandb.run is not None:

@@ -41,7 +41,7 @@ class Depth(DatasetBase):
                 answers=ex["label"],
                 image_outputs = ex['image_output_paths'],
                 metadata=dict(
-                    example_id=ex_id
+                    example_id=ex['id']
                 )
             )
             examples.append(ex)

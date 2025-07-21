@@ -190,9 +190,10 @@ class SavePredictions(Evaluator):
                 Path(self.output_dir).mkdir(parents=True, exist_ok=True)
         new_tokens = predictions["predictions"]
         prompt_tokens = predictions["prompts"]
+        image_outputs = predictions["image_outputs"]
         json_data = []
         html_data = []
-
+        image_data = {}
         n_no_eos = 0
         for tok in new_tokens:
             if not np.any(tok == tokenizer.eos_token_id):
@@ -200,18 +201,20 @@ class SavePredictions(Evaluator):
         if n_no_eos > 0:
             logging.warning(f"{n_no_eos}/{len(new_tokens)} ({n_no_eos/len(new_tokens):00.4f}) "
                             f"examples have no EOS, your inference tokens might be too short")
-
         for ex_ix, pred_seq in enumerate(new_tokens):
             text = tokenizer.decode(pred_seq[pred_seq >= 0])
             json_row = dict(prediction=text)
             if self.save_tokens:
-                json_row["n_tokens"] = pred_seq.tolist()
+                # pass
+                ### TODO hardcoded to save only last 200 tokens
+                json_row["n_tokens"] = pred_seq.tolist()[-200:]
             prompt_text = postprocess_prompt(tokenizer.decode(prompt_tokens[ex_ix][prompt_tokens[ex_ix] >= 0]))
             if tokenizer.adds_space:
                 sep = " "
             else:
                 sep = ""
             json_row["prompt"] = prompt_text
+            
             metadata = metadatas[ex_ix]
             if ex_ix < self.log_examples:
                 log.info("*"*30)
@@ -220,6 +223,8 @@ class SavePredictions(Evaluator):
                 log.info(' '.join((prompt_text + sep + text.replace("\n", "\\n")).split()))
             json_row.update({k: v for k, v in metadata.items() if isinstance(v, (str, float, int))})
             json_data.append(json_row)
+            image_data[metadata['example_id']] = image_outputs[ex_ix]
+            # json_row["image_outputs"] = image_outputs[ex_ix].tolist() if image_outputs is not None else None
         html_data = gather_examples_as_html(self.log_examples, tokenizer, metadatas, predictions)
 
         json_file = None
@@ -254,6 +259,24 @@ class SavePredictions(Evaluator):
                         save_overwrite=True
                     )
                     log.info("done saving html table for rank 0")
+
+        if get_world_size() > 1:
+            if get_global_rank() == 0:
+                all_image_data = [None] * get_world_size()
+                dist.gather_object(image_data, all_image_data)
+                
+                # Merge all dictionaries into one
+                merged_image_data = {}
+                for partial in all_image_data:
+                    merged_image_data.update(partial)
+            else:
+                dist.gather_object(image_data, None)
+        else:
+            merged_image_data = image_data
+
+        if get_global_rank() == 0:
+            np.save(os.path.join(self.output_dir, self.get_file_name(step, None) + "_image_outputs.npy"), merged_image_data)
+            log.info("Saved gathered image_data dictionary.")
 
         return metrics
 
@@ -516,6 +539,7 @@ class PointCountEval(Evaluator):
         self.n_to_log = n_to_log
 
     def __call__(self, metadatas, predictions, tokenizer, step=None):
+        
         new_tokens = predictions["predictions"]
         prompt_tokens = predictions["prompts"]
         vocab = tokenizer

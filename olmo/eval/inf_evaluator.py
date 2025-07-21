@@ -97,7 +97,7 @@ class EvaluatorConfig(BaseConfig):
     save_predictions: Optional[str] = "_default"  # saves with default name to checkpoint dir
     """Where to save predictions files"""
 
-    save_tokens: bool = False
+    save_tokens: bool = True
     """If save predictions, should the tokens be saved"""
 
     vqa_eval: str = ''
@@ -124,11 +124,13 @@ class EvaluatorConfig(BaseConfig):
     def build(self, default_save_dir=None) -> InfEvaluator:
         evaluators = []
         save_predictions = self.save_predictions
-        if save_predictions == "_default":
-            if default_save_dir is None:
-                logging.info(f"save_predictions is \"default\" but no default "
-                             f"save dir set so predictions will not be saved")
-            save_predictions = default_save_dir
+        
+        ## commented out for now 
+        # if save_predictions == "_default":
+        #     if default_save_dir is None:
+        #         logging.info(f"save_predictions is \"default\" but no default "
+        #                      f"save dir set so predictions will not be saved")
+        #     save_predictions = default_save_dir
         if save_predictions:
             evaluators.append(SavePredictions(
                 save_predictions,
@@ -177,7 +179,7 @@ class InfDatasetEvaluator:
     max_new_tokens: int = 448
     console_log_interval: Optional[int] = None
 
-    def run(self, model, device, autocast_precision, is_distributed, pbar=False):
+    def run(self, model, device, autocast_precision, is_distributed, pbar=False, step =None):
         eval_dataloader = self.dataloader
         eval_it = iter(eval_dataloader)
         n_steps = self.n_steps
@@ -215,9 +217,11 @@ class InfDatasetEvaluator:
                         max_steps=self.max_new_tokens,
                         is_distributed=is_distributed
                     )
-
+            
             pred = {
-                "predictions": olmo_gen_output.token_ids[:, 0].detach().cpu().numpy(), # beam size of 1
+                # "predictions": olmo_gen_output.token_ids[:, 0].detach().cpu().numpy(), # beam size of 1
+                "predictions": olmo_gen_output.token_ids.detach().cpu().numpy(), # greedy
+                "image_outputs": olmo_gen_output.image_output_features.detach().cpu().numpy(),
                 "prompts": batch_inference["input_ids"].detach().cpu().numpy(),
             }
 
@@ -239,9 +243,8 @@ class InfDatasetEvaluator:
             if self.console_log_interval and not pbar:
                 if eval_step + 1 == n_steps or (eval_step + 1) % self.console_log_interval == 0:
                     log.info(f"[eval_step={eval_step + 1}/{total_steps}]")
-
         tokenizer = model.config.build_tokenizer()
-        metrics = self.evaluator(predictions, all_metadata, tokenizer, device)
+        metrics = self.evaluator(predictions, all_metadata, tokenizer, device, step=step)
         return metrics
 
 
