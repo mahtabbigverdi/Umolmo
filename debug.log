@@ -1,42 +1,42 @@
-2025-07-21 15:53:57.534	g3086:1	olmo.util:269	INFO	Set up torchrun environment
-2025-07-21 15:53:57.534	g3086:3	olmo.util:269	INFO	Set up torchrun environment
-2025-07-21 15:53:57.534	g3086:2	olmo.util:269	INFO	Set up torchrun environment
-2025-07-21 15:53:57.546	g3086:0	olmo.util:269	INFO	Set up torchrun environment
-2025-07-21 15:53:57.617	g3086:1	root:269	INFO	Setting eval subset batches to 1
-2025-07-21 15:53:57.617	g3086:3	root:269	INFO	Setting eval subset batches to 1
-2025-07-21 15:53:57.617	g3086:2	root:269	INFO	Setting eval subset batches to 1
-2025-07-21 15:53:57.629	g3086:0	root:269	INFO	Setting eval subset batches to 1
-2025-07-21 15:53:57.759	g3086:3	train:82	INFO	Not resuming since no latest checkpoint found
-2025-07-21 15:53:57.759	g3086:1	train:82	INFO	Not resuming since no latest checkpoint found
-2025-07-21 15:53:57.760	g3086:2	train:82	INFO	Not resuming since no latest checkpoint found
-2025-07-21 15:53:57.759	g3086:0	train:54	INFO	Configuration:
-2025-07-21 15:53:57.760	g3086:0	train:55	INFO	TrainConfig(run_name='multitask_train', model=MolmoConfig(model_name='molmo', llm=LlmConfig(d_model=3584, n_heads=28, n_kv_heads=4, head_dim=None, qkv_bias=True, clip_qkv=None, n_layers=28, mlp_ratio=4, mlp_hidden_size=37888, activation_type='swiglu', block_type='sequential', rope=True, rope_full_precision=True, rope_theta=1000000.0, rope_type='default', rope_factor=None, rope_high_freq_factor=None, rope_low_freq_factor=None, rope_original_max_position_embeddings=None, attention_type='sdpa', float32_attention=True, attention_dropout=0.0, attention_layer_norm=False, attention_layer_norm_type='olmo', residual_dropout=0.1, response_residual_dropout=0.0, layer_norm_type='rms', layer_norm_with_affine=True, layer_norm_eps=1e-06, attention_layer_norm_with_affine=True, max_sequence_length=4096, max_position_embeddings=None, include_bias=False, bias_for_layer_norm=None, norm_after=False, moe_num_experts=8, moe_top_k=2, moe_mlp_impl='sparse', moe_log_expert_assignment=False, moe_shared_expert=False, moe_lbl_in_fp32=False, moe_interleave=False, moe_loss_weight=0.1, moe_zloss_weight=None, moe_dropless=True, moe_capacity_factor=1.25, embedding_dropout=0.0, scale_logits=False, vocab_size=152064, additional_vocab_size=128, weight_tying=False, embedding_size=152064, use_position_ids=True, tokenizer=TokenizerConfig(identifier='Qwen/Qwen2.5-7B', tokenizer_dir=None), init_path='gs://mm-olmo/pretrained_llms/qwen2.5-7b.pt', init_incremental=None, new_embedding_init_range=0.02, initializer_range=0.02, normalize_input_embeds=False, activation_checkpoint='whole_layer', compile='blocks', fix_pad_tokenizer=False, init_std=0.02, init_fn='normal', init_cutoff_factor=None), vision_backbone=MolmoVisionBackboneConfig(vit=VitConfig(image_model_type='siglip', image_default_input_size=(378, 378), image_patch_size=14, image_pos_patch_size=14, image_emb_dim=1152, image_num_heads=16, image_num_key_value_heads=16, image_num_layers=27, image_head_dim=72, image_mlp_dim=4304, image_mlp_activations='gelu_pytorch_tanh', image_dropout_rate=0.0, image_num_pos=729, image_norm_eps=1e-06, attention_dropout=0.0, residual_dropout=0.0, initializer_range=0.02, float32_attention=True, attention_type='sdpa', activation_checkpointing=True, init_path='gs://mm-olmo/pretrained_image_encoders/siglip2-so400m-14-384.pt', resize_mode='siglip', pad_value=0.0, normalize='siglip'), image_pooling_2d='attention_meanq', pooling_attention_mask=False, image_projector='mlp', image_padding_embed=None, vit_layers=(-3, -9), skip_unused_layers=True, image_feature_dropout=0.0, connector_activation_checkpointing=True, compile_vit='blocks'), data_formatter=DataFormatter(prompt_templates='uber_model', message_format='role', system_prompt='demo_or_style', always_start_with_space=False, default_inference_len=65, select_answer='best', debug=False, image_last=False, format_message_list=None, p_one_message=0.0), mm_preprocessor=MolmoPreprocessorConfig(crop_mode='overlap-and-resize-c2', max_crops=8, max_images=None, pooling_w=2, pooling_h=2, overlap_margins=[4, 4], use_col_tokens=True, loss_token_weighting='root_subsegments', legacy_image_mask=False), bi_directional_attn=None, image_encoder='SigLip2', vision_head_type='Linear', per_image_output_tokens=64), seed=6198, epoch=None, dry_run=False, ft_llm=True, ft_gen=True, ft_vit=True, ft_connector=True, ft_embedding='all', optimizer=OptimizerConfig(name='adamw', learning_rate=0.0001, weight_decay=0.01, betas=(0.9, 0.95), eps=1e-05, gen_learning_rate=1e-05, connector_learning_rate=5e-06, vit_learning_rate=5e-06, llm_learning_rate=1e-05, gen_weight_decay=0.0, connector_weight_decay=0.0, vit_weight_decay=0.0, llm_weight_decay=0.0, gen_betas=(0.9, 0.95), connector_betas=(0.9, 0.95), vit_betas=(0.9, 0.95), llm_betas=(0.9, 0.95), gen_eps=1e-06, connector_eps=1e-06, vit_eps=1e-06, llm_eps=1e-06, metrics_log_interval=-1), scheduler=SchedulerConfig(name='multimodal', units='steps', t_warmup=100, t_max=None, alpha_f=0.1, connector_t_warmup=200, vit_t_warmup=200, llm_t_warmup=200, gen_t_warmup=200, grad_clip_warmup_steps=None, grad_clip_warmup_factor=None, warmup_min_lr=0.0), data=DataLoaderConfig(dataset=None, mixture=None, root_size_mixture=[RootSizeMixture(rate=1.0, mixture={'depth': None})], kwargs_mixture=None, split='train', seed=50189, pad='to_max', sequence_length=2304, max_text_seq_len=None, shuffle=True, start_index=0, num_workers=0, drop_last=True, pin_memory=True, prefetch_factor=None, persistent_workers=False, timeout=0), restore_dataloader=True, fast_forward_batches=None, evaluators=[], eval_interval=300, inf_evaluators=[InfDatasetEvaluatorConfig(label='depth', data=DataLoaderConfig(dataset='depth', mixture=None, root_size_mixture=None, kwargs_mixture=None, split='validation', seed=691203, pad='to_max', sequence_length=1792, max_text_seq_len=None, shuffle=True, start_index=0, num_workers=0, drop_last=True, pin_memory=True, prefetch_factor=None, persistent_workers=True, timeout=0), evaluator=EvaluatorConfig(n_to_log=0, num_wandb_examples=32, save_predictions='_default', save_tokens=True, vqa_eval='', pointing_eval=False, count_eval=False, point_count_eval=False, android_eval=False, clock_eval=False, clock_bench_eval=False, math_vista_eval=False, temp_compass_eval='', temp_compass_disable_api=False, video_mme_eval='', mlvu_gen_eval=False, long_video_bench_eval=False, plm_fgqa_eval=False), max_new_tokens=12, device_batch_size=4, subset_num_batches=None, max_examples=16, console_log_interval=5, include_image=False)], inf_eval_interval=300, eval_on_last_step=True, eval_on_load=False, save_folder='/mmfs1/gscratch/krishna/mahtab/Umolmo/checkpoints/molmo-7b-qwen2-siglip2-finetune', checkpointer_config=CheckpointerConfig(save_thread_count=None, load_thread_count=None, pre_download=False, work_dir=None, throttle_uploads=False), canceled_check_interval=50, save_interval=80, save_num_checkpoints_to_keep=1, save_final_unsharded_checkpoint=False, save_interval_ephemeral=None, save_overwrite=True, load_path=None, reset_optimizer_state=False, reset_trainer_state=False, initial_model_checkpoint='/mmfs1/gscratch/krishna/mahtab/Umolmo/pretrained/step22347-unsharded', allow_resume=True, max_duration=600, global_train_batch_size=32, device_train_microbatch_size=4, max_grad_norm=1.0, multi_component_grad_norm=True, batch_divisor='global_batch', max_grad_norm_ratio=None, precision='amp_bf16', wandb=WandbConfig(project='mmseek', entity='allenai-team1', group=None, name='molmo-7b-qwen2-siglip2-finetune', tags=['watching'], log_artifacts=False, rank_zero_only=True, log_interval=5, allow_resume=False), beaker_log_interval=50, speed_monitor=SpeedMonitorConfig(window_size=20, gpu_flops_available=None), console_log_interval=5, gen1_gc_interval=1, compile=CompilerConfig(mode='default', fullgraph=False, dynamic=False, backend='inductor'), activation_checkpointing=True, fsdp=FSDPConfig(fsdp2=True, precision='float', use_orig_params=True, wrapping_strategy='by_block_and_size', sharding_strategy=<ShardingStrategy.FULL_SHARD: 1>, hybrid_sharding_num_model_replicas=None), softmax_auxiliary_loss=True, softmax_auxiliary_loss_scale=0.0001, time_limit=None, extra_steps_after_cancel=10, python_profiling=False, torch_profiling=False, stop_at=600, stop_after=None, fused_loss=False, compile_loss=True, runtime_data=None, image_generation_loss_type='cosine')
-2025-07-21 15:53:58.064	g3086:0	train:82	INFO	Not resuming since no latest checkpoint found
-2025-07-21 15:54:00.091	g3086:3	root:123	INFO	Padding tokenizer with 397 tokens
-2025-07-21 15:54:00.094	g3086:2	root:123	INFO	Padding tokenizer with 397 tokens
-2025-07-21 15:54:00.104	g3086:1	root:123	INFO	Padding tokenizer with 397 tokens
-2025-07-21 15:54:00.128	g3086:0	root:123	INFO	Padding tokenizer with 397 tokens
-2025-07-21 15:54:01.858	g3086:3	train:180	INFO	Wrapping model with FSDP2...
-2025-07-21 15:54:01.858	g3086:2	train:180	INFO	Wrapping model with FSDP2...
-2025-07-21 15:54:01.860	g3086:0	train:180	INFO	Wrapping model with FSDP2...
-2025-07-21 15:54:01.867	g3086:1	train:180	INFO	Wrapping model with FSDP2...
-2025-07-21 15:54:02.244	g3086:3	train:191	INFO	Total number of parameters: 8,126,757,840
-2025-07-21 15:54:02.246	g3086:3	train:192	INFO	Number of non-embedding parameters: 7,581,301,712
-2025-07-21 15:54:02.246	g3086:0	train:191	INFO	Total number of parameters: 8,126,757,840
-2025-07-21 15:54:02.248	g3086:2	train:191	INFO	Total number of parameters: 8,126,757,840
-2025-07-21 15:54:02.249	g3086:0	train:192	INFO	Number of non-embedding parameters: 7,581,301,712
-2025-07-21 15:54:02.250	g3086:2	train:192	INFO	Number of non-embedding parameters: 7,581,301,712
-2025-07-21 15:54:02.260	g3086:1	train:191	INFO	Total number of parameters: 8,126,757,840
-2025-07-21 15:54:02.262	g3086:1	train:192	INFO	Number of non-embedding parameters: 7,581,301,712
-2025-07-21 15:54:02.262	g3086:2	train:195	INFO	Peak GPU Memory (MB) after FSDP: 8177
-2025-07-21 15:54:02.262	g3086:3	train:195	INFO	Peak GPU Memory (MB) after FSDP: 8177
-2025-07-21 15:54:02.262	g3086:2	train:196	INFO	Model:
-2025-07-21 15:54:02.262	g3086:1	train:195	INFO	Peak GPU Memory (MB) after FSDP: 8177
-2025-07-21 15:54:02.262	g3086:3	train:196	INFO	Model:
-2025-07-21 15:54:02.262	g3086:1	train:196	INFO	Model:
-2025-07-21 15:54:02.262	g3086:0	train:195	INFO	Peak GPU Memory (MB) after FSDP: 8177
-2025-07-21 15:54:02.263	g3086:0	train:196	INFO	Model:
-2025-07-21 15:54:02.263	g3086:1	train:197	INFO	FSDPMolmo(
+2025-07-28 15:22:07.882	g3086:1	olmo.util:269	INFO	Set up torchrun environment
+2025-07-28 15:22:07.882	g3086:2	olmo.util:269	INFO	Set up torchrun environment
+2025-07-28 15:22:07.882	g3086:3	olmo.util:269	INFO	Set up torchrun environment
+2025-07-28 15:22:07.892	g3086:0	olmo.util:269	INFO	Set up torchrun environment
+2025-07-28 15:22:08.012	g3086:3	root:273	INFO	Setting eval subset batches to 1
+2025-07-28 15:22:08.014	g3086:1	root:273	INFO	Setting eval subset batches to 1
+2025-07-28 15:22:08.013	g3086:2	root:273	INFO	Setting eval subset batches to 1
+2025-07-28 15:22:08.024	g3086:0	root:273	INFO	Setting eval subset batches to 1
+2025-07-28 15:22:08.465	g3086:3	train:82	INFO	Not resuming since no latest checkpoint found
+2025-07-28 15:22:08.465	g3086:2	train:82	INFO	Not resuming since no latest checkpoint found
+2025-07-28 15:22:08.465	g3086:1	train:82	INFO	Not resuming since no latest checkpoint found
+2025-07-28 15:22:08.465	g3086:0	train:54	INFO	Configuration:
+2025-07-28 15:22:08.465	g3086:0	train:55	INFO	TrainConfig(run_name='multitask_train', model=MolmoConfig(model_name='molmo', llm=LlmConfig(d_model=3584, n_heads=28, n_kv_heads=4, head_dim=None, qkv_bias=True, clip_qkv=None, n_layers=28, mlp_ratio=4, mlp_hidden_size=37888, activation_type='swiglu', block_type='sequential', rope=True, rope_full_precision=True, rope_theta=1000000.0, rope_type='default', rope_factor=None, rope_high_freq_factor=None, rope_low_freq_factor=None, rope_original_max_position_embeddings=None, attention_type='sdpa', float32_attention=True, attention_dropout=0.0, attention_layer_norm=False, attention_layer_norm_type='olmo', residual_dropout=0.1, response_residual_dropout=0.0, layer_norm_type='rms', layer_norm_with_affine=True, layer_norm_eps=1e-06, attention_layer_norm_with_affine=True, max_sequence_length=4096, max_position_embeddings=None, include_bias=False, bias_for_layer_norm=None, norm_after=False, moe_num_experts=8, moe_top_k=2, moe_mlp_impl='sparse', moe_log_expert_assignment=False, moe_shared_expert=False, moe_lbl_in_fp32=False, moe_interleave=False, moe_loss_weight=0.1, moe_zloss_weight=None, moe_dropless=True, moe_capacity_factor=1.25, embedding_dropout=0.0, scale_logits=False, vocab_size=152064, additional_vocab_size=128, weight_tying=False, embedding_size=152064, use_position_ids=True, tokenizer=TokenizerConfig(identifier='Qwen/Qwen2.5-7B', tokenizer_dir=None), init_path='gs://mm-olmo/pretrained_llms/qwen2.5-7b.pt', init_incremental=None, new_embedding_init_range=0.02, initializer_range=0.02, normalize_input_embeds=False, activation_checkpoint='whole_layer', compile='blocks', fix_pad_tokenizer=False, init_std=0.02, init_fn='normal', init_cutoff_factor=None), vision_backbone=MolmoVisionBackboneConfig(vit=VitConfig(image_model_type='siglip', image_default_input_size=(378, 378), image_patch_size=14, image_pos_patch_size=14, image_emb_dim=1152, image_num_heads=16, image_num_key_value_heads=16, image_num_layers=27, image_head_dim=72, image_mlp_dim=4304, image_mlp_activations='gelu_pytorch_tanh', image_dropout_rate=0.0, image_num_pos=729, image_norm_eps=1e-06, attention_dropout=0.0, residual_dropout=0.0, initializer_range=0.02, float32_attention=True, attention_type='sdpa', activation_checkpointing=True, init_path='gs://mm-olmo/pretrained_image_encoders/siglip2-so400m-14-384.pt', resize_mode='siglip', pad_value=0.0, normalize='siglip'), image_pooling_2d='attention_meanq', pooling_attention_mask=False, image_projector='mlp', image_padding_embed=None, vit_layers=(-3, -9), skip_unused_layers=True, image_feature_dropout=0.0, connector_activation_checkpointing=True, compile_vit='blocks'), data_formatter=DataFormatter(prompt_templates='uber_model', message_format='role', system_prompt='demo_or_style', always_start_with_space=False, default_inference_len=65, select_answer='best', debug=False, image_last=False, format_message_list=None, p_one_message=0.0), mm_preprocessor=MolmoPreprocessorConfig(crop_mode='overlap-and-resize-c2', max_crops=8, max_images=None, pooling_w=2, pooling_h=2, overlap_margins=[4, 4], use_col_tokens=True, loss_token_weighting='root_subsegments', legacy_image_mask=False), bi_directional_attn=None, image_encoder='SigLip2', vision_head_type='Linear', per_image_output_tokens=64), seed=6198, epoch=None, dry_run=False, ft_llm=True, ft_gen=True, ft_vit=True, ft_connector=True, ft_embedding='all', optimizer=OptimizerConfig(name='adamw', learning_rate=0.0001, weight_decay=0.01, betas=(0.9, 0.95), eps=1e-05, gen_learning_rate=1e-05, connector_learning_rate=5e-06, vit_learning_rate=5e-06, llm_learning_rate=1e-05, gen_weight_decay=0.0, connector_weight_decay=0.0, vit_weight_decay=0.0, llm_weight_decay=0.0, gen_betas=(0.9, 0.95), connector_betas=(0.9, 0.95), vit_betas=(0.9, 0.95), llm_betas=(0.9, 0.95), gen_eps=1e-06, connector_eps=1e-06, vit_eps=1e-06, llm_eps=1e-06, metrics_log_interval=-1), scheduler=SchedulerConfig(name='multimodal', units='steps', t_warmup=100, t_max=None, alpha_f=0.1, connector_t_warmup=200, vit_t_warmup=200, llm_t_warmup=200, gen_t_warmup=200, grad_clip_warmup_steps=None, grad_clip_warmup_factor=None, warmup_min_lr=0.0), data=DataLoaderConfig(dataset=None, mixture=None, root_size_mixture=[RootSizeMixture(rate=1.0, mixture={'aurora': None})], kwargs_mixture=None, split='train', seed=50189, pad='to_max', sequence_length=2304, max_text_seq_len=None, shuffle=False, start_index=0, num_workers=0, drop_last=True, pin_memory=True, prefetch_factor=None, persistent_workers=False, timeout=0), restore_dataloader=True, fast_forward_batches=None, evaluators=[], eval_interval=6200, inf_evaluators=[InfDatasetEvaluatorConfig(label='aurora', data=DataLoaderConfig(dataset='aurora', mixture=None, root_size_mixture=None, kwargs_mixture=None, split='validation', seed=691203, pad='to_max', sequence_length=1792, max_text_seq_len=None, shuffle=True, start_index=0, num_workers=0, drop_last=True, pin_memory=True, prefetch_factor=None, persistent_workers=True, timeout=0), evaluator=EvaluatorConfig(n_to_log=0, num_wandb_examples=32, save_predictions='_default', save_tokens=True, vqa_eval='', pointing_eval=False, count_eval=False, point_count_eval=False, android_eval=False, clock_eval=False, clock_bench_eval=False, math_vista_eval=False, temp_compass_eval='', temp_compass_disable_api=False, video_mme_eval='', mlvu_gen_eval=False, long_video_bench_eval=False, plm_fgqa_eval=False), max_new_tokens=12, device_batch_size=4, subset_num_batches=None, max_examples=16, console_log_interval=5, include_image=False)], inf_eval_interval=6200, eval_on_last_step=True, eval_on_load=False, save_folder='/mmfs1/gscratch/krishna/mahtab/Umolmo/checkpoints/Aurora-molmo-7b-qwen2-siglip2-finetune-uber-cosine-bilinear-test', checkpointer_config=CheckpointerConfig(save_thread_count=None, load_thread_count=None, pre_download=False, work_dir=None, throttle_uploads=False), canceled_check_interval=50, save_interval=80, save_num_checkpoints_to_keep=1, save_final_unsharded_checkpoint=True, save_interval_ephemeral=None, save_overwrite=True, load_path=None, reset_optimizer_state=False, reset_trainer_state=False, initial_model_checkpoint='/mmfs1/gscratch/krishna/mahtab/Umolmo/pretrained/step30000-unsharded', allow_resume=True, max_duration=6200, global_train_batch_size=32, device_train_microbatch_size=4, max_grad_norm=1.0, multi_component_grad_norm=True, batch_divisor='global_batch', max_grad_norm_ratio=None, precision='amp_bf16', wandb=WandbConfig(project='mmseek', entity='allenai-team1', group=None, name='Aurora-molmo-7b-qwen2-siglip2-finetune-uber-cosine-bilinear-test', tags=['watching'], log_artifacts=False, rank_zero_only=True, log_interval=5, allow_resume=False), beaker_log_interval=50, speed_monitor=SpeedMonitorConfig(window_size=20, gpu_flops_available=None), console_log_interval=5, gen1_gc_interval=1, compile=CompilerConfig(mode='default', fullgraph=False, dynamic=False, backend='inductor'), activation_checkpointing=True, fsdp=FSDPConfig(fsdp2=True, precision='float', use_orig_params=True, wrapping_strategy='by_block_and_size', sharding_strategy=<ShardingStrategy.FULL_SHARD: 1>, hybrid_sharding_num_model_replicas=None), softmax_auxiliary_loss=True, softmax_auxiliary_loss_scale=0.0001, time_limit=None, extra_steps_after_cancel=10, python_profiling=False, torch_profiling=False, stop_at=6200, stop_after=None, fused_loss=False, compile_loss=True, runtime_data=None, image_generation_loss_type='cosine')
+2025-07-28 15:22:08.496	g3086:0	train:82	INFO	Not resuming since no latest checkpoint found
+2025-07-28 15:22:10.730	g3086:3	root:125	INFO	Padding tokenizer with 397 tokens
+2025-07-28 15:22:10.783	g3086:1	root:125	INFO	Padding tokenizer with 397 tokens
+2025-07-28 15:22:10.801	g3086:2	root:125	INFO	Padding tokenizer with 397 tokens
+2025-07-28 15:22:10.828	g3086:0	root:125	INFO	Padding tokenizer with 397 tokens
+2025-07-28 15:22:12.610	g3086:3	train:181	INFO	Wrapping model with FSDP2...
+2025-07-28 15:22:12.613	g3086:2	train:181	INFO	Wrapping model with FSDP2...
+2025-07-28 15:22:12.614	g3086:1	train:181	INFO	Wrapping model with FSDP2...
+2025-07-28 15:22:12.614	g3086:0	train:181	INFO	Wrapping model with FSDP2...
+2025-07-28 15:22:13.000	g3086:2	train:192	INFO	Total number of parameters: 8,126,757,840
+2025-07-28 15:22:13.000	g3086:0	train:192	INFO	Total number of parameters: 8,126,757,840
+2025-07-28 15:22:13.002	g3086:2	train:193	INFO	Number of non-embedding parameters: 7,581,301,712
+2025-07-28 15:22:13.002	g3086:0	train:193	INFO	Number of non-embedding parameters: 7,581,301,712
+2025-07-28 15:22:13.003	g3086:3	train:192	INFO	Total number of parameters: 8,126,757,840
+2025-07-28 15:22:13.005	g3086:3	train:193	INFO	Number of non-embedding parameters: 7,581,301,712
+2025-07-28 15:22:13.005	g3086:1	train:192	INFO	Total number of parameters: 8,126,757,840
+2025-07-28 15:22:13.007	g3086:1	train:193	INFO	Number of non-embedding parameters: 7,581,301,712
+2025-07-28 15:22:13.008	g3086:2	train:196	INFO	Peak GPU Memory (MB) after FSDP: 8177
+2025-07-28 15:22:13.008	g3086:3	train:196	INFO	Peak GPU Memory (MB) after FSDP: 8177
+2025-07-28 15:22:13.008	g3086:2	train:197	INFO	Model:
+2025-07-28 15:22:13.008	g3086:3	train:197	INFO	Model:
+2025-07-28 15:22:13.008	g3086:1	train:196	INFO	Peak GPU Memory (MB) after FSDP: 8177
+2025-07-28 15:22:13.008	g3086:1	train:197	INFO	Model:
+2025-07-28 15:22:13.008	g3086:0	train:196	INFO	Peak GPU Memory (MB) after FSDP: 8177
+2025-07-28 15:22:13.008	g3086:0	train:197	INFO	Model:
+2025-07-28 15:22:13.008	g3086:2	train:198	INFO	FSDPMolmo(
   (transformer): Llm(
     (blocks): ModuleList(
       (0-27): 28 x FSDPCheckpointWrapper(
@@ -107,7 +107,7 @@
   (vision_encoder_head): Linear(in_features=1024, out_features=3584, bias=False)
   (vision_decoder_head): Linear(in_features=3584, out_features=1024, bias=False)
 )
-2025-07-21 15:54:02.262	g3086:2	train:197	INFO	FSDPMolmo(
+2025-07-28 15:22:13.008	g3086:1	train:198	INFO	FSDPMolmo(
   (transformer): Llm(
     (blocks): ModuleList(
       (0-27): 28 x FSDPCheckpointWrapper(
@@ -178,7 +178,7 @@
   (vision_encoder_head): Linear(in_features=1024, out_features=3584, bias=False)
   (vision_decoder_head): Linear(in_features=3584, out_features=1024, bias=False)
 )
-2025-07-21 15:54:02.262	g3086:3	train:197	INFO	FSDPMolmo(
+2025-07-28 15:22:13.008	g3086:3	train:198	INFO	FSDPMolmo(
   (transformer): Llm(
     (blocks): ModuleList(
       (0-27): 28 x FSDPCheckpointWrapper(
@@ -249,16 +249,16 @@
   (vision_encoder_head): Linear(in_features=1024, out_features=3584, bias=False)
   (vision_decoder_head): Linear(in_features=3584, out_features=1024, bias=False)
 )
-2025-07-21 15:54:02.272	g3086:1	olmo.train.optim:178	INFO	Constructing optimizer with 4 param groups
-2025-07-21 15:54:02.272	g3086:2	olmo.train.optim:178	INFO	Constructing optimizer with 4 param groups
-2025-07-21 15:54:02.272	g3086:3	olmo.train.optim:178	INFO	Constructing optimizer with 4 param groups
-2025-07-21 15:54:02.273	g3086:1	olmo.data.data_loader:197	INFO	Loading train dataset depth/train
-2025-07-21 15:54:02.273	g3086:1	root:34	INFO	Loading depth data from /gscratch/krishna/mahtab/Umolmo/Data/torch_datasets/depth/train/train.json
-2025-07-21 15:54:02.273	g3086:2	olmo.data.data_loader:197	INFO	Loading train dataset depth/train
-2025-07-21 15:54:02.273	g3086:2	root:34	INFO	Loading depth data from /gscratch/krishna/mahtab/Umolmo/Data/torch_datasets/depth/train/train.json
-2025-07-21 15:54:02.273	g3086:3	olmo.data.data_loader:197	INFO	Loading train dataset depth/train
-2025-07-21 15:54:02.273	g3086:3	root:34	INFO	Loading depth data from /gscratch/krishna/mahtab/Umolmo/Data/torch_datasets/depth/train/train.json
-2025-07-21 15:54:02.263	g3086:0	train:197	INFO	FSDPMolmo(
+2025-07-28 15:22:13.017	g3086:2	olmo.train.optim:178	INFO	Constructing optimizer with 4 param groups
+2025-07-28 15:22:13.017	g3086:1	olmo.train.optim:178	INFO	Constructing optimizer with 4 param groups
+2025-07-28 15:22:13.017	g3086:3	olmo.train.optim:178	INFO	Constructing optimizer with 4 param groups
+2025-07-28 15:22:13.018	g3086:2	olmo.data.data_loader:197	INFO	Loading train dataset aurora/train
+2025-07-28 15:22:13.018	g3086:2	root:37	INFO	Loading aurora data from /gscratch/krishna/mahtab/Umolmo/Data/torch_datasets/aurora/train/train.json
+2025-07-28 15:22:13.018	g3086:1	olmo.data.data_loader:197	INFO	Loading train dataset aurora/train
+2025-07-28 15:22:13.018	g3086:1	root:37	INFO	Loading aurora data from /gscratch/krishna/mahtab/Umolmo/Data/torch_datasets/aurora/train/train.json
+2025-07-28 15:22:13.018	g3086:3	olmo.data.data_loader:197	INFO	Loading train dataset aurora/train
+2025-07-28 15:22:13.018	g3086:3	root:37	INFO	Loading aurora data from /gscratch/krishna/mahtab/Umolmo/Data/torch_datasets/aurora/train/train.json
+2025-07-28 15:22:13.008	g3086:0	train:198	INFO	FSDPMolmo(
   (transformer): Llm(
     (blocks): ModuleList(
       (0-27): 28 x FSDPCheckpointWrapper(
@@ -329,130 +329,50 @@
   (vision_encoder_head): Linear(in_features=1024, out_features=3584, bias=False)
   (vision_decoder_head): Linear(in_features=3584, out_features=1024, bias=False)
 )
-2025-07-21 15:54:02.284	g3086:0	olmo.train.optim:178	INFO	Constructing optimizer with 4 param groups
-2025-07-21 15:54:02.286	g3086:0	olmo.data.data_loader:197	INFO	Loading train dataset depth/train
-2025-07-21 15:54:02.286	g3086:0	root:34	INFO	Loading depth data from /gscratch/krishna/mahtab/Umolmo/Data/torch_datasets/depth/train/train.json
-2025-07-21 15:54:02.313	g3086:3	olmo.data.data_loader:216	INFO	Sampling rates:
-2025-07-21 15:54:02.313	g3086:3	olmo.data.data_loader:219	INFO	depth: 100.00
-2025-07-21 15:54:02.313	g3086:2	olmo.data.data_loader:216	INFO	Sampling rates:
-2025-07-21 15:54:02.314	g3086:2	olmo.data.data_loader:219	INFO	depth: 100.00
-2025-07-21 15:54:02.314	g3086:1	olmo.data.data_loader:216	INFO	Sampling rates:
-2025-07-21 15:54:02.314	g3086:1	olmo.data.data_loader:219	INFO	depth: 100.00
-2025-07-21 15:54:02.316	g3086:2	olmo.models.molmo.molmo:122	INFO	Building collator, pad=to_max seq_len=2304 images=9 pooled_patches_idx=1414
-2025-07-21 15:54:02.316	g3086:3	olmo.models.molmo.molmo:122	INFO	Building collator, pad=to_max seq_len=2304 images=9 pooled_patches_idx=1414
-2025-07-21 15:54:02.316	g3086:1	olmo.models.molmo.molmo:122	INFO	Building collator, pad=to_max seq_len=2304 images=9 pooled_patches_idx=1414
-2025-07-21 15:54:02.316	g3086:2	olmo.data.data_loader:100	INFO	Loading eval dataset: depth/validation
-2025-07-21 15:54:02.316	g3086:3	olmo.data.data_loader:100	INFO	Loading eval dataset: depth/validation
-2025-07-21 15:54:02.316	g3086:2	root:34	INFO	Loading depth data from /gscratch/krishna/mahtab/Umolmo/Data/torch_datasets/depth/val/val.json
-2025-07-21 15:54:02.316	g3086:3	root:34	INFO	Loading depth data from /gscratch/krishna/mahtab/Umolmo/Data/torch_datasets/depth/val/val.json
-2025-07-21 15:54:02.316	g3086:1	olmo.data.data_loader:100	INFO	Loading eval dataset: depth/validation
-2025-07-21 15:54:02.316	g3086:1	root:34	INFO	Loading depth data from /gscratch/krishna/mahtab/Umolmo/Data/torch_datasets/depth/val/val.json
-2025-07-21 15:54:02.318	g3086:2	olmo.models.molmo.molmo:122	INFO	Building collator, pad=to_max seq_len=1792 images=9 pooled_patches_idx=1414
-2025-07-21 15:54:02.318	g3086:3	olmo.models.molmo.molmo:122	INFO	Building collator, pad=to_max seq_len=1792 images=9 pooled_patches_idx=1414
-2025-07-21 15:54:02.318	g3086:1	olmo.models.molmo.molmo:122	INFO	Building collator, pad=to_max seq_len=1792 images=9 pooled_patches_idx=1414
-2025-07-21 15:54:02.325	g3086:0	olmo.data.data_loader:216	INFO	Sampling rates:
-2025-07-21 15:54:02.325	g3086:0	olmo.data.data_loader:219	INFO	depth: 100.00
-2025-07-21 15:54:02.327	g3086:0	olmo.models.molmo.molmo:122	INFO	Building collator, pad=to_max seq_len=2304 images=9 pooled_patches_idx=1414
-2025-07-21 15:54:02.328	g3086:0	olmo.data.data_loader:100	INFO	Loading eval dataset: depth/validation
-2025-07-21 15:54:02.329	g3086:0	root:34	INFO	Loading depth data from /gscratch/krishna/mahtab/Umolmo/Data/torch_datasets/depth/val/val.json
-2025-07-21 15:54:02.330	g3086:0	olmo.models.molmo.molmo:122	INFO	Building collator, pad=to_max seq_len=1792 images=9 pooled_patches_idx=1414
-2025-07-21 15:54:03.550	g3086:2	train:308	INFO	Loading unshared model from /mmfs1/gscratch/krishna/mahtab/Umolmo/pretrained/step22347-unsharded
-2025-07-21 15:54:03.550	g3086:0	train:308	INFO	Loading unshared model from /mmfs1/gscratch/krishna/mahtab/Umolmo/pretrained/step22347-unsharded
-2025-07-21 15:54:03.550	g3086:3	train:308	INFO	Loading unshared model from /mmfs1/gscratch/krishna/mahtab/Umolmo/pretrained/step22347-unsharded
-2025-07-21 15:54:03.550	g3086:1	train:308	INFO	Loading unshared model from /mmfs1/gscratch/krishna/mahtab/Umolmo/pretrained/step22347-unsharded
-2025-07-21 15:54:28.294	g3086:3	train:323	INFO	Checkpoint successfully loaded in 24.7 seconds
-2025-07-21 15:54:28.295	g3086:2	train:323	INFO	Checkpoint successfully loaded in 24.7 seconds
-2025-07-21 15:54:28.296	g3086:1	train:323	INFO	Checkpoint successfully loaded in 24.7 seconds
-2025-07-21 15:54:38.743	g3086:0	train:323	INFO	Checkpoint successfully loaded in 35.2 seconds
-2025-07-21 15:54:39.085	g3086:0	train:332	INFO	Starting training...
-2025-07-21 15:54:39.091	g3086:3	train:332	INFO	Starting training...
-2025-07-21 15:54:39.094	g3086:2	train:332	INFO	Starting training...
-2025-07-21 15:54:39.095	g3086:1	train:332	INFO	Starting training...
-2025-07-21 15:54:39.098	g3086:3	olmo.train.trainer:817	INFO	Pre-train system metrics
+2025-07-28 15:22:13.028	g3086:0	olmo.train.optim:178	INFO	Constructing optimizer with 4 param groups
+2025-07-28 15:22:13.029	g3086:0	olmo.data.data_loader:197	INFO	Loading train dataset aurora/train
+2025-07-28 15:22:13.030	g3086:0	root:37	INFO	Loading aurora data from /gscratch/krishna/mahtab/Umolmo/Data/torch_datasets/aurora/train/train.json
+2025-07-28 15:22:13.481	g3086:3	olmo.data.data_loader:216	INFO	Sampling rates:
+2025-07-28 15:22:13.481	g3086:3	olmo.data.data_loader:219	INFO	aurora: 100.00
+2025-07-28 15:22:13.483	g3086:3	olmo.models.molmo.molmo:122	INFO	Building collator, pad=to_max seq_len=2304 images=9 pooled_patches_idx=1414
+2025-07-28 15:22:13.484	g3086:3	olmo.data.data_loader:100	INFO	Loading eval dataset: aurora/validation
+2025-07-28 15:22:13.484	g3086:3	root:37	INFO	Loading aurora data from /gscratch/krishna/mahtab/Umolmo/Data/torch_datasets/aurora/val/val.json
+2025-07-28 15:22:13.485	g3086:3	olmo.models.molmo.molmo:122	INFO	Building collator, pad=to_max seq_len=1792 images=9 pooled_patches_idx=1414
+2025-07-28 15:22:13.485	g3086:0	olmo.data.data_loader:216	INFO	Sampling rates:
+2025-07-28 15:22:13.486	g3086:1	olmo.data.data_loader:216	INFO	Sampling rates:
+2025-07-28 15:22:13.486	g3086:2	olmo.data.data_loader:216	INFO	Sampling rates:
+2025-07-28 15:22:13.486	g3086:1	olmo.data.data_loader:219	INFO	aurora: 100.00
+2025-07-28 15:22:13.486	g3086:2	olmo.data.data_loader:219	INFO	aurora: 100.00
+2025-07-28 15:22:13.486	g3086:0	olmo.data.data_loader:219	INFO	aurora: 100.00
+2025-07-28 15:22:13.488	g3086:2	olmo.models.molmo.molmo:122	INFO	Building collator, pad=to_max seq_len=2304 images=9 pooled_patches_idx=1414
+2025-07-28 15:22:13.488	g3086:1	olmo.models.molmo.molmo:122	INFO	Building collator, pad=to_max seq_len=2304 images=9 pooled_patches_idx=1414
+2025-07-28 15:22:13.488	g3086:0	olmo.models.molmo.molmo:122	INFO	Building collator, pad=to_max seq_len=2304 images=9 pooled_patches_idx=1414
+2025-07-28 15:22:13.488	g3086:1	olmo.data.data_loader:100	INFO	Loading eval dataset: aurora/validation
+2025-07-28 15:22:13.488	g3086:2	olmo.data.data_loader:100	INFO	Loading eval dataset: aurora/validation
+2025-07-28 15:22:13.489	g3086:1	root:37	INFO	Loading aurora data from /gscratch/krishna/mahtab/Umolmo/Data/torch_datasets/aurora/val/val.json
+2025-07-28 15:22:13.489	g3086:2	root:37	INFO	Loading aurora data from /gscratch/krishna/mahtab/Umolmo/Data/torch_datasets/aurora/val/val.json
+2025-07-28 15:22:13.489	g3086:0	olmo.data.data_loader:100	INFO	Loading eval dataset: aurora/validation
+2025-07-28 15:22:13.489	g3086:0	root:37	INFO	Loading aurora data from /gscratch/krishna/mahtab/Umolmo/Data/torch_datasets/aurora/val/val.json
+2025-07-28 15:22:13.490	g3086:2	olmo.models.molmo.molmo:122	INFO	Building collator, pad=to_max seq_len=1792 images=9 pooled_patches_idx=1414
+2025-07-28 15:22:13.490	g3086:1	olmo.models.molmo.molmo:122	INFO	Building collator, pad=to_max seq_len=1792 images=9 pooled_patches_idx=1414
+2025-07-28 15:22:13.490	g3086:0	olmo.models.molmo.molmo:122	INFO	Building collator, pad=to_max seq_len=1792 images=9 pooled_patches_idx=1414
+2025-07-28 15:22:15.801	g3086:0	train:309	INFO	Loading unshared model from /mmfs1/gscratch/krishna/mahtab/Umolmo/pretrained/step30000-unsharded
+2025-07-28 15:22:15.802	g3086:2	train:309	INFO	Loading unshared model from /mmfs1/gscratch/krishna/mahtab/Umolmo/pretrained/step30000-unsharded
+2025-07-28 15:22:15.802	g3086:1	train:309	INFO	Loading unshared model from /mmfs1/gscratch/krishna/mahtab/Umolmo/pretrained/step30000-unsharded
+2025-07-28 15:22:15.802	g3086:3	train:309	INFO	Loading unshared model from /mmfs1/gscratch/krishna/mahtab/Umolmo/pretrained/step30000-unsharded
+2025-07-28 15:22:58.049	g3086:3	train:324	INFO	Checkpoint successfully loaded in 42.2 seconds
+2025-07-28 15:22:58.052	g3086:2	train:324	INFO	Checkpoint successfully loaded in 42.2 seconds
+2025-07-28 15:22:58.053	g3086:1	train:324	INFO	Checkpoint successfully loaded in 42.3 seconds
+2025-07-28 15:23:08.566	g3086:0	train:324	INFO	Checkpoint successfully loaded in 52.8 seconds
+2025-07-28 15:23:08.900	g3086:0	train:332	INFO	Starting training...
+2025-07-28 15:23:08.910	g3086:3	train:332	INFO	Starting training...
+2025-07-28 15:23:08.915	g3086:2	train:332	INFO	Starting training...
+2025-07-28 15:23:08.921	g3086:1	train:332	INFO	Starting training...
+2025-07-28 15:23:08.924	g3086:2	olmo.train.trainer:823	INFO	Pre-train system metrics
     System/Peak GPU Memory (MB)=10,358
-2025-07-21 15:54:39.098	g3086:2	olmo.train.trainer:817	INFO	Pre-train system metrics
+2025-07-28 15:23:08.924	g3086:3	olmo.train.trainer:823	INFO	Pre-train system metrics
     System/Peak GPU Memory (MB)=10,358
-2025-07-21 15:54:39.098	g3086:1	olmo.train.trainer:817	INFO	Pre-train system metrics
+2025-07-28 15:23:08.924	g3086:1	olmo.train.trainer:823	INFO	Pre-train system metrics
     System/Peak GPU Memory (MB)=10,358
-2025-07-21 15:54:39.098	g3086:0	olmo.train.trainer:817	INFO	Pre-train system metrics
+2025-07-28 15:23:08.924	g3086:0	olmo.train.trainer:823	INFO	Pre-train system metrics
     System/Peak GPU Memory (MB)=10,358
-2025-07-21 15:57:19.442	g3086:3	olmo.train.trainer:1069	INFO	[step=5/600]
-2025-07-21 15:57:19.442	g3086:2	olmo.train.trainer:1069	INFO	[step=5/600]
-2025-07-21 15:57:19.442	g3086:1	olmo.train.trainer:1069	INFO	[step=5/600]
-2025-07-21 15:57:19.443	g3086:0	olmo.train.trainer:817	INFO	[step=5/600]
-    train/CrossEntropyLoss=5.891
-    train/ZLoss=0.0015
-    train/ImageGenLoss=0.5469
-    train/Accuracy=0.2289
-    throughput/total_tokens=368,640
-    throughput/device/tokens_per_second=630.0
-    throughput/device/batches_per_second=0.0342
-2025-07-21 15:59:46.370	g3086:2	olmo.train.trainer:1069	INFO	[step=10/600]
-2025-07-21 15:59:46.370	g3086:3	olmo.train.trainer:1069	INFO	[step=10/600]
-2025-07-21 15:59:46.370	g3086:1	olmo.train.trainer:1069	INFO	[step=10/600]
-2025-07-21 15:59:46.370	g3086:0	olmo.train.trainer:817	INFO	[step=10/600]
-    train/CrossEntropyLoss=4.216
-    train/ZLoss=0.0014
-    train/ImageGenLoss=0.4940
-    train/Accuracy=0.3810
-    throughput/total_tokens=737,280
-    throughput/device/tokens_per_second=628.5
-    throughput/device/batches_per_second=0.0341
-    System/Peak GPU Memory (MB)=69,418
-2025-07-21 16:02:13.379	g3086:2	olmo.train.trainer:1069	INFO	[step=15/600]
-2025-07-21 16:02:13.379	g3086:1	olmo.train.trainer:1069	INFO	[step=15/600]
-2025-07-21 16:02:13.379	g3086:3	olmo.train.trainer:1069	INFO	[step=15/600]
-2025-07-21 16:02:13.379	g3086:0	olmo.train.trainer:817	INFO	[step=15/600]
-    train/CrossEntropyLoss=3.712
-    train/ZLoss=0.0019
-    train/ImageGenLoss=0.3837
-    train/Accuracy=0.4989
-    throughput/total_tokens=1,105,920
-    throughput/device/tokens_per_second=627.9
-    throughput/device/batches_per_second=0.0341
-2025-07-21 16:04:40.118	g3086:1	olmo.train.trainer:1069	INFO	[step=20/600]
-2025-07-21 16:04:40.118	g3086:2	olmo.train.trainer:1069	INFO	[step=20/600]
-2025-07-21 16:04:40.118	g3086:3	olmo.train.trainer:1069	INFO	[step=20/600]
-2025-07-21 16:04:40.118	g3086:0	olmo.train.trainer:817	INFO	[step=20/600]
-    train/CrossEntropyLoss=2.686
-    train/ZLoss=0.0016
-    train/ImageGenLoss=0.3546
-    train/Accuracy=0.6177
-    throughput/total_tokens=1,474,560
-    throughput/device/tokens_per_second=627.9
-    throughput/device/batches_per_second=0.0341
-    System/Peak GPU Memory (MB)=69,418
-2025-07-21 16:07:06.632	g3086:1	olmo.train.trainer:1069	INFO	[step=25/600]
-2025-07-21 16:07:06.632	g3086:3	olmo.train.trainer:1069	INFO	[step=25/600]
-2025-07-21 16:07:06.632	g3086:2	olmo.train.trainer:1069	INFO	[step=25/600]
-2025-07-21 16:07:06.633	g3086:0	olmo.train.trainer:817	INFO	[step=25/600]
-    train/CrossEntropyLoss=2.350
-    train/ZLoss=0.0025
-    train/ImageGenLoss=0.3546
-    train/Accuracy=0.6395
-    throughput/total_tokens=1,843,200
-    throughput/device/tokens_per_second=628.2
-    throughput/device/batches_per_second=0.0341
-2025-07-21 16:09:33.320	g3086:2	olmo.train.trainer:1069	INFO	[step=30/600]
-2025-07-21 16:09:33.320	g3086:3	olmo.train.trainer:1069	INFO	[step=30/600]
-2025-07-21 16:09:33.320	g3086:1	olmo.train.trainer:1069	INFO	[step=30/600]
-2025-07-21 16:09:33.320	g3086:0	olmo.train.trainer:817	INFO	[step=30/600]
-    train/CrossEntropyLoss=1.735
-    train/ZLoss=0.0019
-    train/ImageGenLoss=0.3493
-    train/Accuracy=0.7273
-    throughput/total_tokens=2,211,840
-    throughput/device/tokens_per_second=628.6
-    throughput/device/batches_per_second=0.0341
-    System/Peak GPU Memory (MB)=69,418
-2025-07-21 16:12:00.241	g3086:1	olmo.train.trainer:1069	INFO	[step=35/600]
-2025-07-21 16:12:00.241	g3086:3	olmo.train.trainer:1069	INFO	[step=35/600]
-2025-07-21 16:12:00.241	g3086:2	olmo.train.trainer:1069	INFO	[step=35/600]
-2025-07-21 16:12:00.241	g3086:0	olmo.train.trainer:817	INFO	[step=35/600]
-    train/CrossEntropyLoss=1.598
-    train/ZLoss=0.0021
-    train/ImageGenLoss=0.3491
-    train/Accuracy=0.7531
-    throughput/total_tokens=2,580,480
-    throughput/device/tokens_per_second=628.7
-    throughput/device/batches_per_second=0.0341

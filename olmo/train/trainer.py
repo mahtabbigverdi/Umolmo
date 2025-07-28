@@ -606,18 +606,19 @@ class Trainer:
         ce_loss = (ce_loss*loss_masks.view(ce_loss.shape)).sum()
         z_loss = (z_loss*loss_masks.view(z_loss.shape)).sum()
         
+        # if get_global_rank() == 0:
+        #     import pdb; pdb.set_trace()
+
         if batch['image_outputs'].shape[1] > 0:
             image_output_features = model_out.image_output_features 
             image_gen_loss_masks = batch["loss_masks"] == -2
-            # image_gen_loss_masks = (batch["loss_masks"] == -2).to(loss_masks.dtype)
-            # image_gen_labels = batch.get("image_gen_labels")
             
-            ## dummy value
+                        
             image_output_features = image_output_features[image_gen_loss_masks]
             image_gen_labels = torch.cat([batch['image_outputs'][i, :image_gen_loss_masks[i].sum()] for i in range(len(batch['image_outputs']))], dim=0)
             assert image_output_features.shape == image_gen_labels.shape
             if self.cfg.image_generation_loss_type == "mse":
-                image_gen_loss = self.mse_loss(image_output_features, image_gen_labels, reduction="none")
+                image_gen_loss = self.mse_loss(image_output_features.to(image_gen_labels.dtype), image_gen_labels, reduction="none")
                 ## get average over elemens of each embedding, so we have one mse loss per token not per element
                 image_gen_loss = image_gen_loss.mean(-1)
             
@@ -627,9 +628,11 @@ class Trainer:
             
             else:
                 raise ValueError(f"Unsupported image generation loss type: {self.cfg.image_generation_loss_type}")
+            print("image_gen_loss shape", get_global_rank(),"  .....  ", image_gen_loss.shape)
+
             image_gen_loss = image_gen_loss.sum()
         else:
-            image_gen_loss = None
+            image_gen_loss = torch.zeros((), device=ce_loss.device, dtype=ce_loss.dtype)
 
         return ce_loss, z_loss, image_gen_loss, model_out
 
@@ -654,6 +657,7 @@ class Trainer:
             raise ValueError()
         del batch  # in case this helps reduce memory
         total_loss = torch.tensor(0.0, device=self.device)
+        
         for micro_batch in micro_batches:
             ce_loss, z_loss, image_gen_loss, model_out = self.model_forward(
                 micro_batch, compute_z_loss=self.cfg.softmax_auxiliary_loss)
@@ -664,6 +668,7 @@ class Trainer:
             del micro_batch
             
             # accuracy = accuracy.sum()
+            
             assert ce_loss == ce_loss.sum()
             ce_loss = ce_loss.sum() / batch_size_in_tokens
 
@@ -673,8 +678,9 @@ class Trainer:
                 loss = ce_loss + z_loss
             else:
                 loss = ce_loss
-
-
+            print("rank and loss", get_global_rank(),"  .....  ", image_gen_loss.item())
+            # if get_global_rank() == 0:
+            #     import pdb; pdb.set_trace()
             ## image generation loss
             if batch_size_in_gen_tokens != 0:
                 image_gen_loss = image_gen_loss.sum() / batch_size_in_gen_tokens
@@ -1019,7 +1025,6 @@ class Trainer:
             for epoch in range(self.epoch or 0, self.max_epochs):
                 for batch in self.train_loader:
                     # Bookkeeping.
-                    
                     batch_size, seq_len = batch["input_ids"].shape
                     global_batch_size = batch_size * get_world_size()  # assumes batch size equal across ranks
                     self.global_step += 1

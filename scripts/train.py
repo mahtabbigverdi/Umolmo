@@ -141,6 +141,7 @@ def run_trainer(cfg: TrainConfig) -> None:
             log.info(f"Freezing LLM: wte")
             olmo_model.transformer.wte.embedding.requires_grad = False
     # Do some other model setup
+    
     if cfg.activation_checkpointing:
         olmo_model.apply_activation_checkpointing()
     # Stops the compiler get confused due to cache modifications
@@ -175,7 +176,7 @@ def run_trainer(cfg: TrainConfig) -> None:
             device_id=get_local_rank(),
             sync_module_states=sync_module_states,
         )
-
+        
     elif cfg.fsdp.fsdp2:
         log.info("Wrapping model with FSDP2...")
         olmo_model.apply_fsdp2(**cfg.fsdp.get_fsd2_args(cfg.autocast_precision))
@@ -187,7 +188,7 @@ def run_trainer(cfg: TrainConfig) -> None:
         raise NotImplementedError()
 
     torch.cuda.empty_cache()
-
+    
     log.info(f"Total number of parameters: {olmo_model.num_params():,d}")
     log.info(f"Number of non-embedding parameters: {olmo_model.num_params(include_embedding=False):,d}")
     if olmo_model.config.llm.block_type == "moe":
@@ -322,7 +323,6 @@ def run_trainer(cfg: TrainConfig) -> None:
                 )
             log.info(f"Checkpoint successfully loaded in {time.perf_counter()-t0:0.1f} seconds")
             barrier()
-
         for name, param in fsdp_model.named_parameters():
             if not torch.all(torch.isfinite(param)):
                 raise ValueError(name)

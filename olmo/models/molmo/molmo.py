@@ -31,7 +31,7 @@ from olmo.nn.vision_backbone import MolmoVisionBackbone, MolmoVisionBackboneConf
 from olmo.tokenizer import get_special_token_ids
 from olmo.torch_util import BufferCache, get_default_device
 from torch.distributed.fsdp import fully_shard
-
+from olmo.torch_util import get_global_rank
 
 log = logging.getLogger(__name__)
 
@@ -448,7 +448,8 @@ class Molmo(ModelBase):
             
             ## mquestion: why += imagefeatures, what was there before?
             x.view(-1, x.shape[-1])[is_image_patch] += image_features
-
+        # if get_global_rank() == 1:
+        #     import pdb; pdb.set_trace()
         ## if there is at least one example with image_outputs
         if is_training and self._image_output_token_id in input_ids :
             ## image_outputs is padded but we only need embeddings for the valid image outputs, so we select embeddings from the start
@@ -461,7 +462,8 @@ class Molmo(ModelBase):
             with torch.amp.autocast("cuda", enabled=False):
                 image_output_features = self.vision_encoder_head(image_output_features)           
             x.view(-1, x.shape[-1])[is_output_image_patch] = image_output_features
-        
+            print((image_outputs == -1).sum(), "number of -1s in ")
+
         if not self.config.llm.rope:
             # Get positional embeddings.
             # shape: (1, seq_len)
@@ -601,6 +603,7 @@ class Molmo(ModelBase):
         device = input_ids.device
         llm_cfg = self.config.llm
         end_token_id = llm_cfg.build_tokenizer().eos_token_id
+        log.info("end token id" + str(end_token_id))
         # Init positional and attention configs
         tokens_generated = 0
         generation_states = torch.tensor([False]* batch_size, dtype=torch.bool)
@@ -691,7 +694,7 @@ class Molmo(ModelBase):
             image_output_features = output.image_output_features[:, -1, :]
             next_token = torch.argmax(logits, dim=-1, keepdim=True)
             
-
+            
             for i in range(batch_size):
                 ## if the previous token was the image generation start token, we need to check if we are generating an image
                 if generation_states[i]:

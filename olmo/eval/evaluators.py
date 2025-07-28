@@ -176,7 +176,7 @@ class SavePredictions(Evaluator):
         return filename
 
     def __init__(self, output_dir, json=True, save_tokens=True,
-                 log_examples=10, table=True):
+                 log_examples=10, table=False):
         self.save_tokens = save_tokens
         self.output_dir = output_dir
         self.log_examples = log_examples
@@ -205,15 +205,18 @@ class SavePredictions(Evaluator):
             text = tokenizer.decode(pred_seq[pred_seq >= 0])
             json_row = dict(prediction=text)
             if self.save_tokens:
-                # pass
+                try:
+                    json_row["gen_start_token"] = pred_seq.tolist()[-200:].index(151665)
+                except:
+                    json_row["gen_start_token"] = -1
                 ### TODO hardcoded to save only last 200 tokens
-                json_row["n_tokens"] = pred_seq.tolist()[-200:]
-            prompt_text = postprocess_prompt(tokenizer.decode(prompt_tokens[ex_ix][prompt_tokens[ex_ix] >= 0]))
+                # json_row["n_tokens"] = pred_seq.tolist()[-200:]
+            # prompt_text = postprocess_prompt(tokenizer.decode(prompt_tokens[ex_ix][prompt_tokens[ex_ix] >= 0]))
             if tokenizer.adds_space:
                 sep = " "
             else:
                 sep = ""
-            json_row["prompt"] = prompt_text
+            # json_row["prompt"] = prompt_text
             
             metadata = metadatas[ex_ix]
             if ex_ix < self.log_examples:
@@ -225,58 +228,66 @@ class SavePredictions(Evaluator):
             json_data.append(json_row)
             image_data[metadata['example_id']] = image_outputs[ex_ix]
             # json_row["image_outputs"] = image_outputs[ex_ix].tolist() if image_outputs is not None else None
-        html_data = gather_examples_as_html(self.log_examples, tokenizer, metadatas, predictions)
-
+        # html_data = gather_examples_as_html(self.log_examples, tokenizer, metadatas, predictions)
+        print(len(json_data), "examples to save")
         json_file = None
         html_file = None
         metrics = {}
 
         if self.json:
             log.info("Save prediction JSON")
-            if get_world_size() > 1 and self.json:
-                if get_global_rank() == 0:
-                    all_predictions = [None]*get_world_size()
-                    dist.gather_object(json_data, all_predictions)
-                    json_data = flatten_list(all_predictions)
-                else:
-                    dist.gather_object(json_data, None)
+            rank = get_global_rank()
+            file_name = os.path.join(self.output_dir, self.get_file_name(step, rank) + ".json")
+            with open(file_name, "w") as f:
+                json.dump(json_data, f, indent=2)
+            log.info(f"[Rank {rank}] Saved predictions to {file_name}")
+            # if get_world_size() > 1 and self.json:
+            #     if get_global_rank() == 0:
+            #         all_predictions = [None]*get_world_size()
+            #         dist.gather_object(json_data, all_predictions)
+            #         json_data = flatten_list(all_predictions)
+            #     else:
+            #         dist.gather_object(json_data, None)
 
-            if get_global_rank() == 0:
-                write_file(
-                    self.output_dir,
-                    self.get_file_name(step, None) + ".json",
-                    json.dumps(json_data, indent=2),
-                    save_overwrite=True
-                )
-                log.info("done saving json")
+            # if get_global_rank() == 0:
+            #     write_file(
+            #         self.output_dir,
+            #         self.get_file_name(step, None) + ".json",
+            #         json.dumps(json_data, indent=2),
+            #         save_overwrite=True
+            #     )
+            #     log.info("done saving json")
 
-                if self.table:
-                    html_data = gather_examples_as_html(None, tokenizer, metadatas, predictions)
-                    write_file(
-                        self.output_dir,
-                        self.get_file_name(step, None) + ".html",
-                        html_data.get_html(),
-                        save_overwrite=True
-                    )
-                    log.info("done saving html table for rank 0")
+                # if self.table:
+                #     html_data = gather_examples_as_html(None, tokenizer, metadatas, predictions)
+                #     write_file(
+                #         self.output_dir,
+                #         self.get_file_name(step, None) + ".html",
+                #         html_data.get_html(),
+                #         save_overwrite=True
+                #     )
+                #     log.info("done saving html table for rank 0")
 
-        if get_world_size() > 1:
-            if get_global_rank() == 0:
-                all_image_data = [None] * get_world_size()
-                dist.gather_object(image_data, all_image_data)
+        filename = os.path.join(self.output_dir, self.get_file_name(step, get_global_rank()) + "_image_outputs.npy")
+        np.save(filename, image_data)
+        log.info(f"[Rank {get_global_rank()}] Saved image data to {filename}")
+        # if get_world_size() > 1:
+        #     if get_global_rank() == 0:
+        #         all_image_data = [None] * get_world_size()
+        #         dist.gather_object(image_data, all_image_data)
                 
-                # Merge all dictionaries into one
-                merged_image_data = {}
-                for partial in all_image_data:
-                    merged_image_data.update(partial)
-            else:
-                dist.gather_object(image_data, None)
-        else:
-            merged_image_data = image_data
+        #         # Merge all dictionaries into one
+        #         merged_image_data = {}
+        #         for partial in all_image_data:
+        #             merged_image_data.update(partial)
+        #     else:
+        #         dist.gather_object(image_data, None)
+        # else:
+        #     merged_image_data = image_data
 
-        if get_global_rank() == 0:
-            np.save(os.path.join(self.output_dir, self.get_file_name(step, None) + "_image_outputs.npy"), merged_image_data)
-            log.info("Saved gathered image_data dictionary.")
+        # if get_global_rank() == 0:
+        #     np.save(os.path.join(self.output_dir, self.get_file_name(step, None) + "_image_outputs.npy"), merged_image_data)
+        #     log.info("Saved gathered image_data dictionary.")
 
         return metrics
 

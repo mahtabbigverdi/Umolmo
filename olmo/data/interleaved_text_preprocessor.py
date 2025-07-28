@@ -281,9 +281,6 @@ class InterleavedTextPreprocessor:
                     new_input_tokens.extend([self.tokenizer.image_output_token_id] * NUM_IMAGE_OUT_TOKENS) 
 
             input_tokens = np.array(new_input_tokens, dtype=np.int32)
-            
-
-
         out = {
             "input_tokens": input_tokens,
             "target_tokens": target_tokens,

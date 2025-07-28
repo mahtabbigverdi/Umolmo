@@ -213,7 +213,7 @@ data:
 restore_dataloader: true
 fast_forward_batches: null
 evaluators: []
-eval_interval: 300
+eval_interval: 600
 inf_evaluators:
 - label: depth
   data:
@@ -259,7 +259,7 @@ inf_evaluators:
   max_examples: 16
   console_log_interval: 5
   include_image: false
-inf_eval_interval: 300
+inf_eval_interval: 600
 eval_on_last_step: true
 eval_on_load: false
 save_folder: /mmfs1/gscratch/krishna/mahtab/Umolmo/checkpoints/molmo-7b-qwen2-siglip2-finetune
@@ -334,11 +334,11 @@ runtime_data:
     --save_folder=/mmfs1/gscratch/krishna/mahtab/Umolmo/checkpoints/molmo-7b-qwen2-siglip2-finetune
     --save_overwrite
   hostname: g3086
-  date: 07/21/2025, 15:54
+  date: 07/22/2025, 00:42
   world_size: 4
   resuming_from: null
   beaker_experiment_id: null
   beaker_experiment_url: null
-  wandb_id: np31u88u
-  wandb_url: https://wandb.ai/allenai-team1/mmseek/runs/np31u88u
+  wandb_id: 5gqidpf8
+  wandb_url: https://wandb.ai/allenai-team1/mmseek/runs/5gqidpf8
 image_generation_loss_type: cosine

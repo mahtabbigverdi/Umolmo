@@ -548,7 +548,7 @@ class TrainConfig(BaseConfig):
     Data about the current run, filled in automatically 
     """
 
-    image_generation_loss_type: Optional[str] = "cosine"
+    image_generation_loss_type: Optional[str] = "mse"
     """
     Increment this when starting a new epoch.
     """

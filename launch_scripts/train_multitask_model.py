@@ -106,6 +106,7 @@ if __name__ == "__main__":
     parser.add_argument("--image_pooling_h", default=None, type=int)
     parser.add_argument("--image_pooling_w", default=None, type=int)
     parser.add_argument("--max_images", default=None, type=int)
+    parser.add_argument("--image_generation_loss_type", default='mse', type=str)
     args, other_args = parser.parse_known_args()
 
     if args.mixture.startswith("single"):
@@ -116,11 +117,14 @@ if __name__ == "__main__":
         eval_tasks = ["android_control_ll"]
         tasks = [["eval", ["android_control"], 1.0]]
     elif args.mixture in ["small1", "debug"]:
+        eval_tasks = ["aurora"]
+        tasks = [["aux", ["aurora"], 1.0]]
+    elif args.mixture in ["depth"]:
         eval_tasks = ["depth"]
         tasks = [["aux", ["depth"], 1.0]]
-    elif args.mixture in ["smallmahtab"]:
-        eval_tasks = ["depth"]
-        tasks = [["aux", ["depth"], 1.0]]
+    elif args.mixture in ["aurora"]:
+        eval_tasks = ["aurora"]
+        tasks = [["aux", ["aurora"], 1.0]]
     elif args.mixture in ["pointing"]:
         eval_tasks = ["pointing_eval:test"]
         tasks = [["pointing", [
@@ -240,12 +244,12 @@ if __name__ == "__main__":
             model_cfg.pad_tokenizer = True
         global_batch_size = 8
         model_init = None
-        inf_eval_interval = 1000
-        eval_interval = 1000
+        inf_eval_interval = 100
+        eval_interval = 100
         log_interval = 10
         eval_examples = 16
         max_inf_examples = 16
-        duration = '2ep'
+        duration = 100
         eval_subset_batches = 4
     
     else:
@@ -256,9 +260,9 @@ if __name__ == "__main__":
 
         log_interval = 5
         global_batch_size = args.global_batch_size
-        inf_eval_interval = 300
-        eval_interval = 300
-        duration =  600
+        inf_eval_interval = args.duration
+        eval_interval = args.duration
+        duration =  args.duration
         checkpoint = select_checkpoint(args.checkpoint)
         if exists(join(checkpoint, "model.yaml")):
             model_cfg = MolmoConfig.load(join(checkpoint, "model.yaml"))
@@ -323,7 +327,8 @@ if __name__ == "__main__":
         save_overwrite=debug,
         data=DataLoaderConfig(
             root_size_mixture=root_size_mixture,
-            shuffle=True,
+            #### shuffle for aurora training data is set to False
+            shuffle=False if args.mixture in ['debug', 'aurora'] else True, 
             split="train",
             drop_last=True,
             sequence_length=args.seq_len,
@@ -335,6 +340,7 @@ if __name__ == "__main__":
         ft_connector=True,
         ft_llm=True,
         ft_vit=True,
+        image_generation_loss_type = args.image_generation_loss_type,
         optimizer=OptimizerConfig(
             name=OptimizerType.adamw,
             connector_learning_rate=5e-6,
@@ -388,7 +394,7 @@ if __name__ == "__main__":
         eval_interval=eval_interval,
         inf_eval_interval=inf_eval_interval,
         inf_evaluators=evaluations,
-        save_final_unsharded_checkpoint=False,
+        save_final_unsharded_checkpoint=True,
         evaluators=[]
     )
 

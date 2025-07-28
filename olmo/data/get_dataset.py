@@ -10,7 +10,7 @@ from olmo.data.academic_datasets_manual import (
 )
 
 from olmo.data.mmseek_datasets import ( 
-    Depth
+    Depth, Aurora
 )
 
 from olmo.data.video_datasets import (
@@ -238,6 +238,8 @@ def get_dataset_by_name(dataset_name, split) -> Dataset:
         return ClockBench(split=split)
     if dataset_name == "depth":
         return Depth(split=split)
+    if dataset_name == "aurora":
+        return Aurora(split=split)
     if dataset_name == "dense_caption_eval":
         assert split == "test"
         return DenseCaptionEval()

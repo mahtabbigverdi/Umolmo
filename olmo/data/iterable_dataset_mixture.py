@@ -74,7 +74,7 @@ class IterableDatasetMixture(torch.utils.data.IterableDataset[Dict[str, Any]]):
 
         # How often each dataset has been sampled globally across all devices/workers
         counts = np.zeros(len(self.datasets), dtype=np.int64)
-
+        
         if self.start_index != 0:
             # Fast forward by re-computing what to sample (so the RNG state updates) but
             # without actually requesting the data from the data loader
@@ -111,12 +111,13 @@ class IterableDatasetMixture(torch.utils.data.IterableDataset[Dict[str, Any]]):
 
                 dataset = self.datasets[dataset_ix]
                 epoch = count // len(dataset)
-
                 shuffled_for, shuffled_order = shuffled_ixs[dataset_ix]
                 if epoch != shuffled_for:
                     shuffle_seed = self.seed + epoch * 1771
                     shuffled_order = np.arange(len(dataset), dtype=np.int32)
-                    np.random.RandomState(shuffle_seed).shuffle(shuffled_order)
+                    ## made this change to ensure that the shuffle order is consistent across all workers
+                    if self.shuffle:
+                        np.random.RandomState(shuffle_seed).shuffle(shuffled_order)
                     shuffled_ixs[dataset_ix] = (epoch, shuffled_order)
 
                 yield dataset.get(int(shuffled_order[count % len(dataset)]), epoch)

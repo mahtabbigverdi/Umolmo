@@ -12,6 +12,7 @@ from transformers import AutoTokenizer
 from .config import BaseConfig
 from .torch_util import get_local_rank, barrier
 from .util import is_url
+from olmo.torch_util import get_global_rank
 
 try:
     from functools import cache
@@ -57,6 +58,7 @@ class HfTokenizerWrapper:
         self.image_output_token_id = special_tokens[IMAGE_OUTPUT_TOKEN]
         self.image_gen_start_token_id = self.tokenizer.encode(IMAGE_GEN_START)[0]
         self.image_gen_end_token_id = self.tokenizer.encode(IMAGE_GEN_END)[0]
+        
     def encode(self, x: str):
         return self.tokenizer.encode(x, add_special_tokens=False)
 

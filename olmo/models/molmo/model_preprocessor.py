@@ -384,7 +384,6 @@ class Preprocessor:
                 example["image"] = image
         else:
             image = None
-        
         if "image_outputs" in example and len(example["image_outputs"]) > 0:
             image_outputs = [np.load(example["image_outputs"][i]) for i in range(len(example["image_outputs"]))]
         else:

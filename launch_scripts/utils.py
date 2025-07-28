@@ -132,6 +132,8 @@ def get_evaluator(name) -> EvaluatorConfig:
         return EvaluatorConfig(vqa_eval="muir_bench_mc")
     elif name == "depth":
         return EvaluatorConfig()
+    elif name == "aurora":
+        return EvaluatorConfig()
     elif name in ["dense_caption_eval", "user_qa", "vqa_v2_test", "intern_vid"]:
         # No metrics, but still save prediction file
         return EvaluatorConfig()

@@ -634,7 +634,6 @@ class DataFormatter(BaseConfig):
                     msg_list["answer"] = f"A{ix}: " + msg_list["answer"]
             else:
                 assert self.format_message_list is None
-
         if "message_list" in ex:
             # Does not support returning metadata, which is fine since we are not doing inference
             return [self._format_example(msg, ex, is_training, for_inference, rng)[0]

@@ -105,13 +105,23 @@ class MMCollator:
             out[key] = _collate([ex.get(key) for ex in batch], max_len, pad=self.pad, allow_truncate=False,)
         
 
-        
         ## check if there exists at least one image output in the batch
-        if any(ex.get('image_outputs').shape[0]!=0 for ex in batch):
-            MAX_NUMBER_OUTPUT_IMAGE_TOKENS = 200
-            out['image_outputs'] = _collate([ex.get('image_outputs') for ex in batch], MAX_NUMBER_OUTPUT_IMAGE_TOKENS, pad=self.pad, allow_truncate=False,)
+        max_len = max(ex.get('image_outputs').shape[0] for ex in batch)
+        if max_len > 0:
+            out['image_outputs'] = _collate(
+                [ex.get('image_outputs') for ex in batch],
+                max_len,
+                pad=self.pad,
+                allow_truncate=False,
+            )
         else:
             out['image_outputs'] = torch.zeros((len(batch), 0), dtype=torch.float32)
+        
+        # if any(ex.get('image_outputs').shape[0]!=0 for ex in batch):
+        #     MAX_NUMBER_OUTPUT_IMAGE_TOKENS = 200
+        #     out['image_outputs'] = _collate([ex.get('image_outputs') for ex in batch], MAX_NUMBER_OUTPUT_IMAGE_TOKENS, pad=self.pad, allow_truncate=False,)
+        # else:
+        #     out['image_outputs'] = torch.zeros((len(batch), 0), dtype=torch.float32)
         out["input_ids"] = out.pop("input_tokens")
         if "target_tokens" in out:
             out["labels"] = out.pop("target_tokens")
