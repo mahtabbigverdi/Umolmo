@@ -1,0 +1,1 @@
+torchrun --nproc-per-node 8 launch_scripts/eval_downstream.py /mmfs1/gscratch/krishna/mahtab/Umolmo/checkpoints/Aurora-molmo-7b-qwen2-siglip2-finetune-uber-cosine-bilinear/step3600-unsharded aurora --save_to_checkpoint_dir

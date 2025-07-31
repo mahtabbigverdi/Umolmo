@@ -17,7 +17,7 @@ from olmo.config import BaseConfig, D
 from olmo.data.data_loader import DataLoaderConfig
 from olmo.eval.save_eval_data_config import SaveEvalDataConfig
 from olmo.models.molmo.molmo import MolmoConfig
-from olmo.torch_util import move_to_device, get_world_size
+from olmo.torch_util import move_to_device, get_world_size, get_global_rank
 
 __all__ = ["LossMetrics", "LossDatasetEvaluator", "LossDatasetEvaluatorConfig"]
 
@@ -44,10 +44,13 @@ class LossMetrics:
 
     def compute(self) -> Dict[str, Union[float, WBValue]]:
         metrics = {}
+        
         for k, v in self.eval_metrics.items():
             if k in ["HighResSelection", "HighResVals"]:
                 metrics[k] = wandb.Histogram(v.compute().detach().cpu().numpy(), num_bins=100)
             elif v.weight > 0:
+                metrics[k] = v.compute().item()
+            elif v.weight == 0:
                 metrics[k] = v.compute().item()
         return metrics
 
@@ -69,7 +72,9 @@ class LossMetrics:
         self.eval_metrics["CrossEntropyLoss"].update(cross_entropy_loss/total_weight, total_weight)
         if gen_total_weight > 0:
             self.eval_metrics["ImageGenLoss"].update(genloss/gen_total_weight, gen_total_weight)
-        
+        else:
+            self.eval_metrics["ImageGenLoss"].update(torch.tensor(0.0), 0)
+
         if zloss is not None:
             self.eval_metrics["ZLoss"].update(zloss/total_weight, total_weight)
         self.eval_metrics["Accuracy"].update(accuracy/total_weight, total_weight)

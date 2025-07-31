@@ -227,6 +227,7 @@ class Molmo(ModelBase):
 
     def get_fsdp_wrap_policy(self, wrap_strategy: Optional[FSDPWrapStrategy] = None):
         """Get a FSDP1 wrap policy for this model."""
+        import pdb; pdb.set_trace()
         if wrap_strategy is None:
             return None
 
@@ -451,10 +452,16 @@ class Molmo(ModelBase):
         # if get_global_rank() == 1:
         #     import pdb; pdb.set_trace()
         ## if there is at least one example with image_outputs
-        if is_training and self._image_output_token_id in input_ids :
-            ## image_outputs is padded but we only need embeddings for the valid image outputs, so we select embeddings from the start
-            ## input_ids[i]== self._image_output_token_id).sum() means how many image output tokens are there in the input_ids[i]
-            image_output_features = torch.cat([image_outputs[i, :(input_ids[i]== self._image_output_token_id).sum()] for i in range(len(image_outputs))], dim=0)
+        if is_training:
+            if self._image_output_token_id in input_ids :
+                ## image_outputs is padded but we only need embeddings for the valid image outputs, so we select embeddings from the start
+                ## input_ids[i]== self._image_output_token_id).sum() means how many image output tokens are there in the input_ids[i]
+                image_output_features = torch.cat([image_outputs[i, :(input_ids[i]== self._image_output_token_id).sum()] for i in range(len(image_outputs))], dim=0)
+            else:
+                ### we do this to keep vision_encoder_head in computation graph even when there is no image output tokens
+                feature_dim = self.vision_encoder_head.in_features
+                image_output_features = x.new_zeros((0, feature_dim))    
+            
             is_output_image_patch = input_ids.view(-1) == self._image_output_token_id
             assert is_output_image_patch.sum() == len(image_output_features)
             ## pass the visual embeddings through the vision encoder head to make them compatible with the llm input embeddings
@@ -462,7 +469,6 @@ class Molmo(ModelBase):
             with torch.amp.autocast("cuda", enabled=False):
                 image_output_features = self.vision_encoder_head(image_output_features)           
             x.view(-1, x.shape[-1])[is_output_image_patch] = image_output_features
-            print((image_outputs == -1).sum(), "number of -1s in ")
 
         if not self.config.llm.rope:
             # Get positional embeddings.
@@ -570,7 +576,7 @@ class Molmo(ModelBase):
             last_valid_logit = logits[
                 torch.arange(logits.shape[0], device=logits.device), append_last_valid_logits]
             logits = torch.cat([logits[:, :-1], last_valid_logit[:, None]], dim=1)
-
+        
         return OLMoOutput(logits=logits, image_output_features=image_output_features, attn_key_values=attn_key_values, hidden_states=tuple(all_hidden_states) if output_hidden_states else None)  # type: ignore[arg-type]
 
     def generate(

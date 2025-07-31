@@ -30,7 +30,7 @@ class OLMoOutput(NamedTuple):
     """
     These are features after passing last hidden states to the visual decoder head
     """
-
+   
     attn_key_values: Optional[List[Tuple[torch.Tensor, torch.Tensor]]]
     """
     Attention keys and values from each block.

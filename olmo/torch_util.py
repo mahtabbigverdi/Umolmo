@@ -206,8 +206,9 @@ def get_element_size(dtype: torch.dtype) -> int:
 
 def clip_grad_norm(parameters, max_grad_norm: float, norm_type: float = 2.0, foreach: Optional[bool] = None):
     # Adapted from https://github.com/pytorch/torchtitan/blob/2a4437014e66bcf88a3f0419b816266e6326d539/torchtitan/utils.py#L348
-
     grads = [p.grad for p in parameters if p.grad is not None]
+    # for p in grads:
+    #     print(f"[Rank {get_global_rank()}] param norm={p.norm()}")
     total_norm = nn.utils.get_total_norm(
         grads, norm_type=norm_type, error_if_nonfinite=False, foreach=foreach
     )
@@ -217,6 +218,7 @@ def clip_grad_norm(parameters, max_grad_norm: float, norm_type: float = 2.0, for
     # NOTE: It has two purposes:
     #       1. to make sure the total norm is computed correctly when PP is used (see below)
     #       2. to return a reduced total_norm tensor whose .item() would return the correct value
+    
     if isinstance(total_norm, DTensor):
         # Will reach here if any non-PP parallelism is used.
         # If only using PP, total_norm will be a local tensor.

@@ -51,7 +51,7 @@ from olmo.torch_util import (
 from olmo.io import PathOrStr, clear_directory, is_url, normalize_path
 from olmo.train.checkpointer import Checkpointer, save_unsharded
 from ..util import flatten_lists
-
+import shutil
 try:
     from megablocks.layers.moe import (
         batched_load_balancing_loss,
@@ -63,6 +63,13 @@ except ImportError:
 
 
 log = logging.getLogger(__name__)
+
+
+def remove_previous_unsharded(save_root):
+    for name in os.listdir(save_root):
+        path = os.path.join(save_root, name)
+        if os.path.isdir(path) and name.endswith("-unsharded"):
+            shutil.rmtree(path, ignore_errors=True)
 
 
 @dataclass
@@ -606,8 +613,7 @@ class Trainer:
         ce_loss = (ce_loss*loss_masks.view(ce_loss.shape)).sum()
         z_loss = (z_loss*loss_masks.view(z_loss.shape)).sum()
         
-        # if get_global_rank() == 0:
-        #     import pdb; pdb.set_trace()
+    
 
         if batch['image_outputs'].shape[1] > 0:
             image_output_features = model_out.image_output_features 
@@ -628,11 +634,11 @@ class Trainer:
             
             else:
                 raise ValueError(f"Unsupported image generation loss type: {self.cfg.image_generation_loss_type}")
-            print("image_gen_loss shape", get_global_rank(),"  .....  ", image_gen_loss.shape)
 
             image_gen_loss = image_gen_loss.sum()
         else:
-            image_gen_loss = torch.zeros((), device=ce_loss.device, dtype=ce_loss.dtype)
+            ## doing this instead of just image_gen_loss = 0 to avoid issues with FSDP and batches without any generation samples
+            image_gen_loss = model_out.image_output_features.sum() * 0.0
 
         return ce_loss, z_loss, image_gen_loss, model_out
 
@@ -659,11 +665,11 @@ class Trainer:
         total_loss = torch.tensor(0.0, device=self.device)
         
         for micro_batch in micro_batches:
+            
             ce_loss, z_loss, image_gen_loss, model_out = self.model_forward(
                 micro_batch, compute_z_loss=self.cfg.softmax_auxiliary_loss)
             if compute_metrics:
                 self._train_metrics.update(micro_batch, model_out, ce_loss, z_loss, image_gen_loss)
-
             # In case this helps with memory utilization.
             del micro_batch
             
@@ -678,14 +684,11 @@ class Trainer:
                 loss = ce_loss + z_loss
             else:
                 loss = ce_loss
-            print("rank and loss", get_global_rank(),"  .....  ", image_gen_loss.item())
-            # if get_global_rank() == 0:
-            #     import pdb; pdb.set_trace()
+            
             ## image generation loss
             if batch_size_in_gen_tokens != 0:
                 image_gen_loss = image_gen_loss.sum() / batch_size_in_gen_tokens
                 loss += image_gen_loss
-
 
 
 
@@ -696,7 +699,9 @@ class Trainer:
             del model_out
 
             # Run backward pass.
+
             loss.backward()
+            
             total_loss += loss.detach()
         return total_loss
 
@@ -713,12 +718,11 @@ class Trainer:
         if compute_metrics:
             self._train_metrics.reset()
         loss = self.train_batch(batch, True)
-
         if compute_metrics:
             metrics = {f"train/{k}": v for k, v in self._train_metrics.compute().items()}
         else:
             metrics = {}
-
+        
         should_log_optim_metrics_this_step = self.should_log_optim_metrics_this_step()
         if should_log_optim_metrics_this_step:
             # No current implementation of per-parameter metrics because I am not sure the
@@ -736,13 +740,13 @@ class Trainer:
             self.cfg.max_grad_norm, self.scheduler_current, self.scheduler_max)
         if self.cfg.max_grad_norm_ratio is not None:
             raise NotImplementedError()
+        
         if max_grad_norm is not None:
             for group_name, groups in param_norm_groups.items():
                 params = flatten_lists(group["params"] for group in groups)
                 grad_norm = clip_grad_norm(params, max_grad_norm=max_grad_norm)
                 grad_norms.append(grad_norm)
                 optim_metrics[f"{group_name}_grad_norm"] = grad_norm
-
         # Adjust the learning rate.
         if self.cfg.model.vision_backbone is not None:
             initial_lr_dict = {
@@ -766,10 +770,11 @@ class Trainer:
 
         # Optimizer step.
         self.optim.step()
-
+      
         # Collect metrics and check for NaN loss.
         # NOTE: this involves a bunch of host-device syncs so we wait until the last moment to do this.
-        for key, value in optim_metrics.items():
+        # optim_metrics ={}
+        for key, value in optim_metrics.items():   
             metrics[f"optim/{key}"] = value.item()
         self.cur_train_loss = loss.item()
         self.min_train_loss = min(self.min_train_loss, self.cur_train_loss)
@@ -1046,8 +1051,10 @@ class Trainer:
                     should_log_this_step = self.should_log_this_step()
 
                     # Run train step on batch.
+                    
                     metrics = self.train_step(batch, compute_metrics=should_log_this_step)
-
+                    
+                    
                     # Maybe collect other metrics.
                     if should_log_this_step:
                         metrics.update(speed_monitor.check())
@@ -1101,6 +1108,12 @@ class Trainer:
                     ):
                         log.info("Saving checkpoint...")
                         checkpoint_path = self.save_checkpoint(CheckpointType.sharded)
+                        log.info(f"Checkpoint saved to {checkpoint_path}")
+                        
+                        log.info("Saving final unsharded checkpoint...")
+                        checkpoint_path = join(normalize_path(self.cfg.save_folder), f"step{self.global_step}-unsharded")
+                        remove_previous_unsharded(self.cfg.save_folder)
+                        save_unsharded(checkpoint_path, self.fsdp_model, None, self.cfg, self.cfg.save_overwrite)
                         log.info(f"Checkpoint saved to {checkpoint_path}")
 
                         # Remove any ephemeral checkpoints.

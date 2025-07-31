@@ -376,7 +376,7 @@ if __name__ == "__main__":
         ),
         load_path=None,
         initial_model_checkpoint=checkpoint,
-        save_interval=80,
+        save_interval=100,
         save_num_checkpoints_to_keep=1,
         global_train_batch_size=global_batch_size,
         device_train_microbatch_size=args.device_train_batch_size,

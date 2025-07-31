@@ -33,19 +33,19 @@ def interpolate_features(features, target_len):
     Returns:
         torch.Tensor of shape [target_len, D]
     """
-    N, D = features.shape
-    features = features.unsqueeze(0).permute(0, 2, 1)  # [1, D, N]
-    interpolated = F.interpolate(features, size=target_len, mode='linear', align_corners=False)
-    return interpolated.squeeze(0).permute(1, 0)  # [target_len, D]
-
     # N, D = features.shape
-    # target_h = target_w = int(np.sqrt(target_len))              
-    # h = w = int(np.sqrt(N))
-    # image_features = features.view(h, w, D)  # [H, W, D]
-    # image_features = image_features.unsqueeze(0).permute(0, 3, 1, 2).contiguous()
-    # image_features = F.interpolate(image_features.to(torch.float32), size=(target_h, target_w), mode='bilinear', align_corners=False).to(image_features.dtype)
-    # image_features = image_features.permute(0, 2, 3, 1).contiguous().flatten(1, 2)
-    # return image_features.squeeze(0)  # [target_len, D]
+    # features = features.unsqueeze(0).permute(0, 2, 1)  # [1, D, N]
+    # interpolated = F.interpolate(features, size=target_len, mode='linear', align_corners=False)
+    # return interpolated.squeeze(0).permute(1, 0)  # [target_len, D]
+
+    N, D = features.shape
+    target_h = target_w = int(np.sqrt(target_len))              
+    h = w = int(np.sqrt(N))
+    image_features = features.view(h, w, D)  # [H, W, D]
+    image_features = image_features.unsqueeze(0).permute(0, 3, 1, 2).contiguous()
+    image_features = F.interpolate(image_features.to(torch.float32), size=(target_h, target_w), mode='bilinear', align_corners=False).to(image_features.dtype)
+    image_features = image_features.permute(0, 2, 3, 1).contiguous().flatten(1, 2)
+    return image_features.squeeze(0)  # [target_len, D]
 
 def get_interpolated_patch_features(image_path, target_num_patches, save_path=None):
     image = load_image(image_path)
