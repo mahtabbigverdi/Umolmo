@@ -609,7 +609,6 @@ class Molmo(ModelBase):
         device = input_ids.device
         llm_cfg = self.config.llm
         end_token_id = llm_cfg.build_tokenizer().eos_token_id
-        log.info("end token id" + str(end_token_id))
         # Init positional and attention configs
         tokens_generated = 0
         generation_states = torch.tensor([False]* batch_size, dtype=torch.bool)
@@ -634,7 +633,7 @@ class Molmo(ModelBase):
         
 
 
-        generated = input_ids
+        generated = torch.empty((batch_size, 0), dtype=input_ids.dtype, device=input_ids.device)
         past_key_values = None
         hidden_states = None
 
@@ -679,7 +678,7 @@ class Molmo(ModelBase):
                 _position_ids = position_ids
                 _append_last_valid_logits = append_last_valid_logits
 
-            tokens_generated += 1
+            
             output = self(
                 input_ids = input_token,
                 input_embeddings=input_embeddings,
@@ -700,26 +699,27 @@ class Molmo(ModelBase):
             image_output_features = output.image_output_features[:, -1, :]
             next_token = torch.argmax(logits, dim=-1, keepdim=True)
             
-            
-            for i in range(batch_size):
-                ## if the previous token was the image generation start token, we need to check if we are generating an image
-                if generation_states[i]:
-                    ### if the generated tokens number reached the per_image_output_tokens, we need to end the image generations
-                    if generated[i].shape[0] - last_generation_start_idx[i] == self.config.per_image_output_tokens:
-                        next_token[i,0] = torch.tensor(self.image_gen_end_token_id, device=next_token.device, dtype=next_token.dtype)
-                        generation_states[i] = False
-                    else:
-                        next_token[i,0] = torch.tensor(self._image_output_token_id, device=next_token.device, dtype=next_token.dtype)
-                
-                elif generated[i][-1].item() == self.image_gen_start_token_id:
-                    generation_states[i] = True
-                    next_token[i,0] = torch.tensor(self._image_output_token_id, device=next_token.device, dtype=next_token.dtype)
-                    last_generation_start_idx[i] = generated[i].shape[0]
+            if tokens_generated > 0:
+                for i in range(batch_size):
+                    ## if the previous token was the image generation start token, we need to check if we are generating an image
+                    if generated[i][-1].item() == self.image_gen_start_token_id:
+                        generation_states[i] = True
+                        last_generation_start_idx[i] = generated[i].shape[0]
 
+                    if generation_states[i]:
+                        ### if the generated tokens number reached the per_image_output_tokens, we need to end the image generations
+                        if generated[i].shape[0] - last_generation_start_idx[i] == self.config.per_image_output_tokens:
+                            next_token[i,0] = torch.tensor(self.image_gen_end_token_id, device=next_token.device, dtype=next_token.dtype)
+                            generation_states[i] = False
+                        else:
+                            next_token[i,0] = torch.tensor(self._image_output_token_id, device=next_token.device, dtype=next_token.dtype)
+                
+                
             
             next_token[generation_done] = end_token_id
             generation_done |= next_token.squeeze(1) == end_token_id
-            generated = torch.cat((generated, next_token), dim=1)    
+            generated = torch.cat((generated, next_token), dim=1) 
+            tokens_generated += 1   
             past_key_values = output.attn_key_values
             if hidden_states is  None:
                 hidden_states = image_output_features.unsqueeze(1)  # shape: (batch_size, 1, d_model)

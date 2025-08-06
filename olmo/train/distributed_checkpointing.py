@@ -26,7 +26,7 @@ API Reference
 """
 
 from __future__ import annotations
-
+from olmo.torch_util import get_global_rank
 import logging
 from concurrent.futures import Future
 from dataclasses import dataclass
@@ -263,6 +263,22 @@ def load_model_and_optim_state(
         if f"model.{model_key}" not in metadata.state_dict_metadata:
             state_dict['model'].pop(model_key)
             skipped_key_list.append(model_key)
+   
+    ## todo remove
+    # missing_optimizer_keys = []
+    # if optim is not None:
+    #     for key in list(state_dict["optim"]["state"].keys()):
+    #         # Check if the checkpoint actually contains this optimizer key
+    #         if f"optim.state.{key}.step" not in metadata.state_dict_metadata:
+    #             missing_optimizer_keys.append(key)
+    #             state_dict["optim"]["state"].pop(key, None)
+    #             # Remove from param_groups to avoid invalid references
+    #             for group in state_dict["optim"]["param_groups"]:
+    #                 group["params"] = [p for p in group["params"]
+    #                                 if p not in missing_optimizer_keys]
+    #     if missing_optimizer_keys:
+    #         log.warning(f"Missing optimizer state for params: {missing_optimizer_keys}")
+    ## todo remove
 
     dist_cp.load(
         state_dict,
@@ -270,7 +286,18 @@ def load_model_and_optim_state(
         storage_reader=reader,
         process_group=process_group,
     )
+    ## todo remove
+    # for key in ["vision_decoder_head.weight"]:
+    #     if key not in state_dict["optim"]["state"]:
+    #         t = model.vision_decoder_head.weight
+    #         state_dict["optim"]["state"][key] = {
+    #             "step": torch.tensor(0, dtype=torch.int64),
+    #             "exp_avg": torch.zeros_like(t),
+    #             "exp_avg_sq": torch.zeros_like(t),
+    #         }
+    ## todo remove
 
+    
     if len(skipped_key_list) > 0:
         import os
         from transformers import AutoModel
@@ -338,6 +365,15 @@ def load_model_and_optim_state(
         dist_cp_sd.set_optimizer_state_dict(
             model, optim, state_dict["optim"], options=dist_cp_sd.StateDictOptions(strict=True)
         )
+        ## todo remove
+        # for name in missing_optimizer_keys:
+        #     for group in optim.param_groups:
+        #         for p in group["params"]:
+        #             if hasattr(p, "name") and p.name == name or getattr(p, "_name", None) == name:
+        #                 optim.state[p]["step"] = torch.tensor(0, dtype=torch.int64)
+        #                 optim.state[p]["exp_avg"] = torch.zeros_like(p)
+        #                 optim.state[p]["exp_avg_sq"] = torch.zeros_like(p)
+        ## todo remove
         gc_cuda()
 
 

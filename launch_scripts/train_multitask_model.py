@@ -107,6 +107,9 @@ if __name__ == "__main__":
     parser.add_argument("--image_pooling_w", default=None, type=int)
     parser.add_argument("--max_images", default=None, type=int)
     parser.add_argument("--image_generation_loss_type", default='mse', type=str)
+    parser.add_argument("--vision_head_type", default='Linear', type=str)
+    parser.add_argument("--per_image_output_tokens", default=64, type=int)
+    
     args, other_args = parser.parse_known_args()
 
     if args.mixture.startswith("single"):
@@ -289,6 +292,10 @@ if __name__ == "__main__":
     if model_cfg.llm.max_sequence_length < args.seq_len:
         model_cfg.llm.max_sequence_length = args.seq_len
     
+    model_cfg.vision_head_type = args.vision_head_type
+    model_cfg.per_image_output_tokens = args.per_image_output_tokens
+    
+
     root_size_mixture: List[RootSizeMixture] = []
     for name, submixture, rate in tasks:
         submixture = get_training_mixture(submixture)
@@ -343,10 +350,11 @@ if __name__ == "__main__":
         image_generation_loss_type = args.image_generation_loss_type,
         optimizer=OptimizerConfig(
             name=OptimizerType.adamw,
-            connector_learning_rate=5e-6,
-            vit_learning_rate=5e-6,
-            llm_learning_rate=1e-5,
-            gen_learning_rate=1e-5,
+            ## Learning rates for batchsize 32 , previous ones were 5e-6,5e-6, 1e-5, 1e-5
+            connector_learning_rate=3e-6,
+            vit_learning_rate=3e-6,
+            llm_learning_rate=5e-6,
+            gen_learning_rate=5e-6,
             connector_weight_decay=0.0,
             vit_weight_decay=0.0,
             llm_weight_decay=0.0,

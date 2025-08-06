@@ -211,7 +211,7 @@ class SavePredictions(Evaluator):
                     json_row["gen_start_token"] = -1
                 ### TODO hardcoded to save only last 200 tokens
                 # json_row["n_tokens"] = pred_seq.tolist()[-200:]
-            # prompt_text = postprocess_prompt(tokenizer.decode(prompt_tokens[ex_ix][prompt_tokens[ex_ix] >= 0]))
+            prompt_text = postprocess_prompt(tokenizer.decode(prompt_tokens[ex_ix][prompt_tokens[ex_ix] >= 0]))
             if tokenizer.adds_space:
                 sep = " "
             else:

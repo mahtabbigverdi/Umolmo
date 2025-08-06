@@ -32,6 +32,8 @@ IMAGE_OUTPUT_TOKEN = f'<im_output_token>'
 EXTRA_TOKENS = (IM_START_TOKEN, IM_END_TOKEN, IMAGE_PATCH_TOKEN,
                 IM_COL_TOKEN, IMAGE_PROMPT, IMAGE_LOW_RES_TOKEN, IMAGE_OUTPUT_TOKEN)
 GEN_TOKENS = [IMAGE_GEN_START, IMAGE_GEN_END]
+DEPTH_TOKENS = ["<DEPTH_START>", "<DEPTH_END>"] + [f"<DEPTH_{num}>" for num in range(128)]
+
 
 class HfTokenizerWrapper:
     """Tokenizer wrapper
@@ -117,6 +119,8 @@ def build_tokenizer(
         assert len(tokenizer) <= pad_tokenizer_to
         n_extra_tokens = pad_tokenizer_to - len(tokenizer)
         n_extra_tokens -= len(GEN_TOKENS)
+        n_extra_tokens -= len(DEPTH_TOKENS)
+
         # This handles a case where the LLM embedding matrix is larger than the vocab size
         # We need the extra tokens in `EXTRA_TOKENS` to be assigned id's higher than the embedding
         # matrix size, not the vocab size, since we will concat the embedding and matrix with
@@ -134,6 +138,7 @@ def build_tokenizer(
         cache_dir=cache_dir,
     )
     num_added_tokens = tokenizer.add_tokens(GEN_TOKENS)
+    num_added_tokens = tokenizer.add_tokens(DEPTH_TOKENS) 
     additional_special_tokens = {"additional_special_tokens": extra_tokens}
     tokenizer.add_special_tokens(additional_special_tokens)
 

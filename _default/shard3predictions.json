@@ -1,0 +1,560 @@
+[
+  {
+    "prediction": " (C)",
+    "gen_start_token": -1,
+    "example_id": "38_4",
+    "answers": "(D)"
+  },
+  {
+    "prediction": " (D)",
+    "gen_start_token": -1,
+    "example_id": "56_4",
+    "answers": "(D)"
+  },
+  {
+    "prediction": " (A)",
+    "gen_start_token": -1,
+    "example_id": "95_4",
+    "answers": "(C)"
+  },
+  {
+    "prediction": " (C)",
+    "gen_start_token": -1,
+    "example_id": "27_4",
+    "answers": "(A)"
+  },
+  {
+    "prediction": " (D)",
+    "gen_start_token": -1,
+    "example_id": "51_5",
+    "answers": "(A)"
+  },
+  {
+    "prediction": " (B)",
+    "gen_start_token": -1,
+    "example_id": "14_5",
+    "answers": "(B)"
+  },
+  {
+    "prediction": " (B)",
+    "gen_start_token": -1,
+    "example_id": "108_3",
+    "answers": "(A)"
+  },
+  {
+    "prediction": " (A)",
+    "gen_start_token": -1,
+    "example_id": "45_3",
+    "answers": "(A)"
+  },
+  {
+    "prediction": " (C)",
+    "gen_start_token": -1,
+    "example_id": "88_5",
+    "answers": "(D)"
+  },
+  {
+    "prediction": " (B)",
+    "gen_start_token": -1,
+    "example_id": "62_3",
+    "answers": "(B)"
+  },
+  {
+    "prediction": " (B)",
+    "gen_start_token": -1,
+    "example_id": "103_3",
+    "answers": "(B)"
+  },
+  {
+    "prediction": " (B)",
+    "gen_start_token": -1,
+    "example_id": "99_5",
+    "answers": "(D)"
+  },
+  {
+    "prediction": " (B)",
+    "gen_start_token": -1,
+    "example_id": "14_3",
+    "answers": "(B)"
+  },
+  {
+    "prediction": " (A)",
+    "gen_start_token": -1,
+    "example_id": "121_5",
+    "answers": "(A)"
+  },
+  {
+    "prediction": " (A)",
+    "gen_start_token": -1,
+    "example_id": "13_5",
+    "answers": "(A)"
+  },
+  {
+    "prediction": " (A)",
+    "gen_start_token": -1,
+    "example_id": "65_4",
+    "answers": "(B)"
+  },
+  {
+    "prediction": " (A)",
+    "gen_start_token": -1,
+    "example_id": "122_3",
+    "answers": "(C)"
+  },
+  {
+    "prediction": " (A)",
+    "gen_start_token": -1,
+    "example_id": "122_4",
+    "answers": "(C)"
+  },
+  {
+    "prediction": " (B)",
+    "gen_start_token": -1,
+    "example_id": "82_4",
+    "answers": "(B)"
+  },
+  {
+    "prediction": " (D)",
+    "gen_start_token": -1,
+    "example_id": "58_4",
+    "answers": "(B)"
+  },
+  {
+    "prediction": " (A)",
+    "gen_start_token": -1,
+    "example_id": "27_5",
+    "answers": "(E)"
+  },
+  {
+    "prediction": " (C)",
+    "gen_start_token": -1,
+    "example_id": "122_5",
+    "answers": "(A)"
+  },
+  {
+    "prediction": " (B)",
+    "gen_start_token": -1,
+    "example_id": "107_4",
+    "answers": "(A)"
+  },
+  {
+    "prediction": " (E)",
+    "gen_start_token": -1,
+    "example_id": "11_5",
+    "answers": "(E)"
+  },
+  {
+    "prediction": " (A)",
+    "gen_start_token": -1,
+    "example_id": "86_5",
+    "answers": "(B)"
+  },
+  {
+    "prediction": " (A)",
+    "gen_start_token": -1,
+    "example_id": "34_3",
+    "answers": "(B)"
+  },
+  {
+    "prediction": " (B)",
+    "gen_start_token": -1,
+    "example_id": "6_3",
+    "answers": "(B)"
+  },
+  {
+    "prediction": " (B)",
+    "gen_start_token": -1,
+    "example_id": "14_4",
+    "answers": "(B)"
+  },
+  {
+    "prediction": " (D)",
+    "gen_start_token": -1,
+    "example_id": "50_4",
+    "answers": "(B)"
+  },
+  {
+    "prediction": " (C)",
+    "gen_start_token": -1,
+    "example_id": "30_4",
+    "answers": "(C)"
+  },
+  {
+    "prediction": " (C)",
+    "gen_start_token": -1,
+    "example_id": "35_4",
+    "answers": "(C)"
+  },
+  {
+    "prediction": " (A)",
+    "gen_start_token": -1,
+    "example_id": "106_3",
+    "answers": "(A)"
+  },
+  {
+    "prediction": " (D)",
+    "gen_start_token": -1,
+    "example_id": "89_4",
+    "answers": "(D)"
+  },
+  {
+    "prediction": " (B)",
+    "gen_start_token": -1,
+    "example_id": "93_3",
+    "answers": "(A)"
+  },
+  {
+    "prediction": " (A)",
+    "gen_start_token": -1,
+    "example_id": "60_3",
+    "answers": "(C)"
+  },
+  {
+    "prediction": " (A)",
+    "gen_start_token": -1,
+    "example_id": "106_4",
+    "answers": "(A)"
+  },
+  {
+    "prediction": " (B)",
+    "gen_start_token": -1,
+    "example_id": "114_5",
+    "answers": "(D)"
+  },
+  {
+    "prediction": " (D)",
+    "gen_start_token": -1,
+    "example_id": "22_4",
+    "answers": "(C)"
+  },
+  {
+    "prediction": " (B)",
+    "gen_start_token": -1,
+    "example_id": "102_3",
+    "answers": "(B)"
+  },
+  {
+    "prediction": " (E)",
+    "gen_start_token": -1,
+    "example_id": "76_5",
+    "answers": "(E)"
+  },
+  {
+    "prediction": " (D)",
+    "gen_start_token": -1,
+    "example_id": "45_4",
+    "answers": "(D)"
+  },
+  {
+    "prediction": " (C)",
+    "gen_start_token": -1,
+    "example_id": "62_5",
+    "answers": "(B)"
+  },
+  {
+    "prediction": " (A)",
+    "gen_start_token": -1,
+    "example_id": "115_5",
+    "answers": "(E)"
+  },
+  {
+    "prediction": " (C)",
+    "gen_start_token": -1,
+    "example_id": "8_3",
+    "answers": "(C)"
+  },
+  {
+    "prediction": " (D)",
+    "gen_start_token": -1,
+    "example_id": "45_5",
+    "answers": "(E)"
+  },
+  {
+    "prediction": " (D)",
+    "gen_start_token": -1,
+    "example_id": "64_4",
+    "answers": "(C)"
+  },
+  {
+    "prediction": " (D)",
+    "gen_start_token": -1,
+    "example_id": "116_5",
+    "answers": "(D)"
+  },
+  {
+    "prediction": " (A)",
+    "gen_start_token": -1,
+    "example_id": "26_5",
+    "answers": "(E)"
+  },
+  {
+    "prediction": " (B)",
+    "gen_start_token": -1,
+    "example_id": "85_4",
+    "answers": "(C)"
+  },
+  {
+    "prediction": " (D)",
+    "gen_start_token": -1,
+    "example_id": "25_5",
+    "answers": "(E)"
+  },
+  {
+    "prediction": " (B)",
+    "gen_start_token": -1,
+    "example_id": "69_4",
+    "answers": "(B)"
+  },
+  {
+    "prediction": " (C)",
+    "gen_start_token": -1,
+    "example_id": "2_4",
+    "answers": "(C)"
+  },
+  {
+    "prediction": " (E)",
+    "gen_start_token": -1,
+    "example_id": "49_5",
+    "answers": "(A)"
+  },
+  {
+    "prediction": " (B)",
+    "gen_start_token": -1,
+    "example_id": "42_5",
+    "answers": "(B)"
+  },
+  {
+    "prediction": " (A)",
+    "gen_start_token": -1,
+    "example_id": "100_4",
+    "answers": "(D)"
+  },
+  {
+    "prediction": " (B)",
+    "gen_start_token": -1,
+    "example_id": "21_5",
+    "answers": "(C)"
+  },
+  {
+    "prediction": " (D)",
+    "gen_start_token": -1,
+    "example_id": "3_4",
+    "answers": "(B)"
+  },
+  {
+    "prediction": " (E)",
+    "gen_start_token": -1,
+    "example_id": "90_5",
+    "answers": "(E)"
+  },
+  {
+    "prediction": " (C)",
+    "gen_start_token": -1,
+    "example_id": "42_4",
+    "answers": "(B)"
+  },
+  {
+    "prediction": " (B)",
+    "gen_start_token": -1,
+    "example_id": "46_3",
+    "answers": "(A)"
+  },
+  {
+    "prediction": " (D)",
+    "gen_start_token": -1,
+    "example_id": "91_5",
+    "answers": "(D)"
+  },
+  {
+    "prediction": " (B)",
+    "gen_start_token": -1,
+    "example_id": "50_3",
+    "answers": "(B)"
+  },
+  {
+    "prediction": " (D)",
+    "gen_start_token": -1,
+    "example_id": "104_4",
+    "answers": "(D)"
+  },
+  {
+    "prediction": " (D)",
+    "gen_start_token": -1,
+    "example_id": "28_5",
+    "answers": "(D)"
+  },
+  {
+    "prediction": " (E)",
+    "gen_start_token": -1,
+    "example_id": "20_5",
+    "answers": "(B)"
+  },
+  {
+    "prediction": " (A)",
+    "gen_start_token": -1,
+    "example_id": "24_4",
+    "answers": "(D)"
+  },
+  {
+    "prediction": " (A)",
+    "gen_start_token": -1,
+    "example_id": "61_4",
+    "answers": "(D)"
+  },
+  {
+    "prediction": " (B)",
+    "gen_start_token": -1,
+    "example_id": "7_3",
+    "answers": "(B)"
+  },
+  {
+    "prediction": " (D)",
+    "gen_start_token": -1,
+    "example_id": "32_5",
+    "answers": "(A)"
+  },
+  {
+    "prediction": " (B)",
+    "gen_start_token": -1,
+    "example_id": "57_4",
+    "answers": "(B)"
+  },
+  {
+    "prediction": " (C)",
+    "gen_start_token": -1,
+    "example_id": "77_5",
+    "answers": "(D)"
+  },
+  {
+    "prediction": " (C)",
+    "gen_start_token": -1,
+    "example_id": "79_5",
+    "answers": "(B)"
+  },
+  {
+    "prediction": " (C)",
+    "gen_start_token": -1,
+    "example_id": "68_3",
+    "answers": "(C)"
+  },
+  {
+    "prediction": " (D)",
+    "gen_start_token": -1,
+    "example_id": "91_4",
+    "answers": "(D)"
+  },
+  {
+    "prediction": " (B)",
+    "gen_start_token": -1,
+    "example_id": "43_3",
+    "answers": "(B)"
+  },
+  {
+    "prediction": " (E)",
+    "gen_start_token": -1,
+    "example_id": "55_5",
+    "answers": "(E)"
+  },
+  {
+    "prediction": " (C)",
+    "gen_start_token": -1,
+    "example_id": "31_5",
+    "answers": "(A)"
+  },
+  {
+    "prediction": " (C)",
+    "gen_start_token": -1,
+    "example_id": "33_3",
+    "answers": "(C)"
+  },
+  {
+    "prediction": " (C)",
+    "gen_start_token": -1,
+    "example_id": "10_4",
+    "answers": "(D)"
+  },
+  {
+    "prediction": " (C)",
+    "gen_start_token": -1,
+    "example_id": "59_4",
+    "answers": "(C)"
+  },
+  {
+    "prediction": " (D)",
+    "gen_start_token": -1,
+    "example_id": "85_5",
+    "answers": "(D)"
+  },
+  {
+    "prediction": " (A)",
+    "gen_start_token": -1,
+    "example_id": "39_3",
+    "answers": "(B)"
+  },
+  {
+    "prediction": " (A)",
+    "gen_start_token": -1,
+    "example_id": "103_4",
+    "answers": "(C)"
+  },
+  {
+    "prediction": " (E)",
+    "gen_start_token": -1,
+    "example_id": "78_5",
+    "answers": "(C)"
+  },
+  {
+    "prediction": " (A)",
+    "gen_start_token": -1,
+    "example_id": "8_4",
+    "answers": "(B)"
+  },
+  {
+    "prediction": " (A)",
+    "gen_start_token": -1,
+    "example_id": "21_3",
+    "answers": "(C)"
+  },
+  {
+    "prediction": " (A)",
+    "gen_start_token": -1,
+    "example_id": "55_3",
+    "answers": "(A)"
+  },
+  {
+    "prediction": " (B)",
+    "gen_start_token": -1,
+    "example_id": "31_3",
+    "answers": "(C)"
+  },
+  {
+    "prediction": " (A)",
+    "gen_start_token": -1,
+    "example_id": "111_3",
+    "answers": "(B)"
+  },
+  {
+    "prediction": " (B)",
+    "gen_start_token": -1,
+    "example_id": "5_4",
+    "answers": "(A)"
+  },
+  {
+    "prediction": " (B)",
+    "gen_start_token": -1,
+    "example_id": "54_3",
+    "answers": "(B)"
+  },
+  {
+    "prediction": " (A)",
+    "gen_start_token": -1,
+    "example_id": "106_5",
+    "answers": "(A)"
+  },
+  {
+    "prediction": " (B)",
+    "gen_start_token": -1,
+    "example_id": "81_3",
+    "answers": "(C)"
+  }
+]

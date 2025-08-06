@@ -1,1 +1,17 @@
-torchrun --nproc-per-node 8 launch_scripts/eval_downstream.py /mmfs1/gscratch/krishna/mahtab/Umolmo/checkpoints/Aurora-molmo-7b-qwen2-siglip2-finetune-uber-cosine-bilinear/step3600-unsharded aurora --save_to_checkpoint_dir
+
+export MOLMO_DATA_DIR=/gscratch/krishna/mahtab/Umolmo/Data
+export HF_HOME=/gscratch/krishna/mahtab/Umolmo/huggingface
+export PYTHONPATH=/gscratch/krishna/mahtab/Umolmo:$PYTHONPATH
+torchrun --nproc-per-node 4 launch_scripts/eval_downstream.py /mmfs1/gscratch/krishna/mahtab/Umolmo/checkpoints/Aurora-molmo-7b-qwen2-siglip2-finetune-uber-cosine-bilinear/step6200-unsharded aurora --save_to_checkpoint_dir
+
+torchrun --nproc-per-node 4 launch_scripts/eval_downstream.py /mmfs1/gscratch/krishna/mahtab/Umolmo/pretrained/step30000-unsharded aurora --save_to_checkpoint_dir
+
+
+torchrun --nproc-per-node 4 launch_scripts/eval_downstream.py /mmfs1/gscratch/krishna/mahtab/Umolmo/checkpoints/ORG-Aurora-molmo-7b-qwen2-siglip2-finetune-uber-cosine-bilinear/step3300-unsharded aurora --save_to_checkpoint_dir
+
+
+torchrun --nproc-per-node 4 launch_scripts/eval_downstream.py /mmfs1/gscratch/krishna/mahtab/Umolmo/checkpoints/ORG-Aurora-molmo-7b-qwen2-siglip2-finetune-uber-cosine-bilinear/step6200-unsharded aurora --save_to_checkpoint_dir
+
+
+
+torchrun --nproc-per-node 4 launch_scripts/eval_downstream.py /mmfs1/gscratch/krishna/mahtab/Umolmo/checkpoints/lowLR-Aurora-molmo-7b-qwen2-siglip2-finetune-uber-cosine-bilinear/step1900-unsharded  aurora --save_to_checkpoint_dir
