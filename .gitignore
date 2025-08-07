@@ -1,4 +1,6 @@
 # build artifacts
+*.log
+_default/
 checkpoints/
 predictions/
 .eggs/
