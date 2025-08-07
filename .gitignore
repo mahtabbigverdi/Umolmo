@@ -1,5 +1,6 @@
 # build artifacts
-predictions
+checkpoints/
+predictions/
 .eggs/
 .mypy_cache
 *.egg-info/
