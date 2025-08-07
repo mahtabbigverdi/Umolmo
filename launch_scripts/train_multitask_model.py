@@ -15,7 +15,7 @@ from olmo.train.trainer_config import (
 from olmo.models.model import FSDPWrapStrategy
 from olmo.models.molmo.molmo import MolmoConfig
 from olmo.data.data_loader import DataLoaderConfig, RootSizeMixture
-from olmo.torch_util import get_world_size
+from olmo.torch_util import get_world_size, get_global_rank
 from olmo.util import clean_opt, prepare_torchrun_environment, select_checkpoint
 from scripts.train import run_trainer
 
@@ -93,7 +93,7 @@ if __name__ == "__main__":
     parser.add_argument("--seq_len", default=2304, type=int)
     parser.add_argument("--inf_seq_len", default=1792, type=int)
     parser.add_argument("--duration", default=30000, type=int)
-    parser.add_argument("--max_inf_examples", default=16, type=int)
+    parser.add_argument("--max_inf_examples", default=32, type=int)
     parser.add_argument("--global_batch_size", default=32, type=int)
     parser.add_argument("--device_eval_batch_size", default=4, type=int)
     parser.add_argument("--device_inf_batch_size", default=4, type=int)
@@ -103,6 +103,7 @@ if __name__ == "__main__":
     parser.add_argument("--turn_off_inference", action="store_true",
                         help="Turn off inference during training")
     parser.add_argument("--max_crops", default=None, type=int)
+    parser.add_argument("--save_folder", default=None, type=str)
     parser.add_argument("--image_pooling_h", default=None, type=int)
     parser.add_argument("--image_pooling_w", default=None, type=int)
     parser.add_argument("--max_images", default=None, type=int)
@@ -128,6 +129,9 @@ if __name__ == "__main__":
     elif args.mixture in ["aurora"]:
         eval_tasks = ["aurora"]
         tasks = [["aux", ["aurora"], 1.0]]
+    elif args.mixture in ["aurora_discrete"]:
+        eval_tasks = ["aurora_discrete"]
+        tasks = [["aux", ["aurora_discrete"], 1.0]]
     elif args.mixture in ["pointing"]:
         eval_tasks = ["pointing_eval:test"]
         tasks = [["pointing", [
@@ -256,13 +260,14 @@ if __name__ == "__main__":
         eval_subset_batches = 4
     
     else:
-        eval_examples = 16
-        max_inf_examples = 16
+        eval_examples = 32
+        max_inf_examples = 32
         ## was 2048 before for both max_inf_examples and eval_examples
         # max_inf_examples = args.max_inf_examples
 
         log_interval = 5
         global_batch_size = args.global_batch_size
+        ## evaluation at the end
         inf_eval_interval = args.duration
         eval_interval = args.duration
         duration =  args.duration
@@ -312,12 +317,13 @@ if __name__ == "__main__":
                 max_examples=max_inf_examples,
                 num_workers=num_workers,
                 include_image=args.include_image,
+                save_path = args.save_folder if not debug else None,
             )
             evaluation.data.persistent_workers = True
             evaluations.append(evaluation)
     cfg = TrainConfig(
         run_name="multitask_train",
-        save_folder="debug_run" if debug else omegaconf.MISSING,
+        save_folder="debug_run" if debug else args.save_folder,
         seed=6198,
         dry_run=False,
         wandb=None if debug else WandbConfig(
@@ -335,7 +341,7 @@ if __name__ == "__main__":
         data=DataLoaderConfig(
             root_size_mixture=root_size_mixture,
             #### shuffle for aurora training data is set to False
-            shuffle=False if args.mixture in ['debug', 'aurora'] else True, 
+            shuffle=False if args.mixture in ['debug', 'aurora', 'aurora_discrete'] else True, 
             split="train",
             drop_last=True,
             sequence_length=args.seq_len,
@@ -347,6 +353,8 @@ if __name__ == "__main__":
         ft_connector=True,
         ft_llm=True,
         ft_vit=True,
+        ft_embedding='all',
+        ft_gen=True,
         image_generation_loss_type = args.image_generation_loss_type,
         optimizer=OptimizerConfig(
             name=OptimizerType.adamw,
@@ -405,6 +413,7 @@ if __name__ == "__main__":
         save_final_unsharded_checkpoint=True,
         evaluators=[]
     )
+    
 
     conf = OmegaConf.create(cfg)
     conf.merge_with_dotlist([clean_opt(arg) for arg in other_args])

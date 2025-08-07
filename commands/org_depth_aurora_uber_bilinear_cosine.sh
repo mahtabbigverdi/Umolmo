@@ -55,5 +55,3 @@ torchrun \
   --duration=6200
   
 
-mkdir /gscratch/krishna/mahtab/Umolmo/predictions/${EXP_NAME}
-mv /gscratch/krishna/mahtab/Umolmo/_default /gscratch/krishna/mahtab/Umolmo/predictions/${EXP_NAME}

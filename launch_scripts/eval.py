@@ -66,7 +66,7 @@ def main():
         generative_evaluator=None if args.loss else EvaluatorConfig(
             n_to_log=10,
             num_wandb_examples=300,
-            save_predictions="_default",
+            save_predictions=f"{checkpoint}/predictions",
         ),
         save_data=SaveEvalDataConfig() if args.save_eval_data else None,
         label=args.task,

@@ -14,4 +14,7 @@ torchrun --nproc-per-node 4 launch_scripts/eval_downstream.py /mmfs1/gscratch/kr
 
 
 
-torchrun --nproc-per-node 4 launch_scripts/eval_downstream.py /mmfs1/gscratch/krishna/mahtab/Umolmo/checkpoints/lowLR-Aurora-molmo-7b-qwen2-siglip2-finetune-uber-cosine-bilinear/step1900-unsharded  aurora --save_to_checkpoint_dir
+torchrun --nproc-per-node 4 launch_scripts/eval_downstream.py /mmfs1/gscratch/krishna/mahtab/Umolmo/checkpoints/lowLR-Aurora-molmo-7b-qwen2-siglip2-finetune-uber-cosine-bilinear/step5300-unsharded  aurora --save_to_checkpoint_dir
+
+
+torchrun --nproc-per-node 8 launch_scripts/eval_downstream.py /mmfs1/gscratch/krishna/mahtab/Umolmo/checkpoints/3B-lowLR-Aurora-molmo-7b-qwen2-siglip2-finetune-uber-cosine-bilinear/step1700-unsharded  aurora --save_to_checkpoint_dir

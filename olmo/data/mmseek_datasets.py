@@ -23,17 +23,18 @@ else:
 
 
 class Aurora(DatasetBase):
-    def __init__(self, split):
+    def __init__(self, split, discrete=False):
         assert split in ["train", "validation", "test"]
+        self.discrete = discrete
         super().__init__(split)
-
+        
     def load(self):
         split = self.split
         if split == "validation":
             split = "val"
         examples = []
-        
-        src = f"{AURORA_SOURCE}/{split}/{split}.json"
+        source = AURORA_SOURCE if not self.discrete else AURORA_SOURCE + "_discrete"
+        src = f"{source}/{split}/{split}.json"
         logging.info(f"Loading aurora data from {src}")
         with open(cached_path(src, cache_dir=environ.get("MOLMO_CACHE_DIR"))) as f:
             data = json.load(f)

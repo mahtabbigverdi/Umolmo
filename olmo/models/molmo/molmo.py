@@ -151,7 +151,7 @@ class Molmo(ModelBase):
         self.special_ids = tokenizer.get_special_token_ids(self.config.build_tokenizer())
         
         #change
-        self.hidden_size = self.transformer.ff_out.in_features
+        self.hidden_size = self.transformer.wte.embedding.shape[1]
         self.input_embedding_size = self.transformer.wte.embedding.shape[1]
         
         ## vision encoder head is for transfrorming the image features to the input embedding size comatibale with the llm

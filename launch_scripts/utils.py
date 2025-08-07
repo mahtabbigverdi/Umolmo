@@ -69,7 +69,7 @@ VIDEO_DEBUG_MODEL = VideoOlmoConfig(
 )
 
 
-def get_evaluator(name) -> EvaluatorConfig:
+def get_evaluator(name, save_path=None) -> EvaluatorConfig:
     """Gets the default evaluator for task `name`"""
 
     if name in ["text_vqa", "okvqa", "coco_2014_vqa", "coco_2014_vqa_multi"]:
@@ -131,9 +131,9 @@ def get_evaluator(name) -> EvaluatorConfig:
     elif name == "muir_bench":
         return EvaluatorConfig(vqa_eval="muir_bench_mc")
     elif name == "depth":
-        return EvaluatorConfig()
-    elif name == "aurora":
-        return EvaluatorConfig()
+        return EvaluatorConfig(save_predictions=f"{save_path}/predictions")
+    elif name == "aurora" or name == "aurora_discrete":
+        return EvaluatorConfig(save_predictions=f"{save_path}/predictions")
     elif name in ["dense_caption_eval", "user_qa", "vqa_v2_test", "intern_vid"]:
         # No metrics, but still save prediction file
         return EvaluatorConfig()
@@ -173,7 +173,7 @@ def get_default_max_tokens(name):
 
 def get_evaluation(name, seq_len, max_examples, for_inference=True,
                    num_workers=2, device_batch_size=None,
-                   persistent_workers=False, include_image=False) -> InfDatasetEvaluatorConfig:
+                   persistent_workers=False, include_image=False, save_path=None) -> InfDatasetEvaluatorConfig:
     """Gets the default evaluation config for task (or task:split string) `name`"""
     if ":" in name:
         name, split = name.split(":")
@@ -209,7 +209,7 @@ def get_evaluation(name, seq_len, max_examples, for_inference=True,
     )
 
     if for_inference:
-        evaluator = get_evaluator(name)
+        evaluator = get_evaluator(name, save_path)
         evaluator.num_wandb_examples = 64
         evaluator.num_wandb_examples = 32
         evaluator.n_to_log = 0

@@ -124,7 +124,9 @@ class EvaluatorConfig(BaseConfig):
     def build(self, default_save_dir=None) -> InfEvaluator:
         evaluators = []
         save_predictions = self.save_predictions
-        
+        ## for debug cases
+        if save_predictions == None:
+            save_predictions = "_default"
         ## commented out for now 
         # if save_predictions == "_default":
         #     if default_save_dir is None:
