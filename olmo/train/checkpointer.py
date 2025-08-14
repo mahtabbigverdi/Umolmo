@@ -38,6 +38,28 @@ MODEL_FILENAME = "model.pt"
 OPT_FILENAME = "optim.pt"
 
 
+
+
+def backfill_missing_from_module(state_dict, module, module_prefix: str):
+    # Use the module's current (random) init for any missing params/buffers
+    for name, tensor in module.state_dict().items():
+        full_key = f"{module_prefix}.{name}" if name else module_prefix
+        if full_key not in state_dict:
+            t = torch.zeros(tensor.shape, dtype=torch.float32, device="cpu")
+            state_dict[full_key] =  t
+            print("%%%%%%%%%%", full_key)
+            # if get_global_rank() == 0:
+            #     import pdb; pdb.set_trace()
+
+def backfill_heads(state_dict, model, match=lambda n, m: n.endswith("coder_head")):
+    # match() lets you define what counts as a "head"
+    for name, submodule in model.named_modules():
+        if name and match(name, submodule):
+            # if get_global_rank() == 0:
+            #     import pdb; pdb.set_trace()
+            ## backfill missing heads, beacuse vision decoder and encoder heads are not in the pretrained molmo captioner and uber checkpoints
+            backfill_missing_from_module(state_dict, submodule, name)
+
 @torch.no_grad()
 def load_model_state_unsharded(dir: PathOrStr, model: nn.Module):
     """
@@ -47,12 +69,14 @@ def load_model_state_unsharded(dir: PathOrStr, model: nn.Module):
     if get_global_rank() == 0:
         state_dict = torch.load(resource_path(dir, MODEL_FILENAME),
                                 map_location="cpu", weights_only=True)
-        if hasattr(model, "vision_encoder_head") and "vision_encoder_head" not in state_dict:
-            # This is a workaround for the case where the model was saved without a vision encoder head
-            state_dict["vision_encoder_head.weight"] = torch.zeros((model.vision_encoder_head.weight.shape[0],model.vision_encoder_head.weight.shape[1]), dtype = torch.float32)
-        if hasattr(model, "vision_decoder_head") and "vision_decoder_head" not in state_dict:
-            # This is a workaround for the case where the model was saved without a vision decoder head
-            state_dict["vision_decoder_head.weight"] = torch.zeros((model.vision_decoder_head.weight.shape[0],model.vision_decoder_head.weight.shape[1]), dtype = torch.float32)
+        backfill_heads(state_dict, model)
+        # if hasattr(model, "vision_encoder_head") and "vision_encoder_head" not in state_dict:
+        #     # This is a workaround for the case where the model was saved without a vision encoder head
+        #     state_dict["vision_encoder_head.weight"] = torch.zeros((model.vision_encoder_head.weight.shape[0],model.vision_encoder_head.weight.shape[1]), dtype = torch.float32)
+        # if hasattr(model, "vision_decoder_head") and "vision_decoder_head" not in state_dict:
+        #     # This is a workaround for the case where the model was saved without a vision decoder head
+        #     state_dict["vision_decoder_head.weight"] = torch.zeros((model.vision_decoder_head.weight.shape[0],model.vision_decoder_head.weight.shape[1]), dtype = torch.float32)
+        # ## todo initailize
     else:
         state_dict = {}
     dist_cp_sd.set_model_state_dict(

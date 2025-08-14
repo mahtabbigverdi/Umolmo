@@ -109,6 +109,7 @@ if __name__ == "__main__":
     parser.add_argument("--max_images", default=None, type=int)
     parser.add_argument("--image_generation_loss_type", default='mse', type=str)
     parser.add_argument("--vision_head_type", default='Linear', type=str)
+    parser.add_argument("--image_encoder", default='SigLip2', type=str)
     parser.add_argument("--per_image_output_tokens", default=64, type=int)
     
     args, other_args = parser.parse_known_args()
@@ -299,7 +300,7 @@ if __name__ == "__main__":
     
     model_cfg.vision_head_type = args.vision_head_type
     model_cfg.per_image_output_tokens = args.per_image_output_tokens
-    
+    model_cfg.image_encoder = args.image_encoder
 
     root_size_mixture: List[RootSizeMixture] = []
     for name, submixture, rate in tasks:

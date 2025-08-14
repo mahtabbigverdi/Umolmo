@@ -54,7 +54,8 @@ torchrun \
   --image_generation_loss_type="cosine" \
   --duration=6200 \
   --per_image_output_tokens=64 \
-  --vision_head_type="Linear"
+  --vision_head_type="Linear" \
+  --image_encoder="SigLip2"
 
 
   

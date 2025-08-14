@@ -152,29 +152,32 @@ class Molmo(ModelBase):
         
         #change
         self.hidden_size = self.transformer.wte.embedding.shape[1]
-        self.input_embedding_size = self.transformer.wte.embedding.shape[1]
         
         ## vision encoder head is for transfrorming the image features to the input embedding size comatibale with the llm
-        self.vision_encoder_head = torch.nn.Linear(EMBEDDING_DICT[self.config.image_encoder], self.input_embedding_size, bias=False)
-        ## initialize the vision encoder head
-        self.vision_encoder_head.weight.data.normal_(mean=0.0, std=self.input_embedding_size ** -0.5)
-        
-        
-        ## Vision decoder head is for transforming the llm hidden size to the image feature size
         if self.config.vision_head_type == "Linear":
-            self.vision_decoder_head = torch.nn.Linear(self.hidden_size, EMBEDDING_DICT[self.config.image_encoder], bias=False)
-            ## initialize the vision decoder head
-            self.vision_decoder_head.weight.data.normal_(mean=0.0, std=self.hidden_size ** -0.5)
-            
+            self.vision_encoder_head = torch.nn.Linear(EMBEDDING_DICT[self.config.image_encoder], self.hidden_size, bias=False)
         elif self.config.vision_head_type == "MLP":
-            self.vision_decoder_head = torch.nn.Sequential(
-                torch.nn.Linear(self.hidden_size, self.hidden_size, bias=False),
+            self.vision_encoder_head = torch.nn.Sequential(
+                torch.nn.Linear(EMBEDDING_DICT[self.config.image_encoder], self.hidden_size),
                 torch.nn.GELU(),
-                torch.nn.Linear(self.hidden_size, EMBEDDING_DICT[self.config.image_encoder], bias=False),
+                torch.nn.Linear(self.hidden_size, self.hidden_size),
             )
         else:
             raise NotImplementedError("This method is not implemented yet.")
-            ## TODO
+        
+         ## todo initailize
+        ## Vision decoder head is for transforming the llm hidden size to the image feature size
+        if self.config.vision_head_type == "Linear":
+            self.vision_decoder_head = torch.nn.Linear(self.hidden_size, EMBEDDING_DICT[self.config.image_encoder], bias=False)
+            
+        elif self.config.vision_head_type == "MLP":
+            self.vision_decoder_head = torch.nn.Sequential(
+                torch.nn.Linear(self.hidden_size, self.hidden_size),
+                torch.nn.GELU(),
+                torch.nn.Linear(self.hidden_size, EMBEDDING_DICT[self.config.image_encoder]),
+            )
+        else:
+            raise NotImplementedError("This method is not implemented yet.")
       
         if self.config.bi_directional_attn:
             self.__cache["image_tokens"] = torch.as_tensor([self.special_ids[x] for x in [
@@ -459,7 +462,7 @@ class Molmo(ModelBase):
                 image_output_features = torch.cat([image_outputs[i, :(input_ids[i]== self._image_output_token_id).sum()] for i in range(len(image_outputs))], dim=0)
             else:
                 ### we do this to keep vision_encoder_head in computation graph even when there is no image output tokens
-                feature_dim = self.vision_encoder_head.in_features
+                feature_dim = EMBEDDING_DICT[self.config.image_encoder]
                 image_output_features = x.new_zeros((0, feature_dim))    
             
             is_output_image_patch = input_ids.view(-1) == self._image_output_token_id
