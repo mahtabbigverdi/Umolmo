@@ -25,7 +25,7 @@ export NCCL_TIMEOUT=36000000000
 # export RDZV_ID=$(date +%s%N)
 
 # Define experiment name
-export EXP_NAME="MLP-3B-lowLR-Aurora-molmp-qwen2-siglip2-finetune-uber-cosine-bilinear"
+export EXP_NAME="MLP2-3B-lowLR-Aurora-molmp-qwen2-siglip2-finetune-uber-cosine-bilinear"
 
 # Check NVIDIA status
 nvidia-smi

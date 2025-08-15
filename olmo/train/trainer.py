@@ -1239,3 +1239,4 @@ class Trainer:
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         del exc_val, exc_tb
         self.close(0 if exc_type is None else 1)
+    
