@@ -456,7 +456,10 @@ class Molmo(ModelBase):
         #     import pdb; pdb.set_trace()
         ## if there is at least one example with image_outputs
         if is_training:
-            if self._image_output_token_id in input_ids :
+            # if self._image_output_token_id in input_ids :
+            has_img_out = (input_ids == self._image_output_token_id).any()
+            if has_img_out:
+            
                 ## image_outputs is padded but we only need embeddings for the valid image outputs, so we select embeddings from the start
                 ## input_ids[i]== self._image_output_token_id).sum() means how many image output tokens are there in the input_ids[i]
                 image_output_features = torch.cat([image_outputs[i, :(input_ids[i]== self._image_output_token_id).sum()] for i in range(len(image_outputs))], dim=0)
@@ -469,8 +472,11 @@ class Molmo(ModelBase):
             assert is_output_image_patch.sum() == len(image_output_features)
             ## pass the visual embeddings through the vision encoder head to make them compatible with the llm input embeddings
             ## I dont want to use autocast here because the image features are already in float32
-            with torch.amp.autocast("cuda", enabled=False):
-                image_output_features = self.vision_encoder_head(image_output_features)           
+            # if get_global_rank() == 0:
+            #     import pdb; pdb.set_trace()
+            # with torch.amp.autocast("cuda", enabled=False):
+            image_output_features = self.vision_encoder_head(image_output_features) 
+            image_output_features = image_output_features.to(dtype=x.dtype)         
             x.view(-1, x.shape[-1])[is_output_image_patch] = image_output_features
 
         if not self.config.llm.rope:
