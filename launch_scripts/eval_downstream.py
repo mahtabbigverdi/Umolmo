@@ -120,7 +120,7 @@ def main():
                 base_config.evaluator,
                 n_to_log=4,
                 num_wandb_examples=300,
-                save_predictions="_default",
+                save_predictions=f"{args.checkpoint}/predictions",
             ),
             device_batch_size=args.device_batch_size,
             subset_num_batches=None,

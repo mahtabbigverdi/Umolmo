@@ -62,6 +62,37 @@ def backfill_heads(state_dict, model, match=lambda n, m: n.endswith("coder_head"
             backfill_missing_from_module(state_dict, submodule, name, weight_dtype)
 
 
+
+
+def backfill_missing_from_module(state_dict, module, module_prefix: str):
+    # Use the module's current (random) init for any missing params/buffers
+ 
+    for name, tensor in module.state_dict().items():
+        full_key = f"{module_prefix}.{name}" if name else module_prefix
+        ## Here I assume that layers are norms
+        if full_key not in state_dict:
+            if "weight" in name:
+                # Initialize weights with normal distribution
+                t = torch.normal(mean=0.0, std=0.02, size=tensor.shape, dtype=torch.float32, device="cpu")
+            elif "bias" in name:
+                # Initialize bias with zeros (common practice)
+                t = torch.zeros(tensor.shape, dtype=torch.float32, device="cpu")
+            else:
+                raise NotImplementedError("This initilazation is not implemented yet")   
+            # t = torch.zeros(tensor.shape, dtype=torch.float32, device="cpu")
+            state_dict[full_key] =  t
+            print("%%%%%%%%%%", full_key, module_prefix)
+            
+
+def backfill_heads(state_dict, model, match=lambda n, m: n.endswith("coder_head")):
+    # match() lets you define what counts as a "head"
+    for name, submodule in model.named_modules():
+        if name and match(name, submodule):
+            # if get_global_rank() == 0:
+            #     import pdb; pdb.set_trace()
+            ## backfill missing heads, beacuse vision decoder and encoder heads are not in the pretrained molmo captioner and uber checkpoints
+            backfill_missing_from_module(state_dict, submodule, name)
+
 @torch.no_grad()
 def load_model_state_unsharded(dir: PathOrStr, model: nn.Module):
     """

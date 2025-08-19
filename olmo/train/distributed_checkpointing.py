@@ -260,10 +260,15 @@ def load_model_and_optim_state(
 
     model_key_list = list(state_dict['model'].keys())
     skipped_key_list = []
+    heads_key_list =[]
     for model_key in model_key_list:
         if f"model.{model_key}" not in metadata.state_dict_metadata:
-            state_dict['model'].pop(model_key)
-            skipped_key_list.append(model_key)
+            if "coder_head" in model_key:
+                heads_key_list.append(model_key)
+                state_dict["model"].pop(model_key) 
+            else:
+                state_dict['model'].pop(model_key)
+                skipped_key_list.append(model_key)
    
     ## todo remove
     # missing_optimizer_keys = []
@@ -356,10 +361,14 @@ def load_model_and_optim_state(
                     idx = group["params"].index(original_key)
                     group["params"][idx] = current_key
                     break
-
-    dist_cp_sd.set_model_state_dict(
-        model, state_dict["model"], options=dist_cp_sd.StateDictOptions(strict=True)
-    )
+    if len(heads_key_list) > 0:
+        dist_cp_sd.set_model_state_dict(
+            model, state_dict["model"], options=dist_cp_sd.StateDictOptions(strict=False)
+        )
+    else:
+        dist_cp_sd.set_model_state_dict(
+            model, state_dict["model"], options=dist_cp_sd.StateDictOptions(strict=True)
+        )
     gc_cuda()
 
     if optim is not None:

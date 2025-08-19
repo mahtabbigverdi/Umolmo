@@ -25,7 +25,7 @@ export NCCL_TIMEOUT=36000000000
 # export RDZV_ID=$(date +%s%N)
 
 # Define experiment name
-export EXP_NAME="ORG-Aurora-molmo-7b-qwen2-siglip2-finetune-uber-cosine-bilinear"
+export EXP_NAME="lowLR2-ORG-Aurora-molmo-7b-qwen2-siglip2-finetune-uber-cosine-bilinear"
 
 # Check NVIDIA status
 nvidia-smi
@@ -44,7 +44,7 @@ torchrun \
   --nnodes=1 \
   --nproc-per-node=4 \
   launch_scripts/train_multitask_model.py \
-  aurora \
+  aurora_discrete \
   /mmfs1/gscratch/krishna/mahtab/Umolmo/pretrained/step30000-unsharded \
   --wandb.name="${EXP_NAME}" \
   --wandb.entity=allenai-team1 \
@@ -52,8 +52,11 @@ torchrun \
   --save_folder=/mmfs1/gscratch/krishna/mahtab/Umolmo/checkpoints/${EXP_NAME} \
   --save_overwrite \
   --image_generation_loss_type="cosine" \
-  --duration=6200
+  --duration=6200 \
+  --per_image_output_tokens=64 \
+  --vision_head_type="Linear" \
+  --image_encoder="SigLip2"
+
+
   
 
-mkdir /gscratch/krishna/mahtab/Umolmo/predictions/${EXP_NAME}
-mv /gscratch/krishna/mahtab/Umolmo/_default /gscratch/krishna/mahtab/Umolmo/predictions/${EXP_NAME}
