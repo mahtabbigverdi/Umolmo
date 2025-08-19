@@ -37,6 +37,7 @@ from torch.futures import Future
 from olmo.exceptions import OLMoCheckpointError
 from olmo.io import (
     file_exists,
+    file_open,
     get_bytes_range,
     init_client,
     is_url,
@@ -46,7 +47,7 @@ from olmo.io import (
     upload, PathOrStr,
 )
 from olmo.util import generate_uuid, get_default_thread_count
-from olmo.torch_util import get_element_size, get_world_size, get_local_world_size, barrier
+from olmo.torch_util import get_element_size, get_world_size, get_local_world_size, barrier, patch_torch_load_context
 
 log = logging.getLogger(__name__)
 
@@ -143,8 +144,14 @@ def _write_items(
     tmp_path = Path(
         tempfile.mktemp(suffix=".distcp", dir=None if is_url(path) else Path(path).parent)
     )
+
+    import os
+    OLMO_TURNON_TMP_FILE = os.environ.get("OLMO_TURNON_TMP_FILE", "1")
+    if OLMO_TURNON_TMP_FILE == "0":
+        tmp_path = Path(path)
+
     try:
-        with tmp_path.open("wb") as tmp_file:
+        with file_open(tmp_path, "wb") as tmp_file:
             for write_item in items:
                 offset = tmp_file.tell()
                 data = planner.resolve_data(write_item)
@@ -152,7 +159,7 @@ def _write_items(
                     data = data.cpu()
                     if data.storage().size() != data.numel():
                         data = data.clone()
-                    torch.save(data, tmp_file)
+                        torch.save(data, tmp_file)
                 else:
                     tmp_file.write(data.getbuffer())
 
@@ -168,9 +175,14 @@ def _write_items(
         if is_url(path):
             upload(tmp_path, path, save_overwrite=True)
         else:
-            tmp_path.rename(path)
+            if OLMO_TURNON_TMP_FILE == "1":
+                # If the tmp_path is different from the final path, we need to rename it
+                # to avoid overwriting the original file.
+                tmp_path.rename(path)
     finally:
-        tmp_path.unlink(missing_ok=True)
+        if OLMO_TURNON_TMP_FILE == "1":
+            tmp_path.unlink(missing_ok=True)
+    log.info(f"Wrote {len(results)} items to {path} with storage key '{storage_key}'")
 
     return results
 
@@ -300,16 +312,22 @@ class RemoteFileSystemWriter(dist_cp.StorageWriter):
                 dir=None if is_url(self.metadata_path) else Path(self.metadata_path).parent,
             )
         )
+        import os
+        OLMO_TURNON_TMP_FILE = os.environ.get("OLMO_TURNON_TMP_FILE", "1")
+        if OLMO_TURNON_TMP_FILE == "0":
+            tmp_path = Path(self.metadata_path)
         try:
-            with tmp_path.open("wb") as tmp_file:
+            with file_open(tmp_path, "wb") as tmp_file:
                 pickle.dump(metadata, tmp_file)
 
             if is_url(self.metadata_path):
                 upload(tmp_path, self.metadata_path, save_overwrite=True)
             else:
-                tmp_path.rename(self.metadata_path)
+                if OLMO_TURNON_TMP_FILE == "1":
+                    tmp_path.rename(self.metadata_path)
         finally:
-            tmp_path.unlink(missing_ok=True)
+            if OLMO_TURNON_TMP_FILE == "1":
+                tmp_path.unlink(missing_ok=True)
 
     def storage_meta(self) -> Optional[StorageMeta]:
         return StorageMeta(checkpoint_id=self.checkpoint_id, save_id=self.save_id)
@@ -361,6 +379,7 @@ class RemoteFileSystemReader(dist_cp.StorageReader):
             full_path = str(resource_path(self.path, relative_path, local_cache=self.work_dir))
         else:
             full_path = f"{self.path}/{relative_path}"
+        log.info(f"Reading bytes from {full_path} at offset {offset} with length {length}")
         return get_bytes_range(full_path, offset, length)
 
     def _get_content_for_read(self, read_item: ReadItem) -> Tuple[ReadItem, bytes]:
@@ -403,9 +422,12 @@ class RemoteFileSystemReader(dist_cp.StorageReader):
                 planner.load_bytes(read_item, bytes)
             else:
                 # NOTE: 'weights_only=False' needed to load torchao's float8 linear layer checkpoints
-                tensor = cast(
-                    torch.Tensor, torch.load(bytes, map_location="cpu", weights_only=False)
-                )
+                try:
+                    tensor = cast(
+                        torch.Tensor, torch.load(bytes, map_location="cpu", weights_only=False)
+                    )
+                except EOFError as e:
+                    raise OLMoCheckpointError(f"Failed to load tensor for {read_item.storage_index}: corrupted or incomplete data. Original error: {e}")
                 tensor = _narrow_tensor_by_index(
                     tensor, read_item.storage_offsets, read_item.lengths
                 )
@@ -424,7 +446,8 @@ class RemoteFileSystemReader(dist_cp.StorageReader):
     def read_metadata(self) -> Metadata:
         if self._metadata is None:
             try:
-                with resource_path(self.path, ".metadata", local_cache=self.work_dir).open(
+                log.info(f"Loading metadata from {resource_path(self.path, '.metadata', local_cache=self.work_dir)}, work_dir={self.work_dir}")
+                with file_open(resource_path(self.path, ".metadata", local_cache=self.work_dir),
                     "rb"
                 ) as metadata_file:
                     metadata = pickle.load(metadata_file)

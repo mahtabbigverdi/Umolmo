@@ -588,15 +588,20 @@ class Trainer:
     ) -> Tuple:
         # shape: (batch_size, seq_len, vocab_size)
         
+        log.debug(f"Entering model_forward")
         loss_masks = batch["loss_masks"]
         labels = batch["labels"]
         ## originally it was 'response_mask = (loss_masks > 0)' for image output tokens that we dont want to compute ce loss we use -2
         response_mask = (loss_masks > 0) + (loss_masks == -2)
         
+        log.debug(f"model_forward 0")
+        
         with torch.autocast("cuda", dtype=self.cfg.autocast_precision):
             model_out = self.fsdp_model(
                 **{k: v for k, v in batch.items() if k not in ["labels", "loss_masks"]},
                 response_mask=response_mask)
+        
+        log.debug(f"model_forward 1")
         
         logits = model_out.logits
         loss_masks = loss_masks * (loss_masks > 0)
@@ -609,9 +614,13 @@ class Trainer:
             compute_z_loss=compute_z_loss, z_loss_scale=self.cfg.softmax_auxiliary_loss_scale,
         )
         
+        log.debug(f"model_forward 2")
+        
         
         ce_loss = (ce_loss*loss_masks.view(ce_loss.shape)).sum()
         z_loss = (z_loss*loss_masks.view(z_loss.shape)).sum()
+        
+        log.debug(f"model_forward 3")
         
     
 
@@ -629,7 +638,11 @@ class Trainer:
                 image_gen_loss = image_gen_loss.mean(-1)
             
             elif self.cfg.image_generation_loss_type == "cosine":
-                image_gen_loss = torch.nn.functional.cosine_similarity(image_gen_labels, image_output_features, dim =-1)
+                # assert torch.isfinite(image_gen_labels).all(), "NaN/Inf in labels"
+                # assert torch.isfinite(image_output_features).all(), "NaN/Inf in outputs"
+
+                image_gen_loss = torch.nn.functional.cosine_similarity(image_gen_labels, image_output_features, dim =-1, eps=1e-6) # avoid numerical issues
+                log.warning(f"Cosine similarity loss: {image_gen_loss.sum().item()}")
                 image_gen_loss = 1 - image_gen_loss
             
             else:
@@ -639,10 +652,19 @@ class Trainer:
         else:
             ## doing this instead of just image_gen_loss = 0 to avoid issues with FSDP and batches without any generation samples
             image_gen_loss = model_out.image_output_features.sum() * 0.0
+        
+        log.debug(f"model_forward 4")
+        # check if isnan
+        if torch.isnan(logits).any():
+            ce_loss = ce_loss * 0.0
+            z_loss = z_loss * 0.0
+            image_gen_loss = image_gen_loss * 0.0
+            log.warning(f"NaN detected in model outputs, making everything to 0")
 
         return ce_loss, z_loss, image_gen_loss, model_out
 
     def train_batch(self, batch: Dict[str, Any], compute_metrics) -> Tuple[torch.Tensor, Optional[Dict]]:
+        log.info(f"Entering train_batch with batch size {len(batch['input_ids'])} and {batch['input_ids'].numel()} tokens")
         # Split into micro-batches.
         micro_batches = self.split_batch(batch)
         ## the value for output image genration tokens in loss_masks is -2, so it is not calculated in the cross entropy loss
@@ -665,9 +687,15 @@ class Trainer:
         total_loss = torch.tensor(0.0, device=self.device)
         
         for micro_batch in micro_batches:
+            log.info(f"Entering loop for micro batch size {len(micro_batch['input_ids'])} and {micro_batch['input_ids'].numel()} tokens")
             
             ce_loss, z_loss, image_gen_loss, model_out = self.model_forward(
                 micro_batch, compute_z_loss=self.cfg.softmax_auxiliary_loss)
+            # assert when any of the losses is NaN
+            if torch.isnan(ce_loss).any() or torch.isnan(z_loss).any() or torch.isnan(image_gen_loss).any():
+                log.warning(f"NaN loss detected: ce_loss={ce_loss}, z_loss={z_loss}, image_gen_loss={image_gen_loss}")
+                continue
+
             if compute_metrics:
                 self._train_metrics.update(micro_batch, model_out, ce_loss, z_loss, image_gen_loss)
             # In case this helps with memory utilization.
@@ -699,13 +727,15 @@ class Trainer:
             del model_out
 
             # Run backward pass.
-
+        
             loss.backward()
             
             total_loss += loss.detach()
         return total_loss
 
     def train_step(self, batch: Dict[str, Any], compute_metrics: bool = True) -> Dict[str, float]:
+
+        log.debug(f"Entering train_step")
         metrics: Dict[str, float] = {}
 
         # Zero-gradients.
@@ -718,6 +748,7 @@ class Trainer:
         if compute_metrics:
             self._train_metrics.reset()
         loss = self.train_batch(batch, True)
+        log.debug(f"Loss after train_batch: {loss.item()}")
         if compute_metrics:
             metrics = {f"train/{k}": v for k, v in self._train_metrics.compute().items()}
         else:
@@ -770,6 +801,7 @@ class Trainer:
 
         # Optimizer step.
         self.optim.step()
+        log.debug(f"Optimizer step done, current step: {self.global_step}")
       
         # Collect metrics and check for NaN loss.
         # NOTE: this involves a bunch of host-device syncs so we wait until the last moment to do this.
@@ -803,11 +835,13 @@ class Trainer:
             ]
 
     def system_metrics(self) -> Dict[str, float]:
+        log.debug("Collecting system metrics...")
         metrics = {}
         if self.global_step < 3 or self.global_step % 10 == 0:
             peak_gpu_mb = peak_gpu_memory()
             if peak_gpu_mb is not None:
                 metrics["System/Peak GPU Memory (MB)"] = peak_gpu_mb
+        log.info(f"Peak GPU memory: {metrics.get('System/Peak GPU Memory (MB)', 'N/A')} MB")
         return metrics
 
     def log_metrics_to_console(self, prefix: str, metrics: Dict[str, float]):
@@ -947,6 +981,7 @@ class Trainer:
         return run_canceled, extra_steps
 
     def fit(self):
+        log.debug(f"Starting training with {get_world_size()} processes on device {self.device}...")
         if self.cfg.stop_after is not None:
             if self.cfg.stop_at is None:
                 self.cfg.stop_at = self.global_step + self.cfg.stop_after
@@ -958,20 +993,25 @@ class Trainer:
 
         # Disable automatic garbage collection, FSDP doesn't work well with it.
         if self.cfg.gen1_gc_interval is not None:
+            log.debug(f"Disabling garbage collection, will run it every {self.cfg.gen1_gc_interval} steps")
             gc.disable()
 
         if self.cfg.load_path is not None and self.global_step > 0 and self.cfg.eval_on_load:
+            log.debug(f"Evaluating model after loading from {self.cfg.load_path}...")
             eval_metrics = self.loss_eval()
             if wandb.run is not None:
                 wandb.log(eval_metrics, step=self.global_step)
+        
 
         # Set model to 'train' mode.
         self.fsdp_model.train()
+        log.debug(f"Training model in {self.cfg.autocast_precision} precision")
 
         # Initialize monitors.
         speed_monitor = SpeedMonitor(self.cfg.speed_monitor)
         lr_monitor = LRMonitor(self.optim)
         batch_monitor = BatchStatsMonitor()
+        log.debug("Initialized monitors: SpeedMonitor, LRMonitor, BatchStatsMonitor")
 
         # Log system metrics at the start of training.
         sys_metrics = self.system_metrics()
@@ -988,6 +1028,7 @@ class Trainer:
 
         # PyTorch Profiler stuff
         if self.cfg.torch_profiling and get_global_rank() == 0:
+            log.debug("Enabling PyTorch Profiler")
             from torch.profiler import schedule
 
             profiling_schedule = schedule(wait=1, warmup=5, active=3, repeat=1)
@@ -1026,9 +1067,12 @@ class Trainer:
         cancel_initiated: bool = False
         stop_at: Optional[int] = self.cfg.stop_at
         save_checkpoints: bool = True
+
+        log.debug(f"Starting training loop for {self.max_epochs} epochs, {self.max_steps} steps ")
         with torch_profiler as p:
             for epoch in range(self.epoch or 0, self.max_epochs):
                 for batch in self.train_loader:
+                    log.debug(f"Got a batch of size {len(batch['input_ids'])} and {batch['input_ids'].numel()} tokens")
                     # Bookkeeping.
                     batch_size, seq_len = batch["input_ids"].shape
                     global_batch_size = batch_size * get_world_size()  # assumes batch size equal across ranks
@@ -1051,7 +1095,6 @@ class Trainer:
                     should_log_this_step = self.should_log_this_step()
 
                     # Run train step on batch.
-                    
                     metrics = self.train_step(batch, compute_metrics=should_log_this_step)
                     
                     

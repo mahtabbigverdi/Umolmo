@@ -132,7 +132,7 @@ def get_evaluator(name) -> EvaluatorConfig:
         return EvaluatorConfig(vqa_eval="muir_bench_mc")
     elif name == "depth":
         return EvaluatorConfig()
-    elif name == "aurora":
+    elif name == "aurora" or name == "aurora_small":
         return EvaluatorConfig()
     elif name in ["dense_caption_eval", "user_qa", "vqa_v2_test", "intern_vid"]:
         # No metrics, but still save prediction file
@@ -173,7 +173,8 @@ def get_default_max_tokens(name):
 
 def get_evaluation(name, seq_len, max_examples, for_inference=True,
                    num_workers=2, device_batch_size=None,
-                   persistent_workers=False, include_image=False) -> InfDatasetEvaluatorConfig:
+                   persistent_workers=False, include_image=False,
+                   save_prediction_dir="_default") -> InfDatasetEvaluatorConfig:
     """Gets the default evaluation config for task (or task:split string) `name`"""
     if ":" in name:
         name, split = name.split(":")
@@ -213,7 +214,7 @@ def get_evaluation(name, seq_len, max_examples, for_inference=True,
         evaluator.num_wandb_examples = 64
         evaluator.num_wandb_examples = 32
         evaluator.n_to_log = 0
-        # evaluator.save_predictions = None
+        evaluator.save_predictions = save_prediction_dir
 
         max_new_tokens = get_default_max_tokens(name)
 

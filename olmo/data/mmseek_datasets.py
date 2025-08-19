@@ -1,54 +1,51 @@
-import json
 import logging
 from os import environ
-from os.path import exists
 from os.path import join
-import numpy as np
-import copy
-import pandas as pd
-import io
-from PIL import Image
-from collections import defaultdict
-from cached_path import cached_path
 
-from olmo.data.dataset import DATA_HOME, DatasetBase, Dataset
-from olmo.io import read_file, write_json, file_exists
-
-if DATA_HOME is not None:
-    DEPTH_SOURCE = join(DATA_HOME, "depth")
-    AURORA_SOURCE = join(DATA_HOME, "aurora")
-else:
-    DEPTH_SOURCE = None
-    AURORA_SOURCE = None
+from olmo.data.dataset import DATA_HOME, DatasetBase
+from olmo.io import read_json, get_cached_path, prepare_cached_data_to_local
 
 
 class Aurora(DatasetBase):
-    def __init__(self, split):
+    def __init__(self, split, name="aurora", include_image_outputs=True):
         assert split in ["train", "validation", "test"]
+        self.dataset_name = name
+        if split == "validation":
+            split = "val"
+        # if name == "aurora_small" and split == "train":
+        #     split = "val"
+        self.dataset_dir = join(DATA_HOME, self.dataset_name, split)
+        self.include_image_outputs = include_image_outputs
+        prepare_cached_data_to_local(self.dataset_dir)
         super().__init__(split)
+		
 
     def load(self):
         split = self.split
-        if split == "validation":
-            split = "val"
         examples = []
         
-        src = f"{AURORA_SOURCE}/{split}/{split}.json"
-        logging.info(f"Loading aurora data from {src}")
-        with open(cached_path(src, cache_dir=environ.get("MOLMO_CACHE_DIR"))) as f:
-            data = json.load(f)
+        src = f"{self.dataset_dir}/{split}.json"
+        logging.info(f"Loading {self.dataset_name} data from {src}")
+        all_images = set()
+        src_load_path = get_cached_path(src, cache_dir=environ.get("MOLMO_CACHE_DIR"))
+        data = read_json(src_load_path)
         for ex_id, ex in enumerate(data):
-            ex = dict(
+            ex_new = dict(
                 image= ex.pop("imgname"),
                 question=ex["query"],
                 answers=ex["label"],
-                image_outputs = ex['image_output_paths'],
                 metadata=dict(
                     example_id=ex['id']
                 )
             )
-            examples.append(ex)
+            if self.include_image_outputs:
+                ex_new['image_outputs'] = ex['image_output_paths']
+            all_images.add(ex_new["image"])
+            all_images.update(ex_new['image_outputs'])
+            examples.append(ex_new)
+        prepare_cached_data_to_local(list(all_images))
         
+        logging.info(f"Cached {len(all_images)} unique images in {self.dataset_name} {split} split.")
         return examples
 
     def get(self, item, rng):
@@ -56,37 +53,10 @@ class Aurora(DatasetBase):
         return ex
 
 
-
-
-
-class Depth(DatasetBase):
-    def __init__(self, split):
+class Depth(Aurora):
+    def __init__(self, split, dataset_name="depth"):
         assert split in ["train", "validation", "test"]
-        super().__init__(split)
-
-    def load(self):
-        split = self.split
-        if split == "validation":
-            split = "val"
-        examples = []
-        
-        src = f"{DEPTH_SOURCE}/{split}/{split}.json"
-        logging.info(f"Loading depth data from {src}")
-        with open(cached_path(src, cache_dir=environ.get("MOLMO_CACHE_DIR"))) as f:
-            data = json.load(f)
-        for ex_id, ex in enumerate(data):
-            ex = dict(
-                image= ex.pop("imgname"),
-                question=ex["query"],
-                answers=ex["label"],
-                image_outputs = ex['image_output_paths'],
-                metadata=dict(
-                    example_id=ex['id']
-                )
-            )
-            examples.append(ex)
-        
-        return examples
+        super().__init__(split, dataset_name=dataset_name)
 
     def get(self, item, rng):
         ex = dict(self.data[item], style="depth")

@@ -1,10 +1,6 @@
 #!/bin/bash
 
-# Set environment variables manually
-export MOLMO_DATA_DIR=/gscratch/krishna/mahtab/Umolmo/Data
-export HF_HOME=/gscratch/krishna/mahtab/Umolmo/huggingface
-export PYTHONPATH=/gscratch/krishna/mahtab/Umolmo:$PYTHONPATH
-export NCCL_TIMEOUT_MINUTES=90
+source .env
 # export HF_DATASETS_OFFLINE=1
 # export OLMO_SHARED_FS=1
 # export OMP_NUM_THREADS=8
@@ -12,11 +8,6 @@ export NCCL_TIMEOUT_MINUTES=90
 # export TORCH_LOGS_RANK0="recompiles,graph_breaks"
 # export OLMO_NUM_THREADS_ENV_VAR=8
 # export NCCL_IB_HCA="^=mlx5_bond_0"
-export NCCL_DEBUG=INFO
-export ALLENACT_DEBUG_VST_TIMEOUT=5000
-export ALLENACT_DEBUG=true
-export NCCL_SOCKET_IFNAME=lo
-export NCCL_TIMEOUT=36000000000
 
 # # Define distributed parameters
 # export RANK=${RANK:-0}
@@ -24,36 +15,53 @@ export NCCL_TIMEOUT=36000000000
 # export PORT=${PORT:-29401}
 # export RDZV_ID=$(date +%s%N)
 
+# get date
+export DATE=$(date +%Y-%m-%d_%H-%M-%S)
+
 # Define experiment name
-export EXP_NAME="Aurora-molmo-7b-qwen2-siglip2-finetune-uber-cosine-bilinear-test"
+export EXP_NAME="lowLR-Aurora-molmo-7b-qwen2-siglip2-finetune-uber-cosine-bilinear-test" 
+# add date to experiment name
+EXP_NAME="${DATE}-${EXP_NAME}"
 
 # Check NVIDIA status
 nvidia-smi
-rm -rf /gscratch/krishna/mahtab/Umolmo/checkpoints/${EXP_NAME}
-rm -rf /gscratch/krishna/mahtab/Umolmo/debug_run
-rm -rf /gscratch/krishna/mahtab/Umolmo/debug.log
-rm -rf /gscratch/krishna/mahtab/Umolmo/_default
 # Run training
-HF_ACCESS_TOKEN=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 \
-WANDB_API_KEY=42e8013627067866a191055811b0107b24891809 \
 
+# check if the checkpoints directory for the experiment exists, if yes then delete it
+if [ -d "${OUTPUT_DIR}/${EXP_NAME}" ]; then
+  echo "Removing existing checkpoints directory: ${OUTPUT_DIR}/${EXP_NAME}"
+  rm -rf ${OUTPUT_DIR}/${EXP_NAME}
+else
+  echo "No existing checkpoints directory found for ${EXP_NAME}."
+fi
 
-
-torchrun \
-  --master_port=23501 \
+AZFUSE_USE_FUSE=1 CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun \
+  --master_port=23502 \
   --nnodes=1 \
   --nproc-per-node=4 \
   launch_scripts/train_multitask_model.py \
-  aurora \
-  /mmfs1/gscratch/krishna/mahtab/Umolmo/pretrained/step30000-unsharded \
+  debug \
+  pretrained/step30000-unsharded/ \
   --wandb.name="${EXP_NAME}" \
-  --wandb.entity=allenai-team1 \
-  --wandb.project=mmseek \
-  --save_folder=/mmfs1/gscratch/krishna/mahtab/Umolmo/checkpoints/${EXP_NAME} \
+  --wandb.entity=${WANDB_TEAM} \
+  --wandb.project=${WANDB_PROJECT} \
+  --save_folder=${OUTPUT_DIR}/${EXP_NAME} \
   --save_overwrite \
   --image_generation_loss_type="cosine" \
-  --duration=6200
-  
+  --per_image_output_tokens=64 \
+  --vision_head_type="Linear" \
+  --duration=6200 \
+  --device_train_batch_size=2 \
+  --global_batch_size=32
 
-mkdir /gscratch/krishna/mahtab/Umolmo/predictions/${EXP_NAME}
-mv /gscratch/krishna/mahtab/Umolmo/_default /gscratch/krishna/mahtab/Umolmo/predictions/${EXP_NAME}
+
+# # check if the predictions directory exists, if not create it
+# if [ ! -d "./predictions/${EXP_NAME}" ]; then
+#   mkdir -p ./predictions/${EXP_NAME}
+# fi
+# # move the _default directory to the predictions directory
+# if [ -d "./_default" ]; then
+#   mv ./_default ./predictions/${EXP_NAME}
+# else
+#   echo "No _default directory found to move."
+# fi

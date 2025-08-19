@@ -19,7 +19,6 @@ except ImportError:
     from functools import lru_cache as cache
 
 import requests
-from cached_path import cached_path
 from cached_path.schemes import S3Client, SchemeClient, add_scheme_client
 
 from .exceptions import OLMoEnvironmentError, OLMoNetworkError
@@ -70,7 +69,7 @@ def resource_path(folder: PathOrStr, fname: str, local_cache: Optional[PathOrStr
         log.info(f"Found local cache of {fname} at {local_path}")
         return local_path
     else:
-        return cached_path(f"{folder}/{fname}", quiet=True)
+        return get_cached_path(f"{folder}/{fname}", quiet=True)
 
 
 def is_url(path: PathOrStr) -> bool:
@@ -156,7 +155,7 @@ def get_bytes_range(path: PathOrStr, bytes_start: int, num_bytes: Optional[int])
         else:
             raise NotImplementedError(f"file size not implemented for '{parsed.scheme}' files")
     else:
-        with open(path, "rb") as f:
+        with file_open(path, "rb") as f:
             f.seek(bytes_start)
             return f.read(-1 if num_bytes is None else num_bytes)
 
@@ -190,6 +189,24 @@ def upload(source: PathOrStr, target: str, save_overwrite: bool = False):
         raise NotImplementedError(f"Upload not implemented for '{parsed.scheme}' scheme")
 
 
+def file_open(file_path, mode="r"):
+    # convert file_path from a Path object to a string
+    file_path = str(file_path)
+    try:
+        from azfuse import File
+        f = File.open(file_path, mode)
+        # logging.warning(f"Opening file: {file_path} in mode: {mode} via azfuse")
+    except ImportError:
+        dir_path = os.path.dirname(file_path)
+        if not os.path.exists(dir_path) and mode not in ["r", "rb"]:
+            print(f"Creating directory: {dir_path}")
+            os.makedirs(dir_path)
+        f = open(file_path, mode)
+    if f is None:
+        raise ValueError(f"Failed to open file: {file_path}")
+    return f
+
+
 def write_file(dir: PathOrStr, fname: str, contents: Union[str, bytes, Callable], save_overwrite) -> PathOrStr:
     """
     Write something to a file in a local or remote directory.
@@ -201,6 +218,7 @@ def write_file(dir: PathOrStr, fname: str, contents: Union[str, bytes, Callable]
 
     :returns: The path/URL of the file.
     """
+    OLMO_TURNON_TMP_FILE = os.environ.get("OLMO_TURNON_TMP_FILE", "1")
     dir = normalize_path(dir)
     fname = normalize_path(fname)
 
@@ -216,6 +234,7 @@ def write_file(dir: PathOrStr, fname: str, contents: Union[str, bytes, Callable]
         tmp_path = Path(tmp_file.name)
         if isinstance(contents, (str, bytes)):
             tmp_file.write(contents)
+            print(f"Writing to temporary file: {tmp_path}")
         else:
             contents(tmp_file)
         tmp_file.flush()
@@ -224,12 +243,26 @@ def write_file(dir: PathOrStr, fname: str, contents: Union[str, bytes, Callable]
         if is_url(dir):
             target = f"{dir}/{fname}"
             upload(tmp_path, target, save_overwrite=save_overwrite)
-        else:
+        elif OLMO_TURNON_TMP_FILE == "1":
             target = Path(dir) / fname
             if target.is_file() and not save_overwrite:
                 raise FileExistsError(target)
             target.parent.mkdir(exist_ok=True, parents=True)
             tmp_path.rename(target)
+        else:
+            # directly write to the file
+            target = Path(dir) / fname
+            if target.is_file() and not save_overwrite:
+                raise FileExistsError(target)
+            target.parent.mkdir(exist_ok=True, parents=True)
+            mode = "w" if isinstance(contents, str) else "wb"
+            with file_open(target, mode) as f:
+                if isinstance(contents, str):
+                    f.write(contents)
+                elif isinstance(contents, bytes):
+                    f.write(contents)
+                else:
+                    contents(f)
         return target
     finally:
         if tmp_path is not None:
@@ -249,7 +282,7 @@ def copy_file(source: PathOrStr, target: PathOrStr, save_overwrite: bool = False
     """
     source = normalize_path(source)
     target = normalize_path(target)
-    local_source = cached_path(source, quiet=True)
+    local_source = get_cached_path(source, quiet=True)
     if is_url(target):
         upload(local_source, target, save_overwrite=save_overwrite)
     else:
@@ -357,7 +390,11 @@ def file_exists(path: PathOrStr) -> bool:
         else:
             raise NotImplementedError(f"file_exists not implemented for '{parsed.scheme}' files")
     else:
-        return Path(path).exists()
+        try:
+            from azfuse import File
+            return File.isfile(path)
+        except ImportError: 
+            return Path(path).exists()
 
 
 def clear_directory(dir: PathOrStr, force: bool = False):
@@ -424,13 +461,29 @@ def list_directory(
     dir = normalize_path(dir)
 
     if not is_url(dir):
-        for p in Path(dir).iterdir():
-            if (p.is_file() and include_files) or (p.is_dir() and include_dirs):
-                yield str(p)
-            if recurse and p.is_dir():
-                yield from list_directory(
-                    p, recurse=True, include_files=include_files, include_dirs=include_dirs
-                )
+        try:
+            from azfuse import File
+            list_of_files = get_list_of_files_to_prepare(dir)
+            if not dir.endswith("/"):
+                dir_ = dir+"/"
+            # if not recursive, just get the immediate files
+            for files in list_of_files:
+                rel_file_path = files.replace(dir_, "")
+                if not recurse and len(rel_file_path.split("/")) > 1:
+                    continue
+                if File.isfile(files) and include_files:
+                    yield str(files)
+                if len(get_list_of_files_to_prepare(files)) > 0 and include_dirs:
+                    yield str(files)
+        except ImportError:
+            for p in Path(dir).iterdir():
+                if (p.is_file() and include_files) or (p.is_dir() and include_dirs):
+                    yield str(p)
+                if recurse and p.is_dir():
+                    yield from list_directory(
+                        p, recurse=True, include_files=include_files, include_dirs=include_dirs
+                    )
+
     else:
         from urllib.parse import urlparse
 
@@ -923,6 +976,28 @@ def _s3_clear_directory(scheme: str, bucket_name: str, prefix: str):
         return
 
 
+def get_cached_path(src: PathOrStr, cache_dir: str = "", quiet: bool = False) -> Path:
+    """
+    Get the cached path for a given path/URL.
+    If the path is a URL, it will be downloaded and cached locally.
+    If the path is a local file, it will return the path as is.
+
+    :param path: The path/URL to get the cached version of.
+    :param quiet: If True, suppresses logging messages.
+
+    :returns: The local cached path.
+    """
+    from cached_path import cached_path
+
+    if not cache_dir or len(cache_dir) == 0:
+        logging.warning(
+            "No cache directory specified. "
+        )
+        return src
+    else:
+        return cached_path(src, cache_dir=cache_dir, quiet=quiet)
+
+
 def _s3_list_directory(
     scheme: str,
     bucket_name: str,
@@ -1020,3 +1095,44 @@ class _WekaClient(SchemeClient):
             Bucket=self.bucket_name, Key=self.path, Range=f"bytes={index}-{index+length-1}"
         )
         return response["Body"].read()
+
+
+def get_list_of_files_to_prepare(folder):
+    ## Lindsey added for Azure.
+    from azfuse import File
+    filename = os.path.basename(folder)
+    if filename.startswith('.'):
+        return []
+    to_prepare = []
+
+    list_of_subfolders = [f for f in File.list(folder)]
+
+    if len(list_of_subfolders) == 0:
+        return [folder]
+    
+    for f in list_of_subfolders:
+        list_of_files = get_list_of_files_to_prepare(f)
+        to_prepare.extend(list_of_files)
+    return to_prepare
+
+
+def prepare_cached_data_to_local(data_path_or_list):
+    # check if the folder is a remote folder in gs, weka or s3, if so skip
+    if isinstance(data_path_or_list, list):
+        try:
+            from azfuse import File
+            File.prepare(data_path_or_list)
+        except ImportError:
+            log.warning("azfuse is not installed, skipping data preparation.")
+    else:
+        if is_url(data_path_or_list):
+            from urllib.parse import urlparse
+            parsed = urlparse(data_path_or_list)
+            if parsed.scheme in ("gs", "s3", "r2", "weka"):
+                log.warning(f"Skipping preparation for remote folder: {data_path_or_list}")
+        try:
+            from azfuse import File
+            File.prepare(get_list_of_files_to_prepare(data_path_or_list))
+        except ImportError:
+            # azfuse is not installed, so we can't prepare the folder
+            log.warning("azfuse is not installed, skipping data preparation.")

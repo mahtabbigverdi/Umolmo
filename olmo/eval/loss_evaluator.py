@@ -71,6 +71,8 @@ class LossMetrics:
         accuracy = ((pred.flatten() == labels.flatten()).float() * loss_masks.flatten()).sum().item()
         self.eval_metrics["CrossEntropyLoss"].update(cross_entropy_loss/total_weight, total_weight)
         if gen_total_weight > 0:
+            if torch.isnan(genloss):
+                raise ValueError("genloss should not be NaN when gen_total_weight > 0")
             self.eval_metrics["ImageGenLoss"].update(genloss/gen_total_weight, gen_total_weight)
         else:
             self.eval_metrics["ImageGenLoss"].update(torch.tensor(0.0), 0)

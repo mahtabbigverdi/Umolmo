@@ -125,12 +125,12 @@ class EvaluatorConfig(BaseConfig):
         evaluators = []
         save_predictions = self.save_predictions
         
-        ## commented out for now 
-        # if save_predictions == "_default":
-        #     if default_save_dir is None:
-        #         logging.info(f"save_predictions is \"default\" but no default "
-        #                      f"save dir set so predictions will not be saved")
-        #     save_predictions = default_save_dir
+        # commented out for now 
+        if save_predictions == "_default":
+            if default_save_dir is None:
+                logging.info(f"save_predictions is \"default\" but no default "
+                             f"save dir set so predictions will not be saved")
+            save_predictions = default_save_dir
         if save_predictions:
             evaluators.append(SavePredictions(
                 save_predictions,

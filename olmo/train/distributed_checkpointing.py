@@ -44,7 +44,7 @@ from torch.distributed.checkpoint.metadata import Metadata, TensorStorageMetadat
 
 from olmo.config import StrEnum
 from olmo.io import PathOrStr, normalize_path, clear_directory, dir_is_empty, is_url
-from olmo.torch_util import barrier, get_fs_local_rank, is_distributed, gc_cuda, get_world_size
+from olmo.torch_util import barrier, get_fs_local_rank, is_distributed, gc_cuda, get_world_size, patch_torch_load_context
 
 from torch.distributed._tensor import DTensor, DeviceMesh
 from torch.distributed._tensor.placement_types import Replicate
@@ -135,6 +135,7 @@ def save_model_and_optim_state(
     dir = _prepare_env_for_save(dir, process_group=process_group, save_overwrite=save_overwrite)
     state_dict = _prepare_state_dict(model, optim=optim, process_group=process_group)
     planner = DefaultSavePlanner(dedup_save_to_lowest_rank=True)
+
     dist_cp.state_dict_saver.save(
         state_dict,
         storage_writer=RemoteFileSystemWriter(
@@ -279,7 +280,7 @@ def load_model_and_optim_state(
     #     if missing_optimizer_keys:
     #         log.warning(f"Missing optimizer state for params: {missing_optimizer_keys}")
     ## todo remove
-
+    # with patch_torch_load_context():
     dist_cp.load(
         state_dict,
         checkpoint_id=dir,

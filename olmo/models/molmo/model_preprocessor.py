@@ -12,6 +12,7 @@ from olmo.data.image_preprocessor import load_image, ImagePreprocessor, get_imag
 from olmo.data.interleaved_text_preprocessor import InterleavedTextPreprocessor
 from olmo.tokenizer import get_special_token_ids
 from olmo.nn.vision_backbone import MolmoVisionBackboneConfig
+from olmo.io import get_bytes_range
 
 
 def setup_pil():
@@ -385,7 +386,14 @@ class Preprocessor:
         else:
             image = None
         if "image_outputs" in example and len(example["image_outputs"]) > 0:
-            image_outputs = [np.load(example["image_outputs"][i]) for i in range(len(example["image_outputs"]))]
+            import io
+            image_outputs = []
+            for i in range(len(example["image_outputs"])):
+                bytes_data = get_bytes_range(example["image_outputs"][i], 0, None)
+                if bytes_data is None:
+                    raise ValueError(f"Could not load image output: {example['image_outputs'][i]}")
+                image_outputs.append(np.load(io.BytesIO(bytes_data)))
+                # print(f"Loaded image output: {image_outputs[-1].sum()}")
         else:
             image_outputs = []
         # if self.is_training == False:

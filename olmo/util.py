@@ -25,6 +25,8 @@ from rich.highlighter import NullHighlighter
 from rich.progress import Progress
 from rich.text import Text
 from rich.traceback import Traceback
+import torch
+import contextlib
 
 from .config import StrEnum
 from .exceptions import (
@@ -32,7 +34,7 @@ from .exceptions import (
     OLMoEnvironmentError,
     OLMoError,
 )
-from .io import add_cached_path_clients, PathOrStr, file_exists, dir_is_empty, list_directory
+from .io import add_cached_path_clients, PathOrStr, file_exists, dir_is_empty, list_directory, resource_path
 from .torch_util import get_global_rank, get_local_rank, get_node_rank, is_distributed, \
     barrier, init_process_group, synchronize_flag
 
@@ -420,20 +422,6 @@ def rank0_resource_path(device, folder=None, fname=None, local_cache=None,
         return thread._result
     else:
         return None
-
-
-def resource_path(
-    folder: PathOrStr, fname: str, local_cache: Optional[PathOrStr] = None,
-    progress: Optional[Progress] = None, cache_dir=None, quiet=False
-) -> Path:
-    if local_cache is not None and (local_path := Path(local_cache) / fname).is_file():
-        log.info(f"Found local cache of {fname} at {local_path}")
-        return local_path
-    else:
-        from cached_path import cached_path
-
-        return cached_path(f"{str(folder).rstrip('/')}/{fname}", progress=progress,
-                           cache_dir=cache_dir, quiet=quiet)
 
 
 def get_default_thread_count() -> int:

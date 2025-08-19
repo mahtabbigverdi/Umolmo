@@ -5,7 +5,7 @@ from typing import cast, List
 
 import omegaconf
 from omegaconf import OmegaConf
-
+import os
 from launch_scripts.utils import get_evaluation, DEBUG_MODEL
 from olmo.train.optim import OptimizerType, OptimizerConfig, SchedulerConfig, SchedulerType
 from olmo.train.trainer_config import (
@@ -120,8 +120,8 @@ if __name__ == "__main__":
         eval_tasks = ["android_control_ll"]
         tasks = [["eval", ["android_control"], 1.0]]
     elif args.mixture in ["small1", "debug"]:
-        eval_tasks = ["aurora"]
-        tasks = [["aux", ["aurora"], 1.0]]
+        eval_tasks = ["aurora_small"]
+        tasks = [["aux", ["aurora_small"], 1.0]]
     elif args.mixture in ["depth"]:
         eval_tasks = ["depth"]
         tasks = [["aux", ["depth"], 1.0]]
@@ -236,6 +236,7 @@ if __name__ == "__main__":
 
     debug = args.checkpoint in ["debug", "debug2"]
     if debug:
+        log.info("Running in debug mode")
         checkpoint = None
         model_cfg = DEBUG_MODEL
         if args.checkpoint == "debug2":
@@ -261,7 +262,7 @@ if __name__ == "__main__":
         ## was 2048 before for both max_inf_examples and eval_examples
         # max_inf_examples = args.max_inf_examples
 
-        log_interval = 5
+        log_interval = 1
         global_batch_size = args.global_batch_size
         inf_eval_interval = args.duration
         eval_interval = args.duration
@@ -312,13 +313,15 @@ if __name__ == "__main__":
                 max_examples=max_inf_examples,
                 num_workers=num_workers,
                 include_image=args.include_image,
+                save_prediction_dir=os.path.join(args.save_folder, "predictions") if hasattr(args, "save_folder") else "_default"
             )
             evaluation.data.persistent_workers = True
             evaluations.append(evaluation)
+    precision = os.environ.get("PRECISION", "amp_bf16")
     cfg = TrainConfig(
         run_name="multitask_train",
         save_folder="debug_run" if debug else omegaconf.MISSING,
-        seed=6198,
+        seed=2025,
         dry_run=False,
         wandb=None if debug else WandbConfig(
             name="${run_name}",
@@ -351,7 +354,7 @@ if __name__ == "__main__":
         optimizer=OptimizerConfig(
             name=OptimizerType.adamw,
             ## Learning rates for batchsize 32 , previous ones were 5e-6,5e-6, 1e-5, 1e-5
-            connector_learning_rate=3e-6,
+            connector_learning_rate=5e-6,
             vit_learning_rate=3e-6,
             llm_learning_rate=5e-6,
             gen_learning_rate=5e-6,
@@ -378,13 +381,14 @@ if __name__ == "__main__":
             warmup_min_lr=0.0
         ),
         fsdp=FSDPConfig(
-            use_orig_params=True,
+            use_orig_params=False, # Lindsey: make it True if there are frozen layers
             wrapping_strategy=FSDPWrapStrategy.by_block_and_size,
-            precision=FSDPPrecision.float
+            # precision=FSDPPrecision.float, # Lindsey: why keep the weights float32?
+            precision=FSDPPrecision.mixed if precision == "amp_fp16" else FSDPPrecision.float
         ),
         load_path=None,
         initial_model_checkpoint=checkpoint,
-        save_interval=100,
+        save_interval=10,
         save_num_checkpoints_to_keep=1,
         global_train_batch_size=global_batch_size,
         device_train_microbatch_size=args.device_train_batch_size,
@@ -393,7 +397,7 @@ if __name__ == "__main__":
         stop_at="${max_duration}",
         max_grad_norm=1,
         batch_divisor=BatchDivisor.global_batch,
-        precision="amp_bf16",
+        precision=precision,
         console_log_interval=log_interval,
         compile_loss=True,
         speed_monitor=SpeedMonitorConfig(window_size=20),

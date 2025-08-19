@@ -13,6 +13,7 @@ authors = [
 requires-python = ">=3.10"
 license = { file = "LICENSE" }
 dependencies = [
+    "ffmpeg",
     "absl-py",
     "cached_property",
     "fiddle >= 0.2.5",
@@ -40,7 +41,8 @@ dependencies = [
     "imageio[pyav]",
     "decord",
     "av",
-    "moviepy"
+    "moviepy",
+    "git+https://github.com/microsoft/azfuse.git",
 ]
 
 [project.optional-dependencies]

@@ -10,6 +10,7 @@ import torch
 import torch.distributed as dist
 from torch import nn
 from torch.distributed.tensor import DTensor
+import contextlib
 
 T = TypeVar("T")
 
@@ -135,12 +136,13 @@ def peak_gpu_memory(reset: bool = False) -> Optional[float]:
     peak_mb = torch.cuda.max_memory_allocated(device) / 1000000
     if is_distributed():
         peak_mb_tensor = torch.tensor(peak_mb, device=device)
+        print(f"[Rank {get_global_rank()}] Peak GPU memory: {peak_mb:.2f} MB")
         dist.reduce(peak_mb_tensor, 0, dist.ReduceOp.MAX)
         peak_mb = peak_mb_tensor.item()
 
     if reset:
         # Reset peak stats.
-        torch.cuda.reset_max_memory_allocated(device)
+        torch.cuda.reset_peak_memory_stats(device)
 
     return peak_mb
 
@@ -226,3 +228,55 @@ def clip_grad_norm(parameters, max_grad_norm: float, norm_type: float = 2.0, for
 
     torch.nn.utils.clip_grads_with_norm_(parameters, max_grad_norm, total_norm, foreach=foreach)
     return total_norm
+
+
+
+def torch_save_patch(origin_save, obj, f, *args, **kwargs):
+    from azfuse import File
+    if isinstance(f, str):
+        with File.open(f, 'wb') as fp:
+            result = origin_save(obj, fp, *args, **kwargs)
+    else:
+        result = torch.save(obj, f, *args, **kwargs)
+    return result
+
+def patch_torch_save():
+    old_save = torch.save
+    torch.save = lambda *args, **kwargs: torch_save_patch(old_save, *args, **kwargs)
+    return old_save
+
+def patch_torch_load():
+    old_load = torch.load
+    def patched_load(f, *args, **kwargs):
+        if "mmap" in kwargs and os.environ.get("DISABLE_MMAP", "0") == "1":
+            mmap = kwargs.pop("mmap")
+            if mmap:
+                kwargs["mmap"] = False
+        from azfuse import File
+        if isinstance(f, str):
+            with File.open(f, 'rb') as fp:
+                return old_load(fp, *args, **kwargs)
+        else:
+            return old_load(f, *args, **kwargs)
+    torch.load = patched_load
+    return old_load
+
+@contextlib.contextmanager
+def patch_torch_load_context():
+    old_load = patch_torch_load()
+    yield
+    restore_torch_load(old_load)
+
+
+@contextlib.contextmanager
+def patch_torch_save_context():
+    old_save = patch_torch_save()
+    yield
+    restore_torch_save(old_save)
+
+def restore_torch_load(old_load):
+    torch.load = old_load
+
+
+def restore_torch_save(old_save):
+    torch.save = old_save

@@ -114,13 +114,13 @@ def load_image(image_path):
 
         # Ignore image loading warning
         with warnings.catch_warnings(record=True) as w:
-            if image_path.startswith("gs://"):
-                image_bytes = get_bytes_range(image_path, 0, None)
-                with PIL.Image.open(BytesIO(image_bytes)) as image:
-                    return load_image(image)
-            else:
-                with PIL.Image.open(image_path) as image:
-                    return load_image(image)
+            # if image_path.startswith("gs://"):
+            image_bytes = get_bytes_range(image_path, 0, None)
+            with PIL.Image.open(BytesIO(image_bytes)) as image:
+                return load_image(image)
+            # else:
+            #     with PIL.Image.open(image_path) as image:
+            #         return load_image(image)
 
 
 def save_image(args) -> Tuple[str, bool]:

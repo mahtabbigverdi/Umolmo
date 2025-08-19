@@ -13,7 +13,6 @@ from olmo.config import BaseConfig, D, StrEnum
 from olmo.nn.image_vit import VitConfig, VisionTransformer
 from olmo.nn.llm import Activation
 from olmo.torch_util import freeze_module
-from olmo.util import resource_path
 from torch.nn import functional as F
 from torch.distributed.fsdp import fully_shard
 

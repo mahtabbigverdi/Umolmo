@@ -143,6 +143,7 @@ def run_trainer(cfg: TrainConfig) -> None:
     # Do some other model setup
     
     if cfg.activation_checkpointing:
+        log.info("Applying activation checkpointing")
         olmo_model.apply_activation_checkpointing()
     # Stops the compiler get confused due to cache modifications
     olmo_model.warmup_cache(device)
@@ -188,6 +189,7 @@ def run_trainer(cfg: TrainConfig) -> None:
         raise NotImplementedError()
 
     torch.cuda.empty_cache()
+    barrier()
     
     log.info(f"Total number of parameters: {olmo_model.num_params():,d}")
     log.info(f"Number of non-embedding parameters: {olmo_model.num_params(include_embedding=False):,d}")
@@ -322,7 +324,24 @@ def run_trainer(cfg: TrainConfig) -> None:
                     load_trainer_state=not reset_train,
                 )
             log.info(f"Checkpoint successfully loaded in {time.perf_counter()-t0:0.1f} seconds")
+
+            # finish loading the model, try printing some stats on GPU memory
+
+            log.info(f"Peak GPU Memory (MB) after loading: {int(peak_gpu_memory() or 0)}")
+            log.info(f"Model parameters: {olmo_model.num_params():,d}")
+            log.info(f"Non-embedding parameters: {olmo_model.num_params(include_embedding=False):,d}")
+            if olmo_model.config.llm.block_type == "moe":
+                log.info(f"Active parameters: {olmo_model.num_params(include_inactive_params=False):,d}")
+
+            # also log the precision of the model
+            if cfg.autocast_precision == torch.float16:
+                log.info("Autocast is in fp16 precision")
+            elif cfg.autocast_precision == torch.bfloat16:
+                log.info("Autocast is in bf16 precision")
+            else:
+                log.info("Autocast is in fp32 precision")
             barrier()
+
         for name, param in fsdp_model.named_parameters():
             if not torch.all(torch.isfinite(param)):
                 raise ValueError(name)

@@ -17,7 +17,7 @@ from transformers.activations import get_activation
 from olmo.config import BaseConfig, StrEnum, D
 from olmo.nn.llm import AttentionType, ActivationType
 from olmo.torch_util import get_global_rank
-from olmo.util import resource_path
+from olmo.io import resource_path
 
 from torch.distributed.fsdp import fully_shard
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
