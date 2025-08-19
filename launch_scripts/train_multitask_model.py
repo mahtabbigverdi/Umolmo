@@ -133,6 +133,9 @@ if __name__ == "__main__":
     elif args.mixture in ["aurora_discrete"]:
         eval_tasks = ["aurora_discrete"]
         tasks = [["aux", ["aurora_discrete"], 1.0]]
+    elif args.mixture in ["frozenlake_debug"]:
+        eval_tasks = ["frozenlake_debug"]
+        tasks = [["aux", ["frozenlake_debug"], 1.0]]
     elif args.mixture in ["pointing"]:
         eval_tasks = ["pointing_eval:test"]
         tasks = [["pointing", [

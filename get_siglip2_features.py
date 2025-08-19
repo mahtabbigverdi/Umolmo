@@ -11,9 +11,11 @@ processor = AutoProcessor.from_pretrained(model_id)
 model = AutoModel.from_pretrained(model_id).cuda()
 
 def load_image(image_path):
-    image = Image.open(image_path).convert("RGB")
-    image = image.resize((256, 256))  # Resize to match model input size
-    return image
+    from olmo.io import file_open
+    with file_open(image_path, 'rb') as f:
+        image = Image.open(f).convert("RGB")
+        image = image.resize((256, 256))  # Resize to match model input size
+        return image
 
 def extract_patch_features(image):
     inputs = processor(images=image, return_tensors="pt").to("cuda")

@@ -694,7 +694,7 @@ class Trainer:
             # assert when any of the losses is NaN
             if torch.isnan(ce_loss).any() or torch.isnan(z_loss).any() or torch.isnan(image_gen_loss).any():
                 log.warning(f"NaN loss detected: ce_loss={ce_loss}, z_loss={z_loss}, image_gen_loss={image_gen_loss}")
-                continue
+                raise ValueError("NaN loss detected")
 
             if compute_metrics:
                 self._train_metrics.update(micro_batch, model_out, ce_loss, z_loss, image_gen_loss)

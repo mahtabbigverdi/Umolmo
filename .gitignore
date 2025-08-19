@@ -3,6 +3,9 @@ aux_data/
 Data/
 .env
 .env_cloud
+amlt
+.amlt*
+debug.log
 
 *.log
 debug_run/

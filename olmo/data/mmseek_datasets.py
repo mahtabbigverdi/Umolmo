@@ -9,6 +9,8 @@ from olmo.io import read_json, get_cached_path, prepare_cached_data_to_local
 class Aurora(DatasetBase):
     def __init__(self, split, name="aurora", include_image_outputs=True):
         assert split in ["train", "validation", "test"]
+        if name == "frozenlake_debug":
+            name = "frozen-lake-action-safe-single-image-tag-20k-cot"
         self.dataset_name = name
         if split == "validation":
             split = "val"
