@@ -25,7 +25,7 @@ export NCCL_TIMEOUT=36000000000
 # export RDZV_ID=$(date +%s%N)
 
 # Define experiment name
-export EXP_NAME="zeroinitialize-8gpus-3B-lowLR-Aurora-molmo-7b-qwen2-siglip2-finetune-uber-cosine-bilinear"
+export EXP_NAME="8gpus-256-3B-lowLR-Aurora-molmo-7b-qwen2-siglip2-finetune-uber-cosine-bilinear"
 
 # Check NVIDIA status
 nvidia-smi
@@ -34,7 +34,7 @@ nvidia-smi
 # rm -rf /gscratch/krishna/mahtab/Umolmo/debug.log
 # rm -rf /gscratch/krishna/mahtab/Umolmo/_default
 # Run training
-HF_ACCESS_TOKEN=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 \
+HF_ACCESS_TOKEN=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 \
 WANDB_API_KEY=42e8013627067866a191055811b0107b24891809 \
 
 
@@ -53,7 +53,7 @@ torchrun \
   --save_overwrite \
   --image_generation_loss_type="cosine" \
   --duration=6200 \
-  --per_image_output_tokens=64 \
+  --per_image_output_tokens=256 \
   --vision_head_type="Linear" \
   --image_encoder="SigLip2"
 

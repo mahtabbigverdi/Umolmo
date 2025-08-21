@@ -56,4 +56,11 @@ def get_interpolated_patch_features(image_path, target_num_patches, save_path=No
         np.save(save_path, interpolated_features.cpu().numpy())
     return interpolated_features  # shape: [target_num_patches, D]
 
+def get_patch_features(image_path, save_path=None):
+    image = load_image(image_path)
+
+    patch_features = extract_patch_features(image)
+    if save_path:
+        np.save(save_path, patch_features.cpu().numpy())
+    return patch_features  # shape: [target_num_patches, D]
 

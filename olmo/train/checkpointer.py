@@ -26,7 +26,7 @@ from torch.distributed.checkpoint import state_dict as dist_cp_sd
 from olmo.config import BaseConfig
 from olmo.io import PathOrStr, dir_is_empty, normalize_path, is_url, clear_directory, upload, \
     list_directory, resource_path, write_file, file_exists
-from olmo.torch_util import barrier, get_fs_local_rank, get_global_rank
+from olmo.torch_util import barrier, get_fs_local_rank, get_global_rank, patch_torch_load_context
 from olmo.train.distributed_checkpointing import save_model_and_optim_state, \
     load_model_and_optim_state
 from olmo.train.optim import Optimizer
@@ -49,6 +49,7 @@ def backfill_missing_from_module(state_dict, module, module_prefix: str):
         if full_key not in state_dict:
             if "weight" in name:
                 # Initialize weights with normal distribution
+                # t = torch.zeros(tensor.shape, dtype=torch.float32, device="cpu")
                 t = torch.normal(mean=0.0, std=0.02, size=tensor.shape, dtype=torch.float32, device="cpu")
             elif "bias" in name:
                 # Initialize bias with zeros (common practice)
@@ -75,17 +76,36 @@ def load_model_state_unsharded(dir: PathOrStr, model: nn.Module):
     Load model state in-place for unsharded chechpoint saved in `dir`,
     works for sharded and unsharded models
     """
+    # if get_global_rank() == 0:
+    #     with patch_torch_load_context():
+    #         full_sd = torch.load(
+    #             resource_path(dir, MODEL_FILENAME),
+    #             map_location="cpu",
+    #             weights_only=True
+    #         )
+    #         backfill_heads(full_sd, model)
+    # else:
+    #     full_sd = {}
+    # log.info(f"GPU alloc (pre-load unshard):{peak_gpu_memory()}")
+    # dist_cp_sd.set_model_state_dict(
+    #     model=model,
+    #     model_state_dict=full_sd,
+    #     options=dist_cp_sd.StateDictOptions(full_state_dict=True, broadcast_from_rank0=True)
+    # )
+
+    # # Explicitly delete and garbage collect
+    # del full_sd
+    # import gc
+    # gc.collect()
+    # torch.cuda.empty_cache()  # if using CUDA
+    # torch.distributed.barrier()
+    # log.info(f"GPU alloc (post-load unshard):{peak_gpu_memory(reset=True)}")
+
     if get_global_rank() == 0:
         state_dict = torch.load(resource_path(dir, MODEL_FILENAME),
                                 map_location="cpu", weights_only=True)
         backfill_heads(state_dict, model)
-        # if hasattr(model, "vision_encoder_head") and "vision_encoder_head" not in state_dict:
-        #     # This is a workaround for the case where the model was saved without a vision encoder head
-        #     state_dict["vision_encoder_head.weight"] = torch.zeros((model.vision_encoder_head.weight.shape[0],model.vision_encoder_head.weight.shape[1]), dtype = torch.float32)
-        # if hasattr(model, "vision_decoder_head") and "vision_decoder_head" not in state_dict:
-        #     # This is a workaround for the case where the model was saved without a vision decoder head
-        #     state_dict["vision_decoder_head.weight"] = torch.zeros((model.vision_decoder_head.weight.shape[0],model.vision_decoder_head.weight.shape[1]), dtype = torch.float32)
-        # ## todo initailize
+       
     else:
         state_dict = {}
     dist_cp_sd.set_model_state_dict(
@@ -93,6 +113,7 @@ def load_model_state_unsharded(dir: PathOrStr, model: nn.Module):
         model_state_dict=state_dict,
         options=dist_cp_sd.StateDictOptions(full_state_dict=True, broadcast_from_rank0=True)
     )
+   
 
 
 def save_unsharded(dir: PathOrStr, model: nn.Module, optim: Optimizer,

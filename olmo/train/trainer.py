@@ -613,8 +613,7 @@ class Trainer:
         ce_loss = (ce_loss*loss_masks.view(ce_loss.shape)).sum()
         z_loss = (z_loss*loss_masks.view(z_loss.shape)).sum()
         
-    
-
+        
         if batch['image_outputs'].shape[1] > 0:
             image_output_features = model_out.image_output_features 
             image_gen_loss_masks = batch["loss_masks"] == -2
@@ -664,6 +663,7 @@ class Trainer:
         del batch  # in case this helps reduce memory
         total_loss = torch.tensor(0.0, device=self.device)
         
+
         for micro_batch in micro_batches:
             
             ce_loss, z_loss, image_gen_loss, model_out = self.model_forward(

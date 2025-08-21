@@ -25,7 +25,7 @@ export NCCL_TIMEOUT=36000000000
 # export RDZV_ID=$(date +%s%N)
 
 # Define experiment name
-export EXP_NAME="16-3B-lowLR-Aurora-molmo-7b-qwen2-siglip2-finetune-uber-cosine-bilinear"
+export EXP_NAME="8gpus-16-3B-lowLR-Aurora-molmo-7b-qwen2-siglip2-finetune-uber-cosine-bilinear"
 
 # Check NVIDIA status
 nvidia-smi
@@ -42,7 +42,7 @@ WANDB_API_KEY=42e8013627067866a191055811b0107b24891809 \
 torchrun \
   --master_port=23501 \
   --nnodes=1 \
-  --nproc-per-node=4 \
+  --nproc-per-node=8 \
   launch_scripts/train_multitask_model.py \
   aurora \
   /mmfs1/gscratch/krishna/mahtab/Umolmo/pretrained/3B-step30000-unsharded \
