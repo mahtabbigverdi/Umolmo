@@ -3,6 +3,7 @@ import argparse
 import logging
 from dataclasses import replace
 from typing import cast
+import os
 
 from omegaconf import OmegaConf
 
@@ -131,12 +132,13 @@ def main():
 
     checkpoint_dir = "debug" if args.checkpoint == "debug" else select_checkpoint(args.checkpoint)
 
+    PRECISION = os.environ.get("PRECISION", "amp_bf16")
     cfg = EvalConfig(
         max_crops_override=args.max_crops,
         evaluations=inf_evaluators,
         load_path=checkpoint_dir,
         console_log_interval=10,
-        precision="amp_bf16",
+        precision=PRECISION,
         pbar=False,
         eval_name=f"{args.max_crops}crop" if args.high_res else None,
         fsdp=FSDPConfig(

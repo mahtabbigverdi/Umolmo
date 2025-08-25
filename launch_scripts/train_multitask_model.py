@@ -136,6 +136,9 @@ if __name__ == "__main__":
     elif args.mixture in ["frozenlake_debug"]:
         eval_tasks = ["frozenlake_debug"]
         tasks = [["aux", ["frozenlake_debug"], 1.0]]
+    elif args.mixture in ["frozenlake_debug_answer"]:
+        eval_tasks = ["frozenlake_debug_answer"]
+        tasks = [["aux", ["frozenlake_debug_answer"], 1.0]]
     elif args.mixture in ["pointing"]:
         eval_tasks = ["pointing_eval:test"]
         tasks = [["pointing", [
@@ -399,7 +402,7 @@ if __name__ == "__main__":
         ),
         load_path=None,
         initial_model_checkpoint=checkpoint,
-        save_interval=10,
+        save_interval=200,
         save_num_checkpoints_to_keep=1,
         global_train_batch_size=global_batch_size,
         device_train_microbatch_size=args.device_train_batch_size,
