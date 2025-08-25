@@ -271,6 +271,12 @@ class SigLIPFeatureExtractor:
         output_path = self.output_dir / filename
 
         save_to = []
+        keys_to_exclude = [
+            'image_path',
+            'question',
+            'label',
+            'image_output_features_path'
+        ]
 
         for idx, r in enumerate(records):
             id_ = idx
@@ -281,13 +287,19 @@ class SigLIPFeatureExtractor:
             image_output_paths = [
                 r["image_output_features_path"].replace("/datadrive_a/linjie/blob/vigstandard_data/linjli/debug_output/UW/mahtab/Umolmo/Data", "./Data")
                 ] if "image_output_features_path" in r else []
+            others = {}
+            for key in r.keys():
+                if key in keys_to_exclude:
+                    continue
+                others[key] = r[key]
 
             save_to.append({
                 "id": id_,
                 "imgname": imgname,
                 "query": query,
                 "label": label,
-                "image_output_paths": image_output_paths
+                "image_output_paths": image_output_paths,
+                **others
             })
 
         try:
