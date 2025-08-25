@@ -5,7 +5,7 @@ source .env_cloud
 export DATE=$(date +%Y-%m-%d_%H-%M-%S)
 
 # Define experiment name
-export EXP_NAME="lowLR-frozenlake-molmo-7b-qwen2-siglip2-finetune-uber-cosine-bilinear-test-4GPU" 
+export EXP_NAME="lowLR-frozenlake-molmo-3b-qwen2-siglip2-finetune-uber-cosine-bilinear-test-4GPU" 
 # add date to experiment name
 EXP_NAME="${DATE}-${EXP_NAME}"
 
@@ -21,13 +21,13 @@ else
   echo "No existing checkpoints directory found for ${EXP_NAME}."
 fi
 
-AZFUSE_USE_FUSE=0  CUDA_VISIBLE_DEVICES=4,5,6,7 torchrun \
-  --master_port=23502 \
+AZFUSE_USE_FUSE=0  CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun \
+  --master_port=23501 \
   --nnodes=1 \
   --nproc-per-node=4 \
   launch_scripts/train_multitask_model.py \
   frozenlake_debug \
-  pretrained/step30000-unsharded/ \
+  pretrained/3B-step30000-unsharded/ \
   --wandb.name="${EXP_NAME}" \
   --wandb.entity=${WANDB_TEAM} \
   --wandb.project=${WANDB_PROJECT} \
@@ -39,4 +39,3 @@ AZFUSE_USE_FUSE=0  CUDA_VISIBLE_DEVICES=4,5,6,7 torchrun \
   --duration=2000 \
   --device_train_batch_size=4 \
   --global_batch_size=32
-
