@@ -71,15 +71,15 @@ def backfill_missing_from_module(state_dict, module, module_prefix: str):
         full_key = f"{module_prefix}.{name}" if name else module_prefix
         ## Here I assume that layers are norms
         if full_key not in state_dict:
-            if "weight" in name:
-                # Initialize weights with normal distribution
-                t = torch.normal(mean=0.0, std=0.02, size=tensor.shape, dtype=torch.float32, device="cpu")
-            elif "bias" in name:
-                # Initialize bias with zeros (common practice)
-                t = torch.zeros(tensor.shape, dtype=torch.float32, device="cpu")
-            else:
-                raise NotImplementedError("This initilazation is not implemented yet")   
-            # t = torch.zeros(tensor.shape, dtype=torch.float32, device="cpu")
+            # if "weight" in name:
+            #     # Initialize weights with normal distribution
+            #     t = torch.normal(mean=0.0, std=0.02, size=tensor.shape, dtype=torch.float32, device="cpu")
+            # elif "bias" in name:
+            #     # Initialize bias with zeros (common practice)
+            #     t = torch.zeros(tensor.shape, dtype=torch.float32, device="cpu")
+            # else:
+            #     raise NotImplementedError("This initilazation is not implemented yet")   
+            t = torch.zeros(tensor.shape, dtype=torch.float32, device="cpu")
             state_dict[full_key] =  t
             print("%%%%%%%%%%", full_key, module_prefix)
             
@@ -127,11 +127,11 @@ def load_model_state_unsharded(dir: PathOrStr, model: nn.Module):
 
 def save_unsharded(dir: PathOrStr, model: nn.Module, optim: Optimizer,
                    config: BaseConfig, overwrite: bool = False):
-    """
-    Save model, optim, and other training state to a local or remote directory unsharded
-    :warning This can be very slow if saving to a remote directory
-    """
-    with patch_torch_save_context():
+        """
+        Save model, optim, and other training state to a local or remote directory unsharded
+        :warning This can be very slow if saving to a remote    directory
+        """
+
         sd_options = dist_cp_sd.StateDictOptions(full_state_dict=True, cpu_offload=True)
         state_dict = dist_cp_sd.get_model_state_dict(model, options=sd_options)
         if get_fs_local_rank() == 0:
@@ -329,13 +329,19 @@ class Checkpointer:
             return trainer_state
 
     def _save_train_state(self, dir: PathOrStr, wd: Path, train_state: Dict[str, Any]):
-        with patch_torch_save_context():
-            train_dir = wd / "train"
-            # NOTE: if 'dir' is a URL, the 'wd' will be a different temp dir for each rank.
-            if is_url(dir) or get_fs_local_rank() == 0:
-                train_dir.mkdir(exist_ok=True, parents=True)
-            wait_for(train_dir.exists, description=f"Waiting for '{train_dir}' to be created...")
-            torch.save(train_state, train_dir / f"rank{get_global_rank()}.pt")
+        # with patch_torch_save_context():
+        train_dir = wd / "train"
+        # NOTE: if 'dir' is a URL, the 'wd' will be a different temp dir for each rank.
+        if is_url(dir) or get_fs_local_rank() == 0:
+            train_dir.mkdir(exist_ok=True, parents=True)
+        wait_for(train_dir.exists, description=f"Waiting for '{train_dir}' to be created...")
+        write_file(
+            train_dir,
+            f"rank{get_global_rank()}.pt",
+            lambda f: torch.save(train_state, f),
+            save_overwrite=self.save_overwrite
+        )
+        # torch.save(train_state, train_dir / f"rank{get_global_rank()}.pt")
 
     def _get_tmp_dir(self, dir: PathOrStr) -> Path:
         # Prepare temporary directory.

@@ -9,9 +9,12 @@ from olmo.io import read_json, get_cached_path, prepare_cached_data_to_local
 class Aurora(DatasetBase):
     def __init__(self, split, name="aurora", include_image_outputs=True):
         assert split in ["train", "validation", "test"]
-        if name == "frozenlake_debug":
-            name = "frozen-lake-action-safe-single-image-tag-20k-cot"
-        self.dataset_name = name
+        if name == "frozenlake_debug" or name == "frozenlake_debug_answer":
+            self.dataset_name = "frozen-lake-action-safe-single-image-tag-20k-cot"
+        else:
+            self.dataset_name = name
+        if name == "frozenlake_debug_answer":
+            include_image_outputs = False
         if split == "validation":
             split = "val"
         # if name == "aurora_small" and split == "train":
@@ -42,6 +45,11 @@ class Aurora(DatasetBase):
             )
             if self.include_image_outputs:
                 ex_new['image_outputs'] = ex['image_output_paths']
+            else:
+                ex_new['image_outputs'] = []
+                ex_new["answers"] = ex_new['answers'].replace("<im_gen_start>", "")
+                ex_new["answers"] = ex_new["answers"].replace("<im_gen_end>", "")
+                ex_new["answers"] = ex_new["answers"].replace("Here is the visualization of the path taken by the agent in the maze:\n\n", "").strip()
             all_images.add(ex_new["image"])
             all_images.update(ex_new['image_outputs'])
             examples.append(ex_new)
