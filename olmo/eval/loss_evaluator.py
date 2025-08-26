@@ -69,6 +69,7 @@ class LossMetrics:
         labels = batch["labels"]
         pred = torch.argmax(model_out.logits, dim=-1)
         accuracy = ((pred.flatten() == labels.flatten()).float() * loss_masks.flatten()).sum().item()
+        
         self.eval_metrics["CrossEntropyLoss"].update(cross_entropy_loss/total_weight, total_weight)
         if gen_total_weight > 0:
             if torch.isnan(genloss):

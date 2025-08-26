@@ -621,8 +621,6 @@ class Trainer:
         z_loss = (z_loss*loss_masks.view(z_loss.shape)).sum()
         
         log.debug(f"model_forward 3")
-        
-    
 
         if batch['image_outputs'].shape[1] > 0:
             image_output_features = model_out.image_output_features 
@@ -686,6 +684,7 @@ class Trainer:
         del batch  # in case this helps reduce memory
         total_loss = torch.tensor(0.0, device=self.device)
         
+
         for micro_batch in micro_batches:
             log.info(f"Entering loop for micro batch size {len(micro_batch['input_ids'])} and {micro_batch['input_ids'].numel()} tokens")
             

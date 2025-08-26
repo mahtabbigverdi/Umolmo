@@ -457,6 +457,7 @@ class Molmo(ModelBase):
         ## if there is at least one example with image_outputs
         if is_training:
             # if self._image_output_token_id in input_ids :
+            
             has_img_out = (input_ids == self._image_output_token_id).any()
             if has_img_out:
             
@@ -645,7 +646,7 @@ class Molmo(ModelBase):
         generated = torch.empty((batch_size, 0), dtype=input_ids.dtype, device=input_ids.device)
         past_key_values = None
         hidden_states = None
-
+        
         for step in range(max_steps):
             if tokens_generated > 0:
                 input_token = generated[:, -1].unsqueeze(1)
@@ -656,6 +657,7 @@ class Molmo(ModelBase):
                         if generation_states[i]:
                             # for the images we need to generate the image features from the image embeddings
                             input_embeddings.append(
+                                # h[i].unsqueeze(0)
                                 self.vision_encoder_head(
                                     image_output_features[i].unsqueeze(0)
                                 )
@@ -701,11 +703,13 @@ class Molmo(ModelBase):
                 use_cache=True,
                 is_training=False,
                 last_logits_only=True,
+                output_hidden_states = True,
                 append_last_valid_logits=_append_last_valid_logits
             )
 
             logits = output.logits[:, -1, :]
             image_output_features = output.image_output_features[:, -1, :]
+            h = output.hidden_states[-1][:, -1, :]  # last hidden state
             next_token = torch.argmax(logits, dim=-1, keepdim=True)
             
             if tokens_generated > 0:
@@ -716,7 +720,13 @@ class Molmo(ModelBase):
                         last_generation_start_idx[i] = generated[i].shape[0]
 
                     if generation_states[i]:
-                        ### if the generated tokens number reached the per_image_output_tokens, we need to end the image generations
+                        
+                        # no contrained decoding here
+                        # if next_token[i,0] == self.image_gen_end_token_id:
+                        #     generation_states[i] = False
+                        #     next_token[i,0] = torch.tensor(self.image_gen_end_token_id, device=next_token.device, dtype=next_token.dtype)
+
+                        ## constrained decoding
                         if generated[i].shape[0] - last_generation_start_idx[i] == self.config.per_image_output_tokens:
                             next_token[i,0] = torch.tensor(self.image_gen_end_token_id, device=next_token.device, dtype=next_token.dtype)
                             generation_states[i] = False
