@@ -139,6 +139,17 @@ if __name__ == "__main__":
     elif args.mixture in ["frozenlake_debug_answer"]:
         eval_tasks = ["frozenlake_debug_answer"]
         tasks = [["aux", ["frozenlake_debug_answer"], 1.0]]
+    elif args.mixture in ["frozenlake_debug+answer"]:
+        eval_tasks = ["frozenlake_debug+answer"]
+        tasks = [["aux", ["frozenlake_debug+answer"], 1.0]]
+    elif args.mixture in ["frozenlake_plan+answer"]:
+        eval_tasks = ["frozenlake_plan+answer"]
+        tasks = [["aux", ["frozenlake_plan+answer"], 1.0]]
+    elif args.mixture in ["frozenlake_plan"]:
+        eval_tasks = ["frozenlake_plan"]
+        tasks = [["aux", ["frozenlake_plan"], 1.0]]
+    elif args.mixture in ["frozenlake_plan_answer"]:
+        eval_tasks = ["frozenlake_plan_answer"]
     elif args.mixture in ["pointing"]:
         eval_tasks = ["pointing_eval:test"]
         tasks = [["pointing", [

@@ -238,7 +238,7 @@ def get_dataset_by_name(dataset_name, split) -> Dataset:
         return ClockBench(split=split)
     if dataset_name == "depth":
         return Depth(split=split)
-    if dataset_name == "aurora" or dataset_name == "aurora_small" or dataset_name == "aurora_discrete" or dataset_name == "frozenlake_debug" or dataset_name == "frozenlake_debug_answer":
+    if dataset_name == "aurora" or dataset_name == "aurora_small" or dataset_name == "aurora_discrete" or dataset_name in ["frozenlake_debug", "frozenlake_debug_answer", "frozenlake_debug+answer", "frozenlake_plan", "frozenlake_plan_answer", "frozenlake_plan+answer"]:
         return Aurora(split=split, name=dataset_name)
     if dataset_name == "dense_caption_eval":
         assert split == "test"

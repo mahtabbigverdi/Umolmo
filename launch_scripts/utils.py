@@ -132,7 +132,7 @@ def get_evaluator(name, save_path=None) -> EvaluatorConfig:
         return EvaluatorConfig(vqa_eval="muir_bench_mc")
     elif name == "depth":
         return EvaluatorConfig()
-    elif name == "aurora" or name == "aurora_small" or name == "aurora_discrete" or name == "frozenlake_debug" or name == "frozenlake_debug_answer":
+    elif name == "aurora" or name == "aurora_small" or name == "aurora_discrete" or name in ["frozenlake_debug", "frozenlake_debug_answer", "frozenlake_debug+answer", "frozenlake_plan", "frozenlake_plan_answer", "frozenlake_plan+answer"]:
         return EvaluatorConfig(save_predictions=f"{save_path}/predictions")
     elif name in ["dense_caption_eval", "user_qa", "vqa_v2_test", "intern_vid"]:
         # No metrics, but still save prediction file
