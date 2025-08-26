@@ -150,6 +150,7 @@ if __name__ == "__main__":
         tasks = [["aux", ["frozenlake_plan"], 1.0]]
     elif args.mixture in ["frozenlake_plan_answer"]:
         eval_tasks = ["frozenlake_plan_answer"]
+        tasks = [["aux", ["frozenlake_plan_answer"], 1.0]]
     elif args.mixture in ["pointing"]:
         eval_tasks = ["pointing_eval:test"]
         tasks = [["pointing", [

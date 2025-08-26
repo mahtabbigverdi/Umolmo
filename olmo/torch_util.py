@@ -229,12 +229,6 @@ def clip_grad_norm(parameters, max_grad_norm: float, norm_type: float = 2.0, for
     torch.nn.utils.clip_grads_with_norm_(parameters, max_grad_norm, total_norm, foreach=foreach)
     return total_norm
 
-
-
-<<<<<<< HEAD
-=======
-
->>>>>>> 52299b5930746961601df76e300ce409768493ec
 def torch_save_patch(origin_save, obj, f, *args, **kwargs):
     from azfuse import File
     if isinstance(f, str):
