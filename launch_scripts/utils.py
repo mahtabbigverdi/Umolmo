@@ -134,6 +134,10 @@ def get_evaluator(name, save_path=None) -> EvaluatorConfig:
         return EvaluatorConfig(save_predictions=f"{save_path}/predictions")
     elif name == "aurora" or name == "aurora_discrete":
         return EvaluatorConfig(save_predictions=f"{save_path}/predictions")
+    elif name == "frozensafe":
+        return EvaluatorConfig(save_predictions=f"{save_path}/predictions")
+    elif name == "frozenplan":
+        return EvaluatorConfig(save_predictions=f"{save_path}/predictions")
     elif name in ["dense_caption_eval", "user_qa", "vqa_v2_test", "intern_vid"]:
         # No metrics, but still save prediction file
         return EvaluatorConfig()

@@ -5,6 +5,7 @@ from typing import Optional, Any, List, Union, Dict
 import numpy as np
 from olmo import tokenizer
 
+from olmo.torch_util import get_world_size, get_global_rank
 
 ATTEND_ALL_SUBSEGMENT_ID = 10000
 
@@ -253,8 +254,7 @@ class InterleavedTextPreprocessor:
             input_tokens = mm_tokens
             target_tokens = np.pad(mm_tokens[1:], [0, 1], constant_values=0)
         if weight is not None:
-            mm_loss_masks *= weight
-        
+            mm_loss_masks *= weight 
         ## test change later when new tokens come in
         if len(image_outputs) != 0 and not for_inference:
             NUM_IMAGE_OUT_TOKENS = image_outputs[0].shape[0]

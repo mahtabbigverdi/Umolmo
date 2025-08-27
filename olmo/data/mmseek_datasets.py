@@ -17,9 +17,85 @@ from olmo.io import read_file, write_json, file_exists
 if DATA_HOME is not None:
     DEPTH_SOURCE = join(DATA_HOME, "depth")
     AURORA_SOURCE = join(DATA_HOME, "aurora")
+    FROZENSAFE_SOURCE = join(DATA_HOME, "frozen-lake-action-safe-single-image-tag-20k-cot")
+    FROZENPLAN_SOURCE = join(DATA_HOME, "frozen-lake-action-plan-single-image-tag-10k-cot")
+
 else:
     DEPTH_SOURCE = None
     AURORA_SOURCE = None
+    FROZENSAFE_SOURCE = None
+    FROZENPLAN_SOURCE = None
+
+
+
+class FrozenPlan(DatasetBase):
+    def __init__(self, split):
+        assert split in ["train", "validation", "test"]
+        super().__init__(split)
+
+    def load(self):
+        split = self.split
+        if split == "validation":
+            split = "val"
+        examples = []
+        
+        src = f"{FROZENPLAN_SOURCE}/{split}/{split}.json"
+        with open(cached_path(src, cache_dir=environ.get("MOLMO_CACHE_DIR"))) as f:
+            data = json.load(f)
+        for ex_id, ex in enumerate(data):
+            ex = dict(
+                image= ex.pop("imgname"),
+                question=ex["query"],
+                answers=ex["label"],
+                image_outputs = ex['image_output_paths'],
+                metadata=dict(
+                    example_id=ex['id']
+                )
+            )
+            examples.append(ex)
+        
+        return examples
+
+    def get(self, item, rng):
+        ex = dict(self.data[item], style="frozenplan")
+        return ex
+
+
+
+
+class FrozenSafe(DatasetBase):
+    def __init__(self, split):
+        assert split in ["train", "validation", "test"]
+        super().__init__(split)
+
+    def load(self):
+        split = self.split
+        if split == "validation":
+            split = "val"
+        examples = []
+        
+        src = f"{FROZENSAFE_SOURCE}/{split}/{split}.json"
+        with open(cached_path(src, cache_dir=environ.get("MOLMO_CACHE_DIR"))) as f:
+            data = json.load(f)
+        for ex_id, ex in enumerate(data):
+            ex = dict(
+                image= ex.pop("imgname"),
+                question=ex["query"],
+                answers=ex["label"],
+                image_outputs = ex['image_output_paths'],
+                metadata=dict(
+                    example_id=ex['id']
+                )
+            )
+            examples.append(ex)
+        
+        return examples
+
+    def get(self, item, rng):
+        ex = dict(self.data[item], style="frozensafe")
+        return ex
+
+
 
 
 class Aurora(DatasetBase):

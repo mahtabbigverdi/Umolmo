@@ -404,7 +404,7 @@ class Molmo(ModelBase):
         :param last_logits_only: If `True`, only compute the logits for the last token of each sequence.
             This can speed up decoding when you only care about the next token.
         """
-
+        
         output_hidden_states = output_hidden_states if output_hidden_states is not None else False
 
         if past_key_values:
@@ -440,6 +440,7 @@ class Molmo(ModelBase):
 
         # Get embeddings of input.
         # shape: (batch_size, seq_len, d_model)
+        
         if input_ids is not None:
             input_ids = input_ids * (input_ids != -1).to(input_ids.dtype)
         x = self.transformer.wte(input_ids) if input_embeddings is None else input_embeddings  # type: ignore
@@ -452,8 +453,7 @@ class Molmo(ModelBase):
             
             ## mquestion: why += imagefeatures, what was there before?
             x.view(-1, x.shape[-1])[is_image_patch] += image_features
-        # if get_global_rank() == 1:
-        #     import pdb; pdb.set_trace()
+        
         ## if there is at least one example with image_outputs
         if is_training:
             # if self._image_output_token_id in input_ids :
@@ -473,8 +473,7 @@ class Molmo(ModelBase):
             assert is_output_image_patch.sum() == len(image_output_features)
             ## pass the visual embeddings through the vision encoder head to make them compatible with the llm input embeddings
             ## I dont want to use autocast here because the image features are already in float32
-            # if get_global_rank() == 0:
-            #     import pdb; pdb.set_trace()
+            
             # with torch.amp.autocast("cuda", enabled=False):
             image_output_features = self.vision_encoder_head(image_output_features) 
             image_output_features = image_output_features.to(dtype=x.dtype)         
@@ -581,13 +580,15 @@ class Molmo(ModelBase):
             logits = self.transformer.ff_out(x)  # type: ignore
         if self.config.llm.scale_logits:
             logits.mul_(1 / math.sqrt(self.config.llm.d_model))
-
+        # if get_global_rank() == 0:
+        #         import pdb; pdb.set_trace()
         if not last_logits_only and append_last_valid_logits is not None:
             last_valid_logit = logits[
                 torch.arange(logits.shape[0], device=logits.device), append_last_valid_logits]
             logits = torch.cat([logits[:, :-1], last_valid_logit[:, None]], dim=1)
         
         return OLMoOutput(logits=logits, image_output_features=image_output_features, attn_key_values=attn_key_values, hidden_states=tuple(all_hidden_states) if output_hidden_states else None)  # type: ignore[arg-type]
+
 
     def generate(
         self,
@@ -610,9 +611,8 @@ class Molmo(ModelBase):
         image_masks: Optional[torch.Tensor] = batch.get("image_masks")
         pooled_patches_idx: Optional[torch.Tensor] = batch.get("pooled_patches_idx")
         
-        ## TODO: make max_steps configurable
+        # ## TODO: make max_steps configurable
         max_steps = 200
-        
         
         
         batch_size, seq_len = input_ids.shape
@@ -624,138 +624,301 @@ class Molmo(ModelBase):
         generation_states = torch.tensor([False]* batch_size, dtype=torch.bool)
         last_generation_start_idx = torch.zeros(batch_size, dtype=torch.long)
         generation_done = torch.zeros(batch_size, dtype=torch.bool, device = input_ids.device)
-
+        # if get_global_rank()==0:
+        #     import pdb; pdb.set_trace()
         if llm_cfg.use_position_ids and  attention_mask is None:
             attention_mask = input_ids != -1
             position_ids = torch.clamp(
                 torch.cumsum(attention_mask.to(torch.int32), dim=-1) - 1,
                 min=0
             )
-            append_last_valid_logits = attention_mask.long().sum(dim=-1) - 1
-            attention_mask = torch.cat(
-                [attention_mask, attention_mask.new_ones((batch_size, max_steps))],
-                dim=1,
-            )
+            # append_last_valid_logits = attention_mask.long().sum(dim=-1) - 1
+            # attention_mask = torch.cat(
+            #     [attention_mask, attention_mask.new_ones((batch_size, max_steps))],
+            #     dim=1,
+            # )
+            append_last_valid_logits = None
         else:
             position_ids = None
             append_last_valid_logits = None
 
+        input_ids = input_ids * (input_ids != -1).to(input_ids.dtype)
+        input_embeddings = self.transformer.wte(input_ids)  # shape: (B, seq, d_model)
+        if images is not None:
+            # Insert image patch embeddings where needed
+            image_features = self.vision_backbone(images, image_masks, pooled_patches_idx)
+            is_image_patch = input_ids.view(-1) == self._image_patch_id
+            assert is_image_patch.sum() == len(image_features)
+            input_embeddings.view(-1, input_embeddings.shape[-1])[is_image_patch] += image_features
+
         
-
-
         generated = torch.empty((batch_size, 0), dtype=input_ids.dtype, device=input_ids.device)
-        past_key_values = None
+       
         hidden_states = None
+        current_embeddings = input_embeddings
         
         for step in range(max_steps):
-            if tokens_generated > 0:
-                input_token = generated[:, -1].unsqueeze(1)
-                # if there is at least one example with image_outputs
-                if generation_states.sum() > 0:
-                    input_embeddings = []
-                    for i in range(batch_size):
-                        if generation_states[i]:
-                            # for the images we need to generate the image features from the image embeddings
-                            input_embeddings.append(
-                                # h[i].unsqueeze(0)
-                                self.vision_encoder_head(
-                                    image_output_features[i].unsqueeze(0)
-                                )
-                            )
-                        else:
-                            input_embeddings.append(
-                                self.transformer.wte(input_token[i])
-                            )
-                    
-                    input_embeddings = torch.stack(input_embeddings, dim=0)
-                    input_token = None
+        # Forward pass with accumulated embeddings
+            # print("$$$$$$$$$$$$$", current_embeddings.shape)
+            cur_len = current_embeddings.size(1)
 
+            am_step = attention_mask[:, :cur_len]                     # (B, cur_len)
+            pos_step = position_ids[:, :cur_len] if position_ids is not None else None
 
-                if not llm_cfg.use_position_ids:
-                    attention_mask = torch.cat(
-                        (attention_mask, attention_mask.new_ones((batch_size, 1))), dim=1
-                    )
-                _images = None
-                _pooled_patches_idx = None
-                _append_last_valid_logits = None
-                if llm_cfg.use_position_ids:
-                    position_ids = position_ids[:, -1:] + 1
-                _position_ids = position_ids
-            else:
-                input_token = input_ids
-                input_embeddings = None
-                _images = images
-                _pooled_patches_idx = pooled_patches_idx
-                _position_ids = position_ids
-                _append_last_valid_logits = append_last_valid_logits
-
-            
+            # point “last logits” to the true last valid token for each example
+            append_last_valid_logits = am_step.long().sum(dim=-1) - 1
             output = self(
-                input_ids = input_token,
-                input_embeddings=input_embeddings,
-                attention_mask=attention_mask,
+                input_ids=None,
+                input_embeddings=current_embeddings,
+                attention_mask=am_step,
                 attention_bias=None,
-                images=_images,
+                images=None,  # already embedded
                 image_masks=image_masks,
-                pooled_patches_idx=_pooled_patches_idx,
-                position_ids=_position_ids,
-                past_key_values=past_key_values,
-                use_cache=True,
+                pooled_patches_idx=None,
+                position_ids=pos_step,
+                past_key_values=None,  # <-- KV caching disabled
+                use_cache=False,       # <-- KV caching disabled
                 is_training=False,
                 last_logits_only=True,
-                output_hidden_states = True,
-                append_last_valid_logits=_append_last_valid_logits
+                output_hidden_states=None,
+                append_last_valid_logits=append_last_valid_logits,
             )
 
             logits = output.logits[:, -1, :]
             image_output_features = output.image_output_features[:, -1, :]
-            h = output.hidden_states[-1][:, -1, :]  # last hidden state
             next_token = torch.argmax(logits, dim=-1, keepdim=True)
             
+            # Handle image token generation
             if tokens_generated > 0:
                 for i in range(batch_size):
-                    ## if the previous token was the image generation start token, we need to check if we are generating an image
+                    # If we just started an image generation sequence
                     if generated[i][-1].item() == self.image_gen_start_token_id:
                         generation_states[i] = True
                         last_generation_start_idx[i] = generated[i].shape[0]
 
+                    # If inside image generation
                     if generation_states[i]:
-                        
-                        # no contrained decoding here
-                        # if next_token[i,0] == self.image_gen_end_token_id:
-                        #     generation_states[i] = False
-                        #     next_token[i,0] = torch.tensor(self.image_gen_end_token_id, device=next_token.device, dtype=next_token.dtype)
-
-                        ## constrained decoding
                         if generated[i].shape[0] - last_generation_start_idx[i] == self.config.per_image_output_tokens:
-                            next_token[i,0] = torch.tensor(self.image_gen_end_token_id, device=next_token.device, dtype=next_token.dtype)
+                            next_token[i, 0] = torch.tensor(
+                                self.image_gen_end_token_id, device=device, dtype=next_token.dtype
+                            )
                             generation_states[i] = False
                         else:
-                            next_token[i,0] = torch.tensor(self._image_output_token_id, device=next_token.device, dtype=next_token.dtype)
-                
-                
-            
+                            next_token[i, 0] = torch.tensor(
+                                self._image_output_token_id, device=device, dtype=next_token.dtype
+                            )
+
+            # Append new token to generated sequence
             next_token[generation_done] = end_token_id
             generation_done |= next_token.squeeze(1) == end_token_id
-            generated = torch.cat((generated, next_token), dim=1) 
-            tokens_generated += 1   
-            past_key_values = output.attn_key_values
-            if hidden_states is  None:
-                hidden_states = image_output_features.unsqueeze(1)  # shape: (batch_size, 1, d_model)
-            else:
-                hidden_states = torch.cat((hidden_states, image_output_features.unsqueeze(1)), dim=1)  # shape: (batch_size, seq_len + max_steps, d_model)
+            generated = torch.cat((generated, next_token), dim=1)
+            tokens_generated += 1
+
+            # Get embedding for next token step
             
+            next_embeddings = []
+            for i in range(batch_size):
+                if generation_states[i]:
+                    # Use vision head embedding when generating image outputs
+                    next_embeddings.append(self.vision_encoder_head(image_output_features[i].unsqueeze(0)))
+                else:
+                    next_embeddings.append(self.transformer.wte(next_token[i]).squeeze(1))
+            next_embeddings = torch.cat(next_embeddings, dim=0).unsqueeze(1)
+            # Grow the embedding sequence
+            current_embeddings = torch.cat([current_embeddings, next_embeddings], dim=1)
+            last = position_ids[:, -1:]                  # (B, 1)
+            position_ids = torch.cat([position_ids, last + 1], dim=1)  # (B, T+1)
+
+            attention_mask = torch.cat([attention_mask, attention_mask.new_zeros((batch_size, 1))], dim=1)
+            attention_mask[:, current_embeddings.size(1) - 1] = 1
+
+            # Accumulate image features for downstream use
+            if hidden_states is None:
+                hidden_states = image_output_features.unsqueeze(1)
+            else:
+                hidden_states = torch.cat((hidden_states, image_output_features.unsqueeze(1)), dim=1)
 
             if end_token_id is not None and (next_token == end_token_id).all():
                 break
 
-        # You can implement logprobs or scores here if needed
-        scores = None
         return OLMoGenerateOutput(
-            token_ids=generated,  # shape: (batch_size, seq_len + max_steps)
-            scores=scores,
-            image_output_features = hidden_states.to(torch.float32),  # shape: (batch_size, max_steps, d_model)
+            token_ids=generated,
+            scores=None,
+            image_output_features=hidden_states.to(torch.float32),
         )
+        
+        
+        
+
+
+
+
+    # def generate(
+    #     self,
+    #     batch,
+    #     max_steps: int = 10,
+    #     is_distributed: bool=False,) -> OLMoGenerateOutput:
+    #     """
+    #     Generate token IDs using greedy decoding.
+
+    #     Args:
+    #         batch: Dict with 'input_ids', optional 'attention_mask', and multimodal fields.
+    #         max_steps: Number of decoding steps.
+
+    #     Returns:
+    #         OLMoGenerateOutput with token_ids and scores.
+    #     """
+    #     input_ids: torch.LongTensor = batch["input_ids"]
+    #     attention_mask: Optional[torch.Tensor] = batch.get("attention_mask")
+    #     images: Optional[torch.Tensor] = batch.get("images")
+    #     image_masks: Optional[torch.Tensor] = batch.get("image_masks")
+    #     pooled_patches_idx: Optional[torch.Tensor] = batch.get("pooled_patches_idx")
+        
+    #     # ## TODO: make max_steps configurable
+    #     max_steps = 1700
+        
+        
+    #     batch_size, seq_len = input_ids.shape
+    #     device = input_ids.device
+    #     llm_cfg = self.config.llm
+    #     end_token_id = llm_cfg.build_tokenizer().eos_token_id
+    #     # Init positional and attention configs
+    #     tokens_generated = 0
+    #     generation_states = torch.tensor([False]* batch_size, dtype=torch.bool)
+    #     last_generation_start_idx = torch.zeros(batch_size, dtype=torch.long)
+    #     generation_done = torch.zeros(batch_size, dtype=torch.bool, device = input_ids.device)
+
+    #     if llm_cfg.use_position_ids and  attention_mask is None:
+    #         attention_mask = input_ids != -1
+    #         position_ids = torch.clamp(
+    #             torch.cumsum(attention_mask.to(torch.int32), dim=-1) - 1,
+    #             min=0
+    #         )
+    #         append_last_valid_logits = attention_mask.long().sum(dim=-1) - 1
+    #         attention_mask = torch.cat(
+    #             [attention_mask, attention_mask.new_ones((batch_size, max_steps))],
+    #             dim=1,
+    #         )
+    #     else:
+    #         position_ids = None
+    #         append_last_valid_logits = None
+
+        
+
+
+    #     generated = torch.empty((batch_size, 0), dtype=input_ids.dtype, device=input_ids.device)
+    #     past_key_values = None
+    #     hidden_states = None
+        
+    #     for step in range(max_steps):
+    #         if tokens_generated > 0:
+    #             input_token = generated[:, -1].unsqueeze(1)
+    #             # if there is at least one example with image_outputs
+    #             if generation_states.sum() > 0:
+    #                 input_embeddings = []
+    #                 for i in range(batch_size):
+    #                     if generation_states[i]:
+    #                         # for the images we need to generate the image features from the image embeddings
+    #                         input_embeddings.append(
+    #                             # h[i].unsqueeze(0)
+    #                             self.vision_encoder_head(
+    #                                 image_output_features[i].unsqueeze(0)
+    #                             )
+    #                         )
+    #                     else:
+    #                         input_embeddings.append(
+    #                             self.transformer.wte(input_token[i])
+    #                         )
+                    
+    #                 input_embeddings = torch.stack(input_embeddings, dim=0)
+    #                 input_token = None
+
+
+    #             if not llm_cfg.use_position_ids:
+    #                 attention_mask = torch.cat(
+    #                     (attention_mask, attention_mask.new_ones((batch_size, 1))), dim=1
+    #                 )
+    #             _images = None
+    #             _pooled_patches_idx = None
+    #             _append_last_valid_logits = None
+    #             if llm_cfg.use_position_ids:
+    #                 position_ids = position_ids[:, -1:] + 1
+    #             _position_ids = position_ids
+    #         else:
+    #             input_token = input_ids
+    #             input_embeddings = None
+    #             _images = images
+    #             _pooled_patches_idx = pooled_patches_idx
+    #             _position_ids = position_ids
+    #             _append_last_valid_logits = append_last_valid_logits
+
+            
+    #         output = self(
+    #             input_ids = input_token,
+    #             input_embeddings=input_embeddings,
+    #             attention_mask=attention_mask,
+    #             attention_bias=None,
+    #             images=_images,
+    #             image_masks=image_masks,
+    #             pooled_patches_idx=_pooled_patches_idx,
+    #             position_ids=_position_ids,
+    #             past_key_values=past_key_values,
+    #             use_cache=True,
+    #             is_training=False,
+    #             last_logits_only=True,
+    #             output_hidden_states = True,
+    #             append_last_valid_logits=_append_last_valid_logits
+    #         )
+
+    #         logits = output.logits[:, -1, :]
+    #         image_output_features = output.image_output_features[:, -1, :]
+    #         h = output.hidden_states[-1][:, -1, :]  # last hidden state
+    #         next_token = torch.argmax(logits, dim=-1, keepdim=True)
+            
+    #         if tokens_generated > 0:
+    #             for i in range(batch_size):
+    #                 ## if the previous token was the image generation start token, we need to check if we are generating an image
+    #                 if generated[i][-1].item() == self.image_gen_start_token_id:
+    #                     generation_states[i] = True
+    #                     last_generation_start_idx[i] = generated[i].shape[0]
+
+    #                 if generation_states[i]:
+                        
+    #                     # no contrained decoding here
+    #                     # if next_token[i,0] == self.image_gen_end_token_id:
+    #                     #     generation_states[i] = False
+    #                     #     next_token[i,0] = torch.tensor(self.image_gen_end_token_id, device=next_token.device, dtype=next_token.dtype)
+
+    #                     ## constrained decoding
+    #                     if generated[i].shape[0] - last_generation_start_idx[i] == self.config.per_image_output_tokens:
+    #                         next_token[i,0] = torch.tensor(self.image_gen_end_token_id, device=next_token.device, dtype=next_token.dtype)
+    #                         generation_states[i] = False
+    #                     else:
+    #                         next_token[i,0] = torch.tensor(self._image_output_token_id, device=next_token.device, dtype=next_token.dtype)
+                
+                
+            
+    #         next_token[generation_done] = end_token_id
+    #         generation_done |= next_token.squeeze(1) == end_token_id
+    #         generated = torch.cat((generated, next_token), dim=1) 
+    #         tokens_generated += 1   
+    #         past_key_values = output.attn_key_values
+    #         if hidden_states is  None:
+    #             hidden_states = image_output_features.unsqueeze(1)  # shape: (batch_size, 1, d_model)
+    #         else:
+    #             hidden_states = torch.cat((hidden_states, image_output_features.unsqueeze(1)), dim=1)  # shape: (batch_size, seq_len + max_steps, d_model)
+            
+
+    #         if end_token_id is not None and (next_token == end_token_id).all():
+    #             break
+
+    #     # You can implement logprobs or scores here if needed
+    #     scores = None
+    #     return OLMoGenerateOutput(
+    #         token_ids=generated,  # shape: (batch_size, seq_len + max_steps)
+    #         scores=scores,
+    #         image_output_features = hidden_states.to(torch.float32),  # shape: (batch_size, max_steps, d_model)
+    #     )
 
         
     

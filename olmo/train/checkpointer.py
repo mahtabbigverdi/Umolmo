@@ -113,6 +113,11 @@ def load_model_state_unsharded(dir: PathOrStr, model: nn.Module):
         model_state_dict=state_dict,
         options=dist_cp_sd.StateDictOptions(full_state_dict=True, broadcast_from_rank0=True)
     )
+    del state_dict
+    import gc
+    gc.collect()
+    torch.cuda.empty_cache()  # if using CUDA
+    torch.distributed.barrier()
    
 
 

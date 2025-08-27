@@ -130,6 +130,12 @@ if __name__ == "__main__":
     elif args.mixture in ["aurora"]:
         eval_tasks = ["aurora"]
         tasks = [["aux", ["aurora"], 1.0]]
+    elif args.mixture in ["frozensafe"]:
+        eval_tasks = ["frozensafe"]
+        tasks = [["aux", ["frozensafe"], 1.0]]
+    elif args.mixture in ["frozenplan"]:
+        eval_tasks = ["frozenplan"]
+        tasks = [["aux", ["frozenplan"], 1.0]]
     elif args.mixture in ["aurora_discrete"]:
         eval_tasks = ["aurora_discrete"]
         tasks = [["aux", ["aurora_discrete"], 1.0]]

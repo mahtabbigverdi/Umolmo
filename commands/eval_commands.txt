@@ -42,8 +42,9 @@ torchrun --nproc-per-node 8 launch_scripts/eval_downstream.py /mmfs1/gscratch/kr
 torchrun --nproc-per-node 4 launch_scripts/eval_downstream.py /mmfs1/gscratch/krishna/mahtab/Umolmo/checkpoints/retry-3B-lowLR-Aurora-molmo-7b-qwen2-siglip2-finetune-uber-cosine-bilinear/step6200-unsharded aurora --save_to_checkpoint_dir
 
 
-torchrun --nproc-per-node 4 launch_scripts/eval_downstream.py /mmfs1/gscratch/krishna/mahtab/Umolmo/checkpoints/8gpus-MLP-3B-lowLR-Aurora-molmp-qwen2-siglip2-finetune-uber-cosine-bilinear/step6200-unsharded aurora --save_to_checkpoint_dir
+torchrun --nproc-per-node 8 launch_scripts/eval_downstream.py /mmfs1/gscratch/krishna/mahtab/Umolmo/checkpoints/MLP-3B-lowLR-Aurora-molmp-qwen2-siglip2-finetune-uber-cosine-bilinear/step6200-unsharded aurora --save_to_checkpoint_dir
 
 
-torchrun --nproc-per-node 8 launch_scripts/eval_downstream.py /mmfs1/gscratch/krishna/mahtab/Umolmo/checkpoints/3B-lowLR-Aurora-molmo-7b-qwen2-siglip2-finetune-uber-cosine-bilinear/step6200-unsharded  aurora --save_to_checkpoint_dir
+torchrun --nproc-per-node 8 launch_scripts/eval_downstream.py /mmfs1/gscratch/krishna/mahtab/Umolmo/checkpoints/Frozenplan-3B-lowLR-molmo-3b-qwen2-siglip2-finetune-uber-cosine-bilinear/step700-unsharded  frozenplan --save_to_checkpoint_dir
+
 torchrun --nproc-per-node 4 launch_scripts/eval_downstream.py /mmfs1/gscratch/krishna/mahtab/Umolmo/checkpoints/4gpus-3B-ORG-lowLR-Aurora-molmo-7b-qwen2-siglip2-finetune-uber-cosine-bilinear/step6200-unsharded  aurora --save_to_checkpoint_dir
