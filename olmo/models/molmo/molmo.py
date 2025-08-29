@@ -612,7 +612,7 @@ class Molmo(ModelBase):
         pooled_patches_idx: Optional[torch.Tensor] = batch.get("pooled_patches_idx")
         
         # ## TODO: make max_steps configurable
-        max_steps = 200
+        max_steps = 1000
         
         
         batch_size, seq_len = input_ids.shape
@@ -632,6 +632,7 @@ class Molmo(ModelBase):
                 torch.cumsum(attention_mask.to(torch.int32), dim=-1) - 1,
                 min=0
             )
+           
             # append_last_valid_logits = attention_mask.long().sum(dim=-1) - 1
             # attention_mask = torch.cat(
             #     [attention_mask, attention_mask.new_ones((batch_size, max_steps))],
@@ -641,7 +642,8 @@ class Molmo(ModelBase):
         else:
             position_ids = None
             append_last_valid_logits = None
-
+        # if get_global_rank()==0:
+        #     import pdb; pdb.set_trace()
         input_ids = input_ids * (input_ids != -1).to(input_ids.dtype)
         input_embeddings = self.transformer.wte(input_ids)  # shape: (B, seq, d_model)
         if images is not None:
@@ -650,7 +652,8 @@ class Molmo(ModelBase):
             is_image_patch = input_ids.view(-1) == self._image_patch_id
             assert is_image_patch.sum() == len(image_features)
             input_embeddings.view(-1, input_embeddings.shape[-1])[is_image_patch] += image_features
-
+        # if get_global_rank()==0:
+        #     import pdb; pdb.set_trace()
         
         generated = torch.empty((batch_size, 0), dtype=input_ids.dtype, device=input_ids.device)
        
@@ -664,9 +667,11 @@ class Molmo(ModelBase):
 
             am_step = attention_mask[:, :cur_len]                     # (B, cur_len)
             pos_step = position_ids[:, :cur_len] if position_ids is not None else None
-
+            
             # point “last logits” to the true last valid token for each example
-            append_last_valid_logits = am_step.long().sum(dim=-1) - 1
+            append_last_valid_logits = append_last_valid_logits = torch.full((batch_size,), cur_len - 1, device=input_ids.device, dtype=torch.long)
+
+            
             output = self(
                 input_ids=None,
                 input_embeddings=current_embeddings,
@@ -726,11 +731,16 @@ class Molmo(ModelBase):
             next_embeddings = torch.cat(next_embeddings, dim=0).unsqueeze(1)
             # Grow the embedding sequence
             current_embeddings = torch.cat([current_embeddings, next_embeddings], dim=1)
-            last = position_ids[:, -1:]                  # (B, 1)
-            position_ids = torch.cat([position_ids, last + 1], dim=1)  # (B, T+1)
-
-            attention_mask = torch.cat([attention_mask, attention_mask.new_zeros((batch_size, 1))], dim=1)
-            attention_mask[:, current_embeddings.size(1) - 1] = 1
+            # last = position_ids[:, -1:]                  # (B, 1)
+            # position_ids = torch.cat([position_ids, last + 1], dim=1)  # (B, T+1)
+            # if get_global_rank()==0:
+            #     import pdb; pdb.set_trace()
+            attention_mask = torch.cat([attention_mask, attention_mask.new_ones((batch_size, 1))], dim=1)
+           
+            position_ids = torch.clamp(
+                torch.cumsum(attention_mask.to(torch.int32), dim=-1) - 1,
+                min=0
+            )
 
             # Accumulate image features for downstream use
             if hidden_states is None:
